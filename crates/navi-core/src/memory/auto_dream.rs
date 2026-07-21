@@ -1,6 +1,6 @@
 //! Auto-dream: automatic memory consolidation triggered after turns.
 //!
-//! Mirrors the Claude Code autoDream pattern: after each completed turn,
+//! After each completed turn,
 //! a 3-gate check decides whether to run a dream consolidation pass.
 //!
 //! ## Gates

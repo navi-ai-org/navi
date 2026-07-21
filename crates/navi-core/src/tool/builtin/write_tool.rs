@@ -367,7 +367,7 @@ fn compute_line_ops<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<(DiffTag, &'a s
 const DISPLAY_DIFF_CONTEXT: usize = 3;
 
 /// Emit changed lines with surrounding context and `@@ -old +new @@` headers
-/// so the TUI can render line numbers (Claude Code–style).
+/// so the TUI can render line numbers in the diff gutter.
 fn format_ops_as_display_diff(path: &str, ops: &[(DiffTag, &str)]) -> String {
     let has_change = ops.iter().any(|(tag, _)| *tag != DiffTag::Equal);
     if !has_change {
@@ -531,7 +531,7 @@ fn snapshot_project_files(
     out
 }
 
-/// After a successful patch, attach a Claude Code–style numbered `diff` (and
+/// After a successful patch, attach a numbered `diff` (and
 /// line counts) built from before/after file contents.
 fn attach_patch_display_diff(
     output: &mut Value,
@@ -623,7 +623,7 @@ impl WriteTool {
 
         let mut files_changed = Vec::new();
         let mut errors = Vec::new();
-        // Per-path before/after snapshots so we can emit a Claude Code–style
+        // Per-path before/after snapshots so we can emit a numbered
         // numbered display diff (real file line numbers) for the TUI.
         let mut before_by_path: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();

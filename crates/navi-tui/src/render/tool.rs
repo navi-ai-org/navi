@@ -1369,7 +1369,7 @@ fn code_edit_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> O
 
 /// Clean structured/unified patch text for chat display.
 ///
-/// Claude Code–style body:
+/// Compact tool body layout:
 /// - strips protocol chrome (`*** Begin/End Patch`, bare `@@`, unified `---/+++`)
 /// - emits a line-number gutter when `@@ -old +new @@` is present:
 ///   `  37 context`, `-  39 removed`, `+  39 added`
@@ -4149,7 +4149,7 @@ ctx\n\
             !content.contains("*** Add File:"),
             "path chrome belongs on the card only, got:\n{content}"
         );
-        // Add File numbers from line 1 (Claude Code–style gutter).
+        // Add File numbers from line 1 (diff gutter).
         assert!(
             content.contains("+   1|fn main() {}"),
             "expected numbered add line, got:\n{content}"
@@ -4250,7 +4250,7 @@ ctx\n\
             !content.contains("*** Update File:"),
             "path chrome belongs on the card, got:\n{content}"
         );
-        // Claude Code–style gutter: `{sign}{num:>4}|{content}`
+        // Diff gutter: `{sign}{num:>4}|{content}`
         assert!(
             content.contains("-  46|1. **Pedido e Intenção Primária**"),
             "expected numbered delete line 46, got:\n{content}"

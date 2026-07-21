@@ -1,7 +1,7 @@
 //! Per-turn memory extraction.
 //!
 //! After each completed turn, a background task analyzes the conversation
-//! and extracts durable memories. This mirrors Claude Code's extractMemories:
+//! and extracts durable memories after each turn:
 //! fire-and-forget, only when the model hasn't already written memories
 //! during the turn (mutual exclusion with the `memory` tool).
 

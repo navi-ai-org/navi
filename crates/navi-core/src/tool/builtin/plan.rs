@@ -71,7 +71,7 @@ impl PlanTool {
 #[async_trait]
 impl Tool for PlanTool {
     fn definition(&self) -> ToolDefinition {
-        // Markdown design-doc is the source of truth (Claude Code style).
+        // Markdown design-doc is the source of truth.
         // steps/todos remain optional for progress tracking after approval.
         helpers::definition(
             "plan",
@@ -357,7 +357,7 @@ fn action_write(
     ))
 }
 
-/// Present plan for user review (ExitPlanMode-style). Reads the plan file when body omitted.
+/// Present plan for user review. Reads the plan file when body is omitted.
 fn action_submit(
     invocation: &ToolInvocation,
     store: &PlanStore,
@@ -366,7 +366,7 @@ fn action_submit(
 ) -> Result<ToolResult> {
     let mut parsed = parse_create_payload(&invocation.input)?;
 
-    // Claude Code ExitPlanMode: plan content comes from disk if not in args.
+    // Submit reads the plan file when body is omitted (plan already on disk).
     if parsed.body_markdown.trim().is_empty() {
         if let Some(from_disk) = read_plan_file(plan_file) {
             parsed.body_markdown = from_disk;

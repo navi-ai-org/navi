@@ -2022,7 +2022,7 @@ fn diff_line_spans(raw_line: &str) -> Vec<Span<'static>> {
         )];
     }
 
-    // Claude Code–style: full-row red/green wash (including line-number gutter),
+    // Full-row red/green wash (including line-number gutter),
     // add/remove fg on body text, no raw +/- glyphs when numbers are present.
     let (bg, number_color, content_color) = if raw_line.starts_with('+') {
         (Some(diff_add_bg()), diff_add_fg(), diff_add_fg())
@@ -2319,7 +2319,7 @@ fn latex_to_unicode(input: &str) -> String {
     out
 }
 
-/// Green wash for additions (Claude Code–like).
+/// Green wash for additions.
 fn diff_add_bg() -> Color {
     Color::Rgb(20, 58, 48)
 }
@@ -2496,7 +2496,7 @@ mod tests {
 
     #[test]
     fn numbered_diff_gutter_shares_full_row_wash() {
-        // Claude Code–style: line numbers sit inside the same red/green row wash.
+        // Line numbers sit inside the same red/green row wash.
         let md = "```diff\n-  12|removed\n+  12|added\n```\n";
         let lines = render_markdown_lines(md, 80, text(), text(), false);
         let mut saw_num = false;

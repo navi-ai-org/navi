@@ -1,6 +1,5 @@
 //! Plan Mode — a collaboration phase where the agent designs a plan before execution.
 //!
-//! Inspired by Claude Code / Codex plan mode:
 //! - Read-only tools for exploration
 //! - The session plan file (`{data_dir}/plans/{session}.md`) is the only writable path
 //! - The model builds a **markdown design doc** (context, approach, files, verification)

@@ -1,7 +1,7 @@
 //! SQLite-backed plan persistence (reviewable work plans).
 //!
-//! The **source of truth for plan content** is a markdown file under
-//! `{data_dir}/plans/` (Claude Code-style design doc). SQLite holds metadata,
+//! The **source of truth for plan content** is a markdown design-doc file under
+//! `{data_dir}/plans/`. SQLite holds metadata,
 //! checklist steps derived from the markdown, review comments, and status.
 //!
 //! Legacy per-plan JSON under `data_dir/plans/<project>/*.json` is still
