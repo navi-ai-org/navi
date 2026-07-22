@@ -423,20 +423,43 @@ The `saveTarget` parameter for `selectModel` accepts `'auto' | 'project' | 'glob
 
 ## Goals
 
-Goals give the agent a long-running objective with an optional token budget:
+Thread goals attach a long-running objective to a session. While the goal is
+`active` and goals are enabled, each `sendTurn` may auto-continue (steering
+prompt + new turns) until the goal is complete, blocked, budget-limited,
+paused, or cleared.
+
+**Host API** (this binding): set/get/clear/status.  
+**Model tools** (during a turn): `get_goal`, `create_goal`, `update_goal`
+(`complete` | `blocked` only). Pause/resume are host-only via `updateGoalStatus`.
 
 ```ts
-// Set a goal
-const goal = await engine.setGoal(session.id, 'Refactor the auth module', 50_000);
-// goal => { sessionId, goalId, objective, status, tokenBudget, tokensUsed, ... }
+// Set a goal (optional positive token budget + short UI label)
+const goal = await engine.setGoal(
+  session.id,
+  'Refactor the auth module',
+  50_000,
+  'auth refactor',
+);
+// goal => { sessionId, goalId, objective, shortDescription, status, tokenBudget, tokensUsed, ... }
 
-// Get the current goal
+// Get the current goal (null if none)
 const currentGoal = await engine.getGoal(session.id);
-// currentGoal => goal object or null
 
-// Clear the goal
+// Host status: active | paused | blocked | usage_limited | budget_limited | complete
+await engine.updateGoalStatus(session.id, 'paused');
+await engine.updateGoalStatus(session.id, 'active');
+
+// Clear the goal (stops auto-continue)
 await engine.clearGoal(session.id);
+
+// Optional host-only checklist (not required for complete)
+await engine.updateGoalChecklist(session.id, [
+  { id: 0, description: 'Extract middleware', status: 'pending' },
+]);
+await engine.updateGoalTaskStatus(session.id, 0, 'verified');
 ```
+
+Listen for `GoalUpdated` on the event stream for live UI chips.
 
 ---
 

@@ -136,6 +136,13 @@ let response = engine.send_turn(NaviTurnRequest {
     context_packets: vec![],
 }).await?;
 
+// Thread goals (host API). While Active, send_turn auto-continues until
+// complete/blocked/budget-limited/paused/cleared. Model tools during a turn:
+// get_goal, create_goal, update_goal (status complete|blocked only).
+// let goal = engine.set_goal(&session_id, "Ship feature X", Some(100_000)).await?;
+// engine.update_goal_status(&session_id, GoalStatus::Paused).await?;
+// engine.clear_goal(&session_id).await?;
+
 // Cancel an active turn
 engine.cancel_turn(&session_id).await?;
 

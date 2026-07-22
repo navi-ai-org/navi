@@ -504,13 +504,20 @@ pub unsafe extern "C" fn navi_engine_get_goal(
     });
 }
 
-/// Sets a goal for a session. `token_budget < 0` means null.
+/// Sets a thread goal for a session.
+///
+/// - `token_budget < 0` means no budget; otherwise must be positive.
+/// - `short_description` may be null (optional compact UI label).
+///
+/// While the goal is Active, subsequent turns auto-continue until complete,
+/// blocked, budget-limited, paused, or cleared.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_set_goal(
     engine: *mut NaviDartEngine,
     session_id: *const c_char,
     objective: *const c_char,
     token_budget: i64,
+    short_description: *const c_char,
     callback: NaviAsyncCallback,
     user_data: *mut c_void,
 ) {
@@ -535,9 +542,13 @@ pub unsafe extern "C" fn navi_engine_set_goal(
     } else {
         Some(token_budget)
     };
+    let short = unsafe { cstr_to_str(short_description) }.map(|s| s.to_string());
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
-        match inner.set_goal(&sid, obj, budget).await {
+        match inner
+            .set_goal_with_short_description(&sid, obj, short, budget)
+            .await
+        {
             Ok(goal) => ctx.success(&goal),
             Err(e) => ctx.error(&e.to_string()),
         }

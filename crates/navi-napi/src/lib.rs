@@ -706,8 +706,13 @@ impl NaviNapiEngine {
         })
     }
 
-    // ── Goals ──────────────────────────────────────────────────────────
+    // ── Goals (host API for thread goals) ──────────────────────────────
+    //
+    // While a goal is Active and goals are enabled, sendTurn auto-continues
+    // until complete/blocked/budget-limited/paused/cleared. Model tools are
+    // get_goal / create_goal / update_goal (complete|blocked only).
 
+    /// Current thread goal, or `null`.
     #[napi]
     pub async fn get_goal(&self, session_id: String) -> Result<JsonValue> {
         let goal = self
@@ -718,21 +723,30 @@ impl NaviNapiEngine {
         serde_json::to_value(goal).map_err(to_napi_error)
     }
 
+    /// Set or replace the thread goal. Optional positive `tokenBudget`.
+    /// Optional `shortDescription` is a compact UI label (max 40 chars).
     #[napi]
     pub async fn set_goal(
         &self,
         session_id: String,
         objective: String,
         token_budget: Option<i64>,
+        short_description: Option<String>,
     ) -> Result<JsonValue> {
         let goal = self
             .inner
-            .set_goal(&session_id, objective, token_budget)
+            .set_goal_with_short_description(
+                &session_id,
+                objective,
+                short_description,
+                token_budget,
+            )
             .await
             .map_err(to_napi_error)?;
         serde_json::to_value(goal).map_err(to_napi_error)
     }
 
+    /// Clear the thread goal (stops auto-continue).
     #[napi]
     pub async fn clear_goal(&self, session_id: String) -> Result<()> {
         self.inner
@@ -741,19 +755,21 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Host/system status: `active` | `paused` | `blocked` | `usage_limited` |
+    /// `budget_limited` | `complete` (also accepts `completed` / `done`).
     #[napi]
     pub async fn update_goal_status(
         &self,
         session_id: String,
         status: String,
     ) -> Result<JsonValue> {
-        let goal_status = match status.as_str() {
+        let goal_status = match status.to_ascii_lowercase().as_str() {
             "active" => navi_sdk::GoalStatus::Active,
             "paused" => navi_sdk::GoalStatus::Paused,
             "blocked" => navi_sdk::GoalStatus::Blocked,
             "usage_limited" => navi_sdk::GoalStatus::UsageLimited,
             "budget_limited" => navi_sdk::GoalStatus::BudgetLimited,
-            "complete" => navi_sdk::GoalStatus::Complete,
+            "complete" | "completed" | "done" => navi_sdk::GoalStatus::Complete,
             other => {
                 return Err(to_napi_error(anyhow::anyhow!(
                     "unknown goal status: {other}"
@@ -768,6 +784,7 @@ impl NaviNapiEngine {
         serde_json::to_value(goal).map_err(to_napi_error)
     }
 
+    /// Host-only optional checklist (not required for goal completion).
     #[napi]
     pub async fn update_goal_checklist(
         &self,
@@ -784,6 +801,7 @@ impl NaviNapiEngine {
         serde_json::to_value(goal).map_err(to_napi_error)
     }
 
+    /// Host-only single checklist task status update.
     #[napi]
     pub async fn update_goal_task_status(
         &self,
@@ -791,10 +809,10 @@ impl NaviNapiEngine {
         task_id: u32,
         status: String,
     ) -> Result<JsonValue> {
-        let task_status = match status.as_str() {
+        let task_status = match status.to_ascii_lowercase().as_str() {
             "pending" => navi_sdk::TaskStatus::Pending,
-            "in_progress" => navi_sdk::TaskStatus::InProgress,
-            "done" => navi_sdk::TaskStatus::Done,
+            "in_progress" | "inprogress" => navi_sdk::TaskStatus::InProgress,
+            "done" | "completed" => navi_sdk::TaskStatus::Done,
             "verified" => navi_sdk::TaskStatus::Verified,
             "skipped" => navi_sdk::TaskStatus::Skipped,
             other => {

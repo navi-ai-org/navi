@@ -329,12 +329,32 @@ export class NaviNapiEngine {
   setBackgroundModel(task: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
   clearBackgroundModel(task: string, saveTarget?: SaveTarget): JsonValue;
   subscribeEvents(sessionId: string): NaviNapiEventStream;
-  // Goals
+  // Thread goals (host API). While Active, sendTurn auto-continues until
+  // complete/blocked/budget-limited/paused/cleared. Model tools: get_goal,
+  // create_goal, update_goal (complete|blocked only).
+  /** Current goal object or null. */
   getGoal(sessionId: string): Promise<JsonValue>;
-  setGoal(sessionId: string, objective: string, tokenBudget?: number | null): Promise<JsonValue>;
+  /**
+   * Set/replace the thread goal.
+   * @param tokenBudget Optional positive token budget (omit/null = unbounded).
+   * @param shortDescription Optional compact UI label (max 40 chars).
+   */
+  setGoal(
+    sessionId: string,
+    objective: string,
+    tokenBudget?: number | null,
+    shortDescription?: string | null,
+  ): Promise<JsonValue>;
+  /** Clear the goal and stop auto-continue. */
   clearGoal(sessionId: string): Promise<void>;
+  /**
+   * Host/system status: `active` | `paused` | `blocked` | `usage_limited` |
+   * `budget_limited` | `complete` (aliases: `completed`, `done`).
+   */
   updateGoalStatus(sessionId: string, status: string): Promise<JsonValue>;
+  /** Host-only optional checklist (not required for completion). */
   updateGoalChecklist(sessionId: string, tasks: JsonValue): Promise<JsonValue>;
+  /** Host-only single checklist task status. */
   updateGoalTaskStatus(sessionId: string, taskId: number, status: string): Promise<JsonValue>;
   // Background tasks
   listBackgroundCommands(sessionId: string): Promise<JsonValue>;

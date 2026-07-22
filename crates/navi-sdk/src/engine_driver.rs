@@ -92,7 +92,15 @@ pub trait EngineDriver: Send + Sync {
     /// Close an active in-memory session. Returns `true` when a session was removed.
     async fn close_session(&self, session_id: &str) -> Result<bool>;
 
-    /// Set or replace the active multi-turn session goal.
+    /// Current thread goal, if any.
+    async fn get_goal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<navi_core::SessionGoal>>;
+
+    /// Set or replace the active multi-turn thread goal (host API).
+    ///
+    /// Auto-continues turns while status is Active when goals are enabled.
     async fn set_goal(
         &self,
         session_id: &str,
@@ -100,7 +108,7 @@ pub trait EngineDriver: Send + Sync {
         token_budget: Option<i64>,
     ) -> Result<navi_core::SessionGoal>;
 
-    /// Update goal status (pause / resume / complete / blocked / …).
+    /// Host/system goal status (pause / resume / complete / blocked / …).
     async fn update_goal_status(
         &self,
         session_id: &str,
@@ -297,6 +305,13 @@ impl EngineDriver for crate::NaviEngine {
 
     async fn close_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::close_session(self, session_id).await
+    }
+
+    async fn get_goal(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<navi_core::SessionGoal>> {
+        crate::NaviEngine::get_goal(self, session_id).await
     }
 
     async fn set_goal(
