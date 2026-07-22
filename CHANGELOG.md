@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-07-22
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
+
+Harness packs (loop/graph materialize + soft enforcement), skill CLI install/activate, aligned thread goals, and docs for the harness vision.
+
+### New Features
+
+- **Harness packs** — store under `{data_dir}/harnesses/<id>/` with `loop.toml` and optional `graph.toml`; deterministic materialize from skills with capability inventory filtering
+- **Harness runtime soft-apply** — on skill activation: capability card in developer context, entry-node `allow_tools` merged with skill allowlists, pack `max_turns` / optional token budget for goals auto-continue
+- **CLI** — `navi harness list|show|materialize`; materialize hook after `navi skill install`
+- **Skills CLI** — `navi skill install` / `list`; activate skills via `--skill`
+- **Thread goals** — idle auto-continue model aligned with host/SDK/NAPI goal APIs
+
+### Bug Fixes
+
+- **Goals** — auto-continue when idle (status-based tools), not model checklist dependency
+
+### Changes
+
+- Remove dead `build_runner` / `test_runner` code paths
+- Docs: harness system vision + stakeholder HTML deck; mark MVP status for pack materialize/run path
+- CI: npm trusted publishing workflow (OIDC)
+
+### Bindings
+
+- Workspace crate versions and npm packages (`@navi-agent/navi`, `@navi-agent/napi`) bumped to 0.3.4
+
 ## [0.3.3] - 2026-07-21
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3
@@ -366,7 +394,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/navi-ai-org/navi/compare/v0.3.0...v0.3.1

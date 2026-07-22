@@ -2,7 +2,7 @@
 # Stage platform binaries from a GitHub Release and publish @navi-agent/navi packages.
 #
 # Usage:
-#   ./scripts/publish-npm-from-release.sh v0.3.3
+#   ./scripts/publish-npm-from-release.sh v0.3.4
 #
 # Local: requires `npm login` (or equivalent token).
 # CI (Trusted Publishing / OIDC): set NAVI_NPM_OIDC=1 and workflow permissions:
