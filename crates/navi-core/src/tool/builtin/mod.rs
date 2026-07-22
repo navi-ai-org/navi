@@ -8,7 +8,6 @@ mod code_exec;
 mod code_tool;
 mod edit_tool;
 mod extra_tools;
-mod goal;
 mod helpers;
 mod long_running;
 mod memory;
@@ -28,7 +27,7 @@ mod subagent;
 mod workflow;
 mod write_tool;
 
-pub(super) use goal::SetGoalTool;
+
 
 pub(super) use memory::{AppendNoteTool, HistoryOpsTool, MemoryTool};
 

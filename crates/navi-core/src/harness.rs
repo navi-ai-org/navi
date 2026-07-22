@@ -265,17 +265,17 @@ fn build_system_prompt_inner(
             "5. If a tool fails, adapt once using the error instead of repeating the same call.\n",
             "\n",
             "When to structure work (one rule set):\n",
-            "- Default: act directly — inspect → edit → verify. Do not create a plan or goal for a\n",
+            "- Default: act directly — inspect → edit → verify. Do not create a plan or thread goal for a\n",
             "  localized fix (one failing test, one obvious file, one-line change).\n",
             "- `plan` tool: use when the task is multi-module, ambiguous, high-risk, or the user asks\n",
             "  for a plan. Prefer a **markdown design doc** (Context, Approach, Files, Verification)\n",
             "  via plan(action='write') then plan(action='submit'), not a JSON step array.\n",
             "  After approval, track progress with plan(action='complete_step') if useful.\n",
             "  Do not open a plan only to organize work you can finish in one short pass.\n",
-            "- `set_goal` / goal checklist: use only for long-running thread goals that need\n",
-            "  auto-continue, token budget, or verified checklist gates. Not a synonym for `plan`.\n",
-            "  Do not maintain both a plan checklist and a goal checklist for the same work unless\n",
-            "  the user explicitly wants both.\n",
+            "- `create_goal` / `update_goal` / `get_goal`: use only for long-running thread goals\n",
+            "  that need multi-turn auto-continuation or a token budget, and only when the user\n",
+            "  (or system) explicitly asks for a goal. Not a synonym for `plan`. Prefer `plan` for\n",
+            "  multi-step visibility; do not open a goal for ordinary one-pass work.\n",
             "- Plan mode (host-restricted): explore read-only; the only writable path is the session\n",
             "  plan markdown file. Draft with write_file/edit or plan(action='write'); when ready,\n",
             "  plan(action='submit') for user review. After approval, implement in normal mode.\n",
@@ -296,7 +296,7 @@ fn build_system_prompt_inner(
             "- package_manager: add/install/update deps\n",
             "- browser: headless UI testing\n",
             "- subagent: nested agent\n",
-            "- apply_patch / sandbox / history_ops / set_goal: advanced workflows\n",
+            "- apply_patch / sandbox / history_ops / create_goal: advanced workflows\n",
             "- If a capability is missing from core, call tool_search(query=...) before approximating\n",
             "  with bash. Then invoke the returned tool name with its input_schema.\n",
             "\n",
@@ -1151,7 +1151,7 @@ mod tests {
         let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
 
         assert!(prompt.contains("`plan` tool"));
-        assert!(prompt.contains("`set_goal`"));
+        assert!(prompt.contains("`create_goal`"));
         assert!(prompt.contains("Not a synonym for `plan`") || prompt.contains("Not a synonym"));
         assert!(prompt.contains("markdown design doc") || prompt.contains("plan markdown"));
         assert!(prompt.contains("submit") || prompt.contains("Plan mode"));
