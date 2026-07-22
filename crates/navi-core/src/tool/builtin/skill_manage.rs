@@ -8,9 +8,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use super::helpers;
-use crate::config::NaviConfig;
+use crate::config::{NaviConfig, SkillsConfig};
+use crate::harness_pack::materialize_after_save;
 use crate::skills::{
-    SkillWriteRequest, SkillWriteScope, delete_skill, discover_configured_skills, write_skill,
+    SkillWriteRequest, SkillWriteScope, delete_skill, discover_configured_skills, load_skill_by_id,
+    write_skill,
 };
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -38,6 +40,20 @@ fn parse_scope(value: Option<&serde_json::Value>) -> SkillWriteScope {
     match value.and_then(|v| v.as_str()).unwrap_or("user") {
         "project" => SkillWriteScope::Project,
         _ => SkillWriteScope::User,
+    }
+}
+
+fn parse_bool(value: Option<&serde_json::Value>) -> bool {
+    match value {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => {
+            matches!(
+                s.trim().to_ascii_lowercase().as_str(),
+                "true" | "yes" | "1" | "on"
+            )
+        }
+        Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
+        _ => false,
     }
 }
 
@@ -87,6 +103,7 @@ impl Tool for SkillListTool {
                     "allow_tools": s.allow_tools,
                     "deny_tools": s.deny_tools,
                     "tags": s.tags,
+                    "harness": s.harness,
                     "source": format!("{:?}", s.source).to_lowercase(),
                     "scope": format!("{:?}", s.scope).to_lowercase(),
                 })
@@ -169,6 +186,7 @@ impl Tool for SkillGetTool {
                 "requires": skill.requires,
                 "allow_tools": skill.allow_tools,
                 "deny_tools": skill.deny_tools,
+                "harness": skill.harness,
                 "instructions": skill.instructions,
                 "source": format!("{:?}", skill.source).to_lowercase(),
                 "scope": format!("{:?}", skill.scope).to_lowercase(),
@@ -224,6 +242,10 @@ impl Tool for SkillSaveTool {
                     (
                         "scope",
                         "`user` (default, shared Desktop+TUI) or `project`.",
+                    ),
+                    (
+                        "harness",
+                        "When true, materialize a harness pack (loop.toml/graph.toml) after saving.",
                     ),
                 ],
                 &["name", "instructions"],
@@ -292,11 +314,34 @@ impl Tool for SkillSaveTool {
                 .get("deny_tools")
                 .map(parse_string_list)
                 .unwrap_or_default(),
+            harness: parse_bool(invocation.input.get("harness")),
             instructions,
             scope: parse_scope(invocation.input.get("scope")),
         };
 
         let result = write_skill(&request, &self.project_dir, &self.data_dir)?;
+
+        // Best-effort harness materialize when the skill declares itself a harness
+        // or declares required skills that form a workflow graph.
+        let mut harness_pack: Option<std::path::PathBuf> = None;
+        if result.skill.harness || !result.skill.requires.is_empty() {
+            let mut required = Vec::new();
+            if !result.skill.requires.is_empty() {
+                let mut cfg = SkillsConfig::default();
+                cfg.enabled = true;
+                for req_id in &result.skill.requires {
+                    if let Ok(req) =
+                        load_skill_by_id(&cfg, &self.project_dir, &self.data_dir, req_id)
+                    {
+                        required.push(req);
+                    }
+                }
+            }
+            harness_pack = materialize_after_save(&self.data_dir, &result, &required)
+                .ok()
+                .flatten();
+        }
+
         Ok(helpers::ok(
             invocation.id,
             json!({
@@ -304,7 +349,9 @@ impl Tool for SkillSaveTool {
                 "id": result.skill.id,
                 "name": result.skill.name,
                 "allow_tools": result.skill.allow_tools,
+                "harness": result.skill.harness,
                 "path": result.path.display().to_string(),
+                "harness_pack": harness_pack.map(|p| p.display().to_string()),
                 "source": "store",
             }),
         ))

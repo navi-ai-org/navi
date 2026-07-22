@@ -708,6 +708,7 @@ async fn ensure_system_prompt_freezes_prefix_across_context_changes() {
             requires: vec![],
             allow_tools: vec![],
             deny_tools: vec![],
+            harness: false,
             path: std::path::PathBuf::from("builtin:late-skill"),
             instructions: "skill body".into(),
             source: Default::default(),

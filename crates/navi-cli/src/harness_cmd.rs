@@ -9,6 +9,7 @@ use navi_core::{
 use std::path::Path;
 
 use crate::HarnessAction;
+use std::collections::HashMap;
 
 /// Default direct/deferred tools used when building inventory without a live executor.
 fn default_tool_meta() -> Vec<(String, ToolExposure)> {
@@ -159,6 +160,13 @@ fn materialize(
     let skill = load_skill_by_id(&skills_cfg, cwd, &loaded_config.data_dir, skill_id)
         .with_context(|| format!("skill `{skill_id}` not found"))?;
 
+    let mut required = HashMap::new();
+    for req_id in &skill.requires {
+        if let Ok(req) = load_skill_by_id(&skills_cfg, cwd, &loaded_config.data_dir, req_id) {
+            required.insert(req_id.clone(), req);
+        }
+    }
+
     let mut config = loaded_config.config.clone();
     config.skills.enabled = true;
     let inventory = build_capability_inventory(
@@ -174,6 +182,7 @@ fn materialize(
     if let Some(id) = id_override {
         opts.id_override = Some(id.to_string());
     }
+    opts.required_skills = required;
 
     let pack = materialize_from_skill(&loaded_config.data_dir, &skill, &inventory, opts)?;
 

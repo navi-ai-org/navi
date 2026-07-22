@@ -119,6 +119,7 @@ mod tests {
                 requires: vec![],
                 allow_tools: vec![],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "# Reviewer\nReview carefully.".into(),
                 scope: SkillWriteScope::User,
             },

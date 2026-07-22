@@ -62,6 +62,7 @@ fn install_skill(
         requires: vec![],
         allow_tools: parsed.allow_tools,
         deny_tools: parsed.deny_tools,
+        harness: parsed.harness,
         instructions: parsed.instructions,
         scope,
     };
