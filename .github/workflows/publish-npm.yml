@@ -1,0 +1,122 @@
+# Publish @navi-agent/navi (+ platform packages) via npm Trusted Publishing (OIDC).
+#
+# Prerequisites on npmjs.com (each package, Settings → Trusted Publisher):
+#   Publisher: GitHub Actions
+#   Organization: navi-ai-org
+#   Repository: navi
+#   Workflow filename: publish-npm.yml
+#   Environment name: (leave empty)
+#   Allowed actions: Allow npm publish
+#
+# Packages that must each have this trusted publisher configured:
+#   @navi-agent/navi
+#   @navi-agent/navi-linux-x64
+#   @navi-agent/navi-linux-arm64
+#   @navi-agent/navi-darwin-x64
+#   @navi-agent/navi-darwin-arm64
+#   @navi-agent/navi-win32-x64
+#
+# Trigger: after a GitHub Release is published (assets ready), or manual dispatch.
+#
+# No NPM_TOKEN secret is required. OIDC uses id-token: write.
+# Requires npm CLI ≥ 11.5.1 and Node ≥ 22.14 (trusted publishing).
+
+name: Publish npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.3.3)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write # OIDC for npm trusted publishing
+  contents: read
+
+concurrency:
+  group: publish-npm-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish @navi-agent/navi
+    runs-on: ubuntu-latest
+    # No GitHub Environment — trusted publisher "Environment name" must stay empty on npmjs.com.
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [[ -z "$TAG" ]]; then
+            echo "error: empty release tag" >&2
+            exit 1
+          fi
+          # Skip prerelease tags that contain '-' (e.g. v0.3.3-rc.1) unless forced via dispatch.
+          if [[ "${{ github.event_name }}" == "release" && "$TAG" == *-* ]]; then
+            echo "Skipping prerelease tag $TAG (use workflow_dispatch to publish manually)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Publishing npm packages for $TAG"
+
+      - name: Checkout
+        if: steps.tag.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Node
+        if: steps.tag.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          # Never cache registry auth / install state on release paths.
+          package-manager-cache: false
+
+      - name: Ensure npm supports trusted publishing
+        if: steps.tag.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          node -v
+          npm -v
+          # Trusted publishing needs npm ≥ 11.5.1
+          node -e '
+            const [maj, min, pat] = process.versions.node.split(".").map(Number);
+            if (maj < 22 || (maj === 22 && min < 14)) {
+              console.error("Node >= 22.14 required for npm trusted publishing");
+              process.exit(1);
+            }
+          '
+          npm_ver="$(npm -v)"
+          node -e '
+            const v = process.argv[1].split(".").map(Number);
+            if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) {
+              console.error("npm >= 11.5.1 required, got", process.argv[1]);
+              process.exit(1);
+            }
+          ' "$npm_ver"
+
+      - name: Publish from GitHub Release assets
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          # Prefer OIDC; do not inject write tokens.
+          NAVI_NPM_OIDC: "1"
+          # gh uses GITHUB_TOKEN for private release download if needed; public is fine.
+          GH_TOKEN: ${{ github.token }}
+          NAVI_GITHUB_REPO: ${{ github.repository }}
+        run: ./scripts/publish-npm-from-release.sh "${{ steps.tag.outputs.tag }}"
