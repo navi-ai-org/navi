@@ -169,10 +169,11 @@ pub use skill_mining::{
     SkillDraft, SkillReplayReport, activate_skill_after_replay, draft_skill_from_traces,
 };
 pub use skills::{
-    CREATE_SKILL_ID, SkillManifest, SkillSource, SkillStore, SkillWriteRequest, SkillWriteResult,
-    SkillWriteScope, active_skills, builtin_skills, delete_skill, discover_configured_skills,
-    load_skill_by_id, project_skill_key, skill_is_editable, skill_tool_allowlist, slugify_skill_id,
-    write_skill,
+    CREATE_SKILL_ID, ParsedSkillFile, SkillManifest, SkillSource, SkillStore, SkillWriteRequest,
+    SkillWriteResult, SkillWriteScope, active_skills, builtin_skills, delete_skill,
+    discover_configured_skills, list_installed_skills, load_skill_by_id, parse_skill_file,
+    parse_skill_md, parse_skill_toml, project_skill_key, skill_is_editable, skill_tool_allowlist,
+    slugify_skill_id, write_skill,
 };
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};

@@ -654,12 +654,12 @@ fn import_skill_from_package(
 ) -> Option<String> {
     let skill_md = installed_dir.join("SKILL.md");
     let skill_toml = installed_dir.join("skill.toml");
-    let (name, description, version, tags, instructions) = if skill_md.is_file() {
+    let parsed = if skill_md.is_file() {
         let raw = fs::read_to_string(&skill_md).ok()?;
-        parse_skill_md(&raw)
+        navi_core::parse_skill_file(&skill_md, &raw, "Imported Skill").ok()?
     } else if skill_toml.is_file() {
         let raw = fs::read_to_string(&skill_toml).ok()?;
-        parse_skill_toml(&raw)?
+        navi_core::parse_skill_file(&skill_toml, &raw, "Imported Skill").ok()?
     } else {
         return Some(
             "Skill kind package installed; no SKILL.md/skill.toml found to import.".into(),
@@ -667,16 +667,16 @@ fn import_skill_from_package(
     };
 
     let request = navi_core::SkillWriteRequest {
-        id: String::new(),
-        name,
-        description,
-        version,
-        author: None,
-        tags,
+        id: parsed.id.unwrap_or_default(),
+        name: parsed.name,
+        description: parsed.description,
+        version: parsed.version,
+        author: parsed.author,
+        tags: parsed.tags,
         requires: vec![],
-        allow_tools: vec![],
-        deny_tools: vec![],
-        instructions,
+        allow_tools: parsed.allow_tools,
+        deny_tools: parsed.deny_tools,
+        instructions: parsed.instructions,
         scope: navi_core::SkillWriteScope::User,
     };
     match navi_core::write_skill(&request, project_dir, data_dir) {
@@ -686,69 +686,6 @@ fn import_skill_from_package(
         )),
         Err(e) => Some(format!("Skill package installed; skill import failed: {e}")),
     }
-}
-
-fn parse_skill_md(raw: &str) -> (String, Option<String>, Option<String>, Vec<String>, String) {
-    let trimmed = raw.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("---") {
-        if let Some(end) = rest.find("\n---") {
-            let front = &rest[..end];
-            let body = rest[end + 4..].trim_start_matches('\n').to_string();
-            let mut name = String::new();
-            let mut description = None;
-            let mut version = None;
-            let mut tags = Vec::new();
-            for line in front.lines() {
-                let line = line.trim();
-                if let Some(v) = line.strip_prefix("name:") {
-                    name = v.trim().trim_matches('"').to_string();
-                } else if let Some(v) = line.strip_prefix("description:") {
-                    description = Some(v.trim().trim_matches('"').to_string());
-                } else if let Some(v) = line.strip_prefix("version:") {
-                    version = Some(v.trim().trim_matches('"').to_string());
-                } else if let Some(v) = line.strip_prefix("tags:") {
-                    let t = v.trim();
-                    if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-                        tags = inner
-                            .split(',')
-                            .map(|s| s.trim().trim_matches('"').to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect();
-                    }
-                }
-            }
-            if name.is_empty() {
-                name = "Imported Skill".into();
-            }
-            return (name, description, version, tags, body);
-        }
-    }
-    ("Imported Skill".into(), None, None, vec![], raw.to_string())
-}
-
-fn parse_skill_toml(
-    raw: &str,
-) -> Option<(String, Option<String>, Option<String>, Vec<String>, String)> {
-    #[derive(Deserialize)]
-    struct SkillFile {
-        name: String,
-        #[serde(default)]
-        description: Option<String>,
-        #[serde(default)]
-        version: Option<String>,
-        #[serde(default)]
-        tags: Vec<String>,
-        #[serde(default)]
-        instructions: String,
-    }
-    let file: SkillFile = toml::from_str(raw).ok()?;
-    Some((
-        file.name,
-        file.description,
-        file.version,
-        file.tags,
-        file.instructions,
-    ))
 }
 
 fn import_mcp_from_package(data_dir: &Path, installed_dir: &Path) -> Option<String> {

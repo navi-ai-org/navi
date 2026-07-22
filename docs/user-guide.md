@@ -152,6 +152,8 @@ enabled = false
 | `[logging]` | `include_payloads` | Include raw payloads in logs (debug only). |
 | `[skills]` | `enabled` | Enable skill discovery (store + built-ins). |
 | `[skills]` | `active` | Skill ids to activate automatically. |
+
+Skills live in `<data_dir>/skills.sqlite` (Linux: `~/.local/share/navi/skills.sqlite`). Install from a file with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed.
 | `[mcp]` | `enabled` | Enable MCP client. |
 | `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only. |
 
