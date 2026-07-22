@@ -16,20 +16,31 @@
 #   @navi-agent/navi-darwin-arm64
 #   @navi-agent/navi-win32-x64
 #
-# Trigger: after a GitHub Release is published (assets ready), or manual dispatch.
+# Trigger:
+#   - Called from release.yml after the GitHub Release is created (preferred)
+#   - release: published (fallback if someone creates a release outside release.yml)
+#   - workflow_dispatch (manual republish / recover)
 #
 # No NPM_TOKEN secret is required. OIDC uses id-token: write.
 # Requires npm CLI ≥ 11.5.1 and Node ≥ 22.14 (trusted publishing).
+#
+# Idempotent: packages already on the registry at this version are skipped.
 
 name: Publish npm
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v0.3.4)"
+        required: true
+        type: string
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (e.g. v0.3.3)"
+        description: "Release tag to publish (e.g. v0.3.4)"
         required: true
         type: string
 
@@ -38,7 +49,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-npm-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name || github.ref_name }}
+  # Serialize per tag so release.yml call + release-event fallback do not race.
+  group: publish-npm-${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -52,18 +64,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${{ inputs.tag }}"
-          else
+          # Prefer explicit input (workflow_call / workflow_dispatch).
+          TAG="${{ inputs.tag }}"
+          if [[ -z "$TAG" ]]; then
             TAG="${{ github.event.release.tag_name }}"
           fi
           if [[ -z "$TAG" ]]; then
             echo "error: empty release tag" >&2
             exit 1
           fi
-          # Skip prerelease tags that contain '-' (e.g. v0.3.3-rc.1) unless forced via dispatch.
+          # Skip prerelease tags that contain '-' (e.g. v0.3.4-rc.1) unless forced via dispatch.
           if [[ "${{ github.event_name }}" == "release" && "$TAG" == *-* ]]; then
             echo "Skipping prerelease tag $TAG (use workflow_dispatch to publish manually)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$TAG" == *-* && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "Skipping prerelease tag $TAG"
             echo "skip=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi

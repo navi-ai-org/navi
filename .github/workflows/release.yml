@@ -1,11 +1,12 @@
-# Release workflow — tests, then builds portable navi binaries and publishes
-# a GitHub Release.
+# Release workflow — tests, then builds portable navi binaries, publishes a
+# GitHub Release, then publishes @navi-agent/navi to npm (via publish-npm.yml).
 #
 # Trigger: push a version tag
 #   git tag v0.2.1
 #   git push origin v0.2.1
 #
 # Gates: `test` must pass before any platform build or publish step.
+# After the GitHub Release job succeeds, `publish-npm` runs (skips prereleases).
 #
 # Linux builds use Alpine (musl) containers so the binary runs on:
 #   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
@@ -562,3 +563,21 @@ jobs:
             artifacts/SHA256SUMS.txt.sigstore.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Publish npm packages (after GitHub Release assets exist) ────────────────
+  #
+  # Invokes publish-npm.yml as a reusable workflow so npm OIDC Trusted Publishing
+  # continues to match workflow filename `publish-npm.yml` on npmjs.com.
+  # Skips prerelease tags (contain '-').
+
+  publish-npm:
+    name: Publish npm
+    needs: [release]
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') }}
+    uses: ./.github/workflows/publish-npm.yml
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    permissions:
+      id-token: write
+      contents: read
+    secrets: inherit
