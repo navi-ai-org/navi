@@ -345,10 +345,19 @@ fn action_write(
             "plan_id": plan.id,
             "title": plan.title,
             "plan_file_path": plan_file.display().to_string(),
+            // Include full body so the TUI can render the plan in chat (not only a path).
+            "body_markdown": body,
             "body_chars": body.chars().count(),
+            "steps": plan.steps.iter().map(|s| json!({
+                "description": s.description,
+                "completed": s.completed,
+                "notes": s.notes,
+            })).collect::<Vec<_>>(),
+            "steps_count": plan.steps.len(),
             "needs_review": false,
             "message": format!(
-                "Plan markdown written to {}. Continue editing the file or call plan(action='submit') when ready for review.",
+                "Plan markdown written ({} chars). Call plan(action='submit') when ready for review.\nFile: {}",
+                body.chars().count(),
                 plan_file.display()
             ),
         }),
@@ -1164,6 +1173,11 @@ mod tests {
                 .unwrap()
                 .ends_with(".md")
         );
+        // Clients must receive the markdown body so UIs can show the plan, not only a path.
+        let written = result.output["body_markdown"]
+            .as_str()
+            .expect("body_markdown");
+        assert!(written.contains("## Context") && written.contains("Range picker"));
 
         // submit without body — should read the file
         let submit = make_invocation("s1", json!({ "action": "submit" }));

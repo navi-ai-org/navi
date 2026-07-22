@@ -2184,7 +2184,27 @@ fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
         .unwrap_or("?");
 
     match action {
-        "create" => {
+        "write" => {
+            let title = result
+                .output
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let chars = result
+                .output
+                .get("body_chars")
+                .and_then(|v| v.as_u64())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("body_markdown")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.chars().count() as u64)
+                })
+                .unwrap_or(0);
+            format!("Plan write \"{title}\" ({chars} chars)")
+        }
+        "submit" | "create" => {
             let title = result
                 .output
                 .get("title")
@@ -2198,7 +2218,7 @@ fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
             if result.output.get("needs_review").and_then(|v| v.as_bool()) == Some(true) {
                 format!("Plan \"{title}\" ({steps} steps) · awaiting review")
             } else {
-                format!("Plan create \"{title}\" ({steps} steps)")
+                format!("Plan {action} \"{title}\" ({steps} steps)")
             }
         }
         "update" => {
@@ -2271,7 +2291,7 @@ fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
     }
 }
 
-/// Clean checklist body for plan tools (never pretty-printed JSON).
+/// Clean plan body for chat (markdown design doc preferred; never raw JSON dump).
 fn plan_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
     if !result.ok {
         if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
@@ -2287,13 +2307,47 @@ fn plan_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String
         .unwrap_or("?");
 
     match action {
-        "create" | "update" | "get" | "active" => {
+        "write" | "submit" | "create" | "update" | "get" | "active" => {
             let mut out = String::new();
+
+            // Prefer the markdown design doc — this is the product surface of plan mode.
+            let body_md = result
+                .output
+                .get("body_markdown")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("plan")
+                        .and_then(|p| p.get("body_markdown"))
+                        .and_then(|v| v.as_str())
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            if let Some(md) = body_md {
+                out.push_str(md);
+                out.push('\n');
+                // Path footer for write/submit so the file location is still findable.
+                if matches!(action, "write" | "submit" | "create") {
+                    if let Some(path) = result.output.get("plan_file_path").and_then(|v| v.as_str())
+                    {
+                        out.push('\n');
+                        out.push_str(&format!("_File: {path}_\n"));
+                    }
+                    if action == "write" {
+                        out.push_str("\n_Call plan(action='submit') when ready for review._\n");
+                    }
+                }
+                return out;
+            }
+
+            // Fallback: short status + checklist (legacy / no body_markdown).
             if let Some(msg) = result.output.get("message").and_then(|v| v.as_str()) {
+                // Avoid path-only messages when we have nothing better — still show them.
                 out.push_str(msg);
                 out.push('\n');
             }
-            // Prefer nested plan object (get/active), else top-level create fields.
             let plan_obj = result
                 .output
                 .get("plan")
@@ -4164,5 +4218,48 @@ ctx\n\
             "needs_review": true
         }));
         assert!(!tool_auto_expand(&inv, &res));
+    }
+
+    #[test]
+    fn plan_write_auto_expands_and_shows_markdown_not_only_path() {
+        use super::super::tool_policy::tool_auto_expand;
+        let inv = invocation("plan", json!({ "action": "write" }));
+        let md = "# Coverage gate\n\n## Context\nCI has no coverage.\n\n## Approach\nAdd llvm-cov job.\n";
+        let res = ok_result(json!({
+            "title": "Coverage gate",
+            "body_markdown": md,
+            "body_chars": md.chars().count(),
+            "plan_file_path": "/home/enrell/.local/share/navi/plans/sess/plan.md",
+            "needs_review": false,
+            "message": "Plan markdown written (99 chars). Call plan(action='submit') when ready for review.\nFile: /home/enrell/.local/share/navi/plans/sess/plan.md"
+        }));
+        assert!(
+            tool_auto_expand(&inv, &res),
+            "plan write must expand so users see the design doc"
+        );
+        let content = tool_full_content(&inv, &res);
+        assert!(
+            content.contains("## Context") && content.contains("Add llvm-cov job"),
+            "chat body must show markdown sections, got:\n{content}"
+        );
+        assert!(
+            content.contains("Coverage gate"),
+            "title from markdown should appear: {content}"
+        );
+        // Path may appear as footer, but must not be the only content.
+        let without_path = content.replace("/home/enrell/.local/share/navi/plans/sess/plan.md", "");
+        assert!(
+            without_path.contains("## Approach") || without_path.contains("llvm-cov"),
+            "body must remain meaningful without the path string: {content}"
+        );
+        assert!(
+            !content.contains("\"body_markdown\"") && !content.contains("```json"),
+            "must not dump raw JSON: {content}"
+        );
+        let summary = tool_compact_text(&inv, &res);
+        assert!(
+            summary.contains("write") && summary.contains("Coverage gate"),
+            "header should say plan write + title: {summary}"
+        );
     }
 }

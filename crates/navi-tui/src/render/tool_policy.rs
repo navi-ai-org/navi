@@ -104,8 +104,9 @@ pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult)
 
 /// When to auto-open a `plan` tool body in chat.
 ///
-/// Create/update that open (or just opened) the review modal stay compact.
-/// Errors and short progress updates (complete_step) may expand.
+/// Draft `write` expands so the user sees the markdown design doc in scrollback
+/// (not only a filesystem path). Submit/create that open the review modal stay
+/// compact; the modal is the approval UI.
 fn plan_tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult) -> bool {
     if !result.ok {
         return true;
@@ -116,8 +117,10 @@ fn plan_tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult) -> bo
         .and_then(|v| v.as_str())
         .unwrap_or("");
     match action {
-        // Modal is the plan UI — do not also expand raw JSON/todos in chat.
-        "create" | "update" => false,
+        // Draft: show the full markdown in chat.
+        "write" => true,
+        // Modal is the plan UI — do not also expand a second full copy in chat.
+        "create" | "submit" | "update" => false,
         // Progress updates: compact header is enough (active plan strip shows checklist).
         "complete_step" => false,
         "get" | "list" | "active" => false,
@@ -251,6 +254,25 @@ mod tests {
         let q = inv("question", "q1");
         let q_res = res("q1", true, json!({ "prompt": "ok?" }));
         assert!(tool_auto_expand(&q, &q_res));
+    }
+
+    #[test]
+    fn plan_write_auto_expands() {
+        let mut plan = inv("plan", "pl-w");
+        plan.input = json!({ "action": "write" });
+        let plan_res = res(
+            "pl-w",
+            true,
+            json!({
+                "title": "T",
+                "body_markdown": "# T\n\n## Context\nhello",
+                "needs_review": false
+            }),
+        );
+        assert!(
+            tool_auto_expand(&plan, &plan_res),
+            "draft write should expand the markdown body in chat"
+        );
     }
 
     #[test]
