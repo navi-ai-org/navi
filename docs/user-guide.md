@@ -299,9 +299,10 @@ Headless mode runs a single task and exits:
 
 ```bash
 navi --no-tui "refactor the auth module to use async"
+navi --skill design-harness-orchestrator --no-tui "run the harness"
 ```
 
-Headless mode requires a task argument. Approval is gated by default (no interactive prompt). Use environment variables for API keys in scripts and CI.
+`--skill <id>` (repeatable) enables skills discovery for the run and activates those skills for the session (works for TUI launches too). Headless mode requires a task argument. Approval is gated by default (no interactive prompt). Use environment variables for API keys in scripts and CI.
 
 ## ACP Server Mode
 

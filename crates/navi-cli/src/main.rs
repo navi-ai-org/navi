@@ -62,6 +62,10 @@ struct Cli {
     #[arg(long)]
     restricted: bool,
 
+    /// Activate skill(s) for this session (repeatable). Enables skills discovery when set.
+    #[arg(long = "skill", value_name = "ID", action = clap::ArgAction::Append)]
+    skill: Vec<String>,
+
     #[arg(value_name = "TASK")]
     task: Vec<String>,
 }
@@ -470,6 +474,14 @@ async fn main() -> Result<()> {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::Restricted;
     }
 
+    // CLI --skill: enable discovery for this run and seed the session active set.
+    // Runtime-only; does not persist config.
+    let cli_skills = normalize_skill_ids(cli.skill);
+    if !cli_skills.is_empty() {
+        loaded_config.config.skills.enabled = true;
+        loaded_config.config.skills.active = cli_skills.clone();
+    }
+
     // Handle plugin subcommand early
     if let Some(Commands::Plugin { action }) = cli.command {
         return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd).await;
@@ -571,12 +583,13 @@ async fn main() -> Result<()> {
     let task = normalize_task(cli.task);
     if cli.no_tui {
         tracing::info!(project = %cwd.display(), "starting headless run");
-        run_headless(loaded_config, cwd, task).await?;
+        run_headless(loaded_config, cwd, task, cli_skills).await?;
         return Ok(());
     }
 
     // Onboarding wizard removed — config v2 doesn't track onboarding_completed
     // The TUI will now start normally and prompt for setup if needed.
+    // TUI seeds app.active_skills from loaded_config.config.skills.active (set above when --skill).
 
     tracing::info!(project = %cwd.display(), "starting TUI");
     navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task)?)?;
@@ -637,6 +650,7 @@ async fn run_headless(
     loaded_config: LoadedConfig,
     cwd: PathBuf,
     task: Option<String>,
+    active_skills: Vec<String>,
 ) -> Result<()> {
     let Some(task) = task else {
         anyhow::bail!("headless mode requires a task");
@@ -649,6 +663,7 @@ async fn run_headless(
     tracing::info!(
         provider = %loaded_config.config.model.provider,
         model = %loaded_config.config.model.name,
+        skills = ?active_skills,
         "submitting headless task"
     );
 
@@ -657,7 +672,7 @@ async fn run_headless(
             project_dir: Some(cwd),
             session_id: None,
             context_packets: Vec::new(),
-            active_skills: Vec::new(),
+            active_skills,
             initial_messages: Vec::new(),
             ..NaviSessionRequest::default()
         })
@@ -682,6 +697,49 @@ fn normalize_task(parts: Vec<String>) -> Option<String> {
     let task = parts.join(" ");
     let task = task.trim();
     (!task.is_empty()).then(|| task.to_string())
+}
+
+/// Trim, drop empty entries, and dedupe skill ids while preserving order.
+fn normalize_skill_ids(skills: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(skills.len());
+    for skill in skills {
+        let id = skill.trim();
+        if id.is_empty() {
+            continue;
+        }
+        if !out.iter().any(|existing: &String| existing == id) {
+            out.push(id.to_string());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_skill_ids;
+
+    #[test]
+    fn normalize_skill_ids_trims_dedupes_and_drops_empty() {
+        let input = vec![
+            "  foo  ".into(),
+            "".into(),
+            "bar".into(),
+            "   ".into(),
+            "foo".into(),
+            "baz".into(),
+            "bar".into(),
+        ];
+        assert_eq!(
+            normalize_skill_ids(input),
+            vec!["foo".to_string(), "bar".to_string(), "baz".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalize_skill_ids_empty_input() {
+        assert!(normalize_skill_ids(Vec::new()).is_empty());
+        assert!(normalize_skill_ids(vec!["".into(), "  ".into()]).is_empty());
+    }
 }
 
 /// Initializes the thread-local registry store from the SQLite cache so that
