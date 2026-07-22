@@ -676,6 +676,7 @@ fn import_skill_from_package(
         requires: vec![],
         allow_tools: parsed.allow_tools,
         deny_tools: parsed.deny_tools,
+        harness: false,
         instructions: parsed.instructions,
         scope: navi_core::SkillWriteScope::User,
     };

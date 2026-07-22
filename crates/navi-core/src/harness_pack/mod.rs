@@ -17,7 +17,7 @@ pub use capability::{
     CapabilityInventory, capability_card, filter_tools_to_inventory, inventory_from_tool_names,
 };
 pub use inventory_build::{build_capability_inventory, exposure_list_from_metadata};
-pub use materialize::{MaterializeOptions, materialize_from_skill};
+pub use materialize::{MaterializeOptions, materialize_after_save, materialize_from_skill};
 pub use store::{HarnessPackStore, harness_pack_dir, list_harness_ids, load_pack, write_pack};
 pub use types::{
     GraphEdge, GraphNode, GraphSpec, HarnessPack, LoopSpec, LoopStop, VerifierKind, VerifierSpec,

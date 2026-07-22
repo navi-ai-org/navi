@@ -145,6 +145,7 @@ mod tests {
             requires: vec![],
             allow_tools: allow.iter().map(|s| (*s).to_string()).collect(),
             deny_tools: vec![],
+            harness: false,
             path: PathBuf::from("x"),
             instructions: "do the thing".into(),
             source: SkillSource::Store,

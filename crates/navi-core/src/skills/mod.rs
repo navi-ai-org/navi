@@ -44,6 +44,9 @@ pub struct SkillManifest {
     /// Tools to hide while this skill is active.
     #[serde(default)]
     pub deny_tools: Vec<String>,
+    /// When true, this skill is treated as a harness and materialized into a pack.
+    #[serde(default)]
+    pub harness: bool,
     /// Path to the SQLite store or `builtin:…` marker.
     pub path: PathBuf,
     /// Instruction body when the skill is active.
@@ -244,6 +247,9 @@ pub struct SkillWriteRequest {
     pub allow_tools: Vec<String>,
     #[serde(default)]
     pub deny_tools: Vec<String>,
+    /// When true, materialize a harness pack for this skill after saving.
+    #[serde(default)]
+    pub harness: bool,
     /// Markdown body (instructions). Required non-empty after trim.
     pub instructions: String,
     #[serde(default)]
@@ -356,6 +362,7 @@ pub struct ParsedSkillFile {
     pub tags: Vec<String>,
     pub allow_tools: Vec<String>,
     pub deny_tools: Vec<String>,
+    pub harness: bool,
     pub instructions: String,
 }
 
@@ -380,7 +387,7 @@ pub fn parse_skill_file(path: &Path, raw: &str, fallback_name: &str) -> Result<P
 /// Parse skill markdown with optional YAML-ish frontmatter between `---` fences.
 ///
 /// Supported frontmatter keys: `name`, `description`, `version`, `tags`, `id`,
-/// `author`, `allow_tools`, `deny_tools`. Body after the closing `---` is instructions.
+/// `author`, `allow_tools`, `deny_tools`, `harness`. Body after the closing `---` is instructions.
 pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
     let trimmed = raw.trim_start();
     if let Some(rest) = trimmed.strip_prefix("---") {
@@ -395,6 +402,7 @@ pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
                 .to_string();
             let mut parsed = ParsedSkillFile {
                 instructions: body,
+                harness: false,
                 ..Default::default()
             };
             for line in front.lines() {
@@ -434,6 +442,7 @@ pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
                     "tags" => parsed.tags = parse_yaml_list(value),
                     "allow_tools" => parsed.allow_tools = parse_yaml_list(value),
                     "deny_tools" => parsed.deny_tools = parse_yaml_list(value),
+                    "harness" => parsed.harness = parse_yaml_bool(value),
                     _ => {}
                 }
             }
@@ -479,6 +488,8 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
         #[serde(default)]
         deny_tools: Vec<String>,
         #[serde(default)]
+        harness: bool,
+        #[serde(default)]
         instructions: String,
     }
     let file: SkillFile =
@@ -512,6 +523,7 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
         tags: file.tags,
         allow_tools: file.allow_tools,
         deny_tools: file.deny_tools,
+        harness: file.harness,
         instructions: file.instructions,
     })
 }
@@ -572,6 +584,13 @@ fn parse_yaml_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+fn parse_yaml_bool(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "true" | "yes" | "1" | "on"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,6 +631,7 @@ mod tests {
                 requires: vec![],
                 allow_tools: vec!["read_file".into()],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "Do the thing carefully.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -642,6 +662,7 @@ mod tests {
                 requires: vec!["socratic".into()],
                 allow_tools: vec!["read_file".into(), "bash".into()],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "Review thoroughly.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -668,6 +689,7 @@ mod tests {
             requires: vec![],
             allow_tools: vec!["read_file".into(), "bash".into()],
             deny_tools: vec![],
+            harness: false,
             path: PathBuf::from("a"),
             instructions: "a".into(),
             source: SkillSource::Store,
@@ -683,6 +705,7 @@ mod tests {
             requires: vec![],
             allow_tools: vec!["read_file".into(), "skill_save".into()],
             deny_tools: vec![],
+            harness: false,
             path: PathBuf::from("b"),
             instructions: "b".into(),
             source: SkillSource::Store,
@@ -712,6 +735,7 @@ mod tests {
                 requires: vec![],
                 allow_tools: vec![],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },
@@ -742,6 +766,7 @@ mod tests {
                 requires: vec![],
                 allow_tools: vec![],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "Ask one question first.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -824,6 +849,7 @@ instructions = "Help carefully."
                 requires: vec![],
                 allow_tools: parsed.allow_tools.clone(),
                 deny_tools: parsed.deny_tools.clone(),
+                harness: false,
                 instructions: parsed.instructions.clone(),
                 scope: SkillWriteScope::User,
             },
@@ -853,6 +879,7 @@ instructions = "Help carefully."
                 requires: vec![],
                 allow_tools: vec![],
                 deny_tools: vec![],
+                harness: false,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },

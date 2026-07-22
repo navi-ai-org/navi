@@ -69,6 +69,7 @@ impl SkillStore {
                 deny_tools    TEXT NOT NULL DEFAULT '[]',
                 instructions  TEXT NOT NULL,
                 scope         TEXT NOT NULL DEFAULT 'user',
+                harness       INTEGER NOT NULL DEFAULT 0,
                 project_key   TEXT,
                 created_at    INTEGER NOT NULL,
                 updated_at    INTEGER NOT NULL
@@ -78,6 +79,26 @@ impl SkillStore {
             "#,
         )
         .context("init skills.sqlite schema")?;
+        Self::migrate_add_harness(&conn)?;
+        Ok(())
+    }
+
+    fn migrate_add_harness(conn: &Connection) -> Result<()> {
+        let has_col: bool = conn
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('skills') WHERE name = 'harness'",
+                [],
+                |_| Ok(true),
+            )
+            .optional()?
+            .is_some();
+        if !has_col {
+            conn.execute(
+                "ALTER TABLE skills ADD COLUMN harness INTEGER NOT NULL DEFAULT 0",
+                [],
+            )
+            .context("add harness column to skills")?;
+        }
         Ok(())
     }
 
@@ -86,7 +107,7 @@ impl SkillStore {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare(
             "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                    instructions, scope, project_key
+                    harness, instructions, scope, project_key
              FROM skills ORDER BY name COLLATE NOCASE",
         )?;
         let rows = stmt.query_map([], |row| row_to_manifest(row, &self.path))?;
@@ -104,7 +125,7 @@ impl SkillStore {
         {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                        instructions, scope, project_key
+                        harness, instructions, scope, project_key
                  FROM skills WHERE scope = 'user' ORDER BY name COLLATE NOCASE",
             )?;
             let rows = stmt.query_map([], |row| row_to_manifest(row, &self.path))?;
@@ -115,7 +136,7 @@ impl SkillStore {
         if let Some(pk) = project_key.filter(|s| !s.is_empty()) {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                        instructions, scope, project_key
+                        harness, instructions, scope, project_key
                  FROM skills WHERE scope = 'project' AND project_key = ?1
                  ORDER BY name COLLATE NOCASE",
             )?;
@@ -132,7 +153,7 @@ impl SkillStore {
         let result = conn
             .query_row(
                 "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                        instructions, scope, project_key
+                        harness, instructions, scope, project_key
                  FROM skills WHERE id = ?1",
                 params![id],
                 |row| row_to_manifest(row, &self.path),
@@ -199,8 +220,8 @@ impl SkillStore {
         conn.execute(
             "INSERT INTO skills (
                 id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                instructions, scope, project_key, created_at, updated_at
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?13)
+                instructions, scope, harness, project_key, created_at, updated_at
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14)
              ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name,
                 description=excluded.description,
@@ -212,6 +233,7 @@ impl SkillStore {
                 deny_tools=excluded.deny_tools,
                 instructions=excluded.instructions,
                 scope=excluded.scope,
+                harness=excluded.harness,
                 project_key=excluded.project_key,
                 updated_at=excluded.updated_at",
             params![
@@ -226,6 +248,7 @@ impl SkillStore {
                 deny_tools,
                 instructions,
                 scope,
+                request.harness as i32,
                 project_key.filter(|s| !s.is_empty()),
                 now as i64,
             ],
@@ -278,9 +301,10 @@ fn row_to_manifest(row: &rusqlite::Row<'_>, store_path: &Path) -> rusqlite::Resu
     let requires_raw: String = row.get(6)?;
     let allow_raw: String = row.get(7)?;
     let deny_raw: String = row.get(8)?;
-    let instructions: String = row.get(9)?;
-    let scope: String = row.get(10)?;
-    let _project_key: Option<String> = row.get(11)?;
+    let harness: i32 = row.get(9)?;
+    let instructions: String = row.get(10)?;
+    let scope: String = row.get(11)?;
+    let _project_key: Option<String> = row.get(12)?;
 
     Ok(SkillManifest {
         id,
@@ -292,6 +316,7 @@ fn row_to_manifest(row: &rusqlite::Row<'_>, store_path: &Path) -> rusqlite::Resu
         requires: parse_json_list(&requires_raw),
         allow_tools: parse_json_list(&allow_raw),
         deny_tools: parse_json_list(&deny_raw),
+        harness: harness != 0,
         path: store_path.to_path_buf(),
         instructions,
         source: SkillSource::Store,
@@ -322,6 +347,7 @@ mod tests {
                     requires: vec![],
                     allow_tools: vec!["read_file".into(), "skill_save".into()],
                     deny_tools: vec![],
+                    harness: false,
                     instructions: "Do the demo.".into(),
                     scope: SkillWriteScope::User,
                 },
