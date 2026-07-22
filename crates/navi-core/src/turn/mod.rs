@@ -89,6 +89,8 @@ pub struct TurnContext {
     /// sync, auto-memory index, checkpoints, and rebuilds (avoids reopening
     /// three SQLite DBs every tool-loop iteration).
     pub memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
+    /// Optional harness pack card injected into developer context.
+    pub harness_card: Option<String>,
 }
 
 impl TurnContext {
@@ -247,6 +249,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         context_packets,
         available_skills,
         active_skills,
+        harness_card: ctx.harness_card.clone(),
     };
     let prompt = ctx.components.prompt.clone();
     let prompt_cache = ctx.prompt_cache.clone();

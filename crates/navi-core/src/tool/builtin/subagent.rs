@@ -542,6 +542,7 @@ impl SubagentTool {
             session_id,
             allowed_tool_names,
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
+            harness_card: None,
         };
 
         let policy =
@@ -705,6 +706,7 @@ impl SubagentTool {
                 agent_mode: crate::plan_mode::AgentMode::Default,
                 allowed_tool_names: allowed_tool_names_clone,
                 memory_manager: Arc::new(std::sync::Mutex::new(None)),
+                harness_card: None,
             };
 
             let policy =

@@ -243,11 +243,9 @@ impl Tool for CreateGoalTool {
             .map(limit_short_description);
 
         // Always create a fresh goal id (do not mutate a terminal goal in place).
-        let goal = self.runtime.create_new_goal(
-            objective,
-            short_description,
-            token_budget,
-        );
+        let goal = self
+            .runtime
+            .create_new_goal(objective, short_description, token_budget);
         self.runtime.set_auto_continue(true);
         emit_goal_updated(&context, &goal);
 
@@ -450,7 +448,11 @@ impl UpdateGoalChecklistTool {
                 "additionalProperties": false
             }),
             metadata: ToolMetadata {
-                tags: vec!["goal".to_string(), "session".to_string(), "host".to_string()],
+                tags: vec![
+                    "goal".to_string(),
+                    "session".to_string(),
+                    "host".to_string(),
+                ],
                 capabilities: vec!["goal.update".to_string()],
                 exposure: crate::tool::ToolExposure::Internal,
                 ..ToolMetadata::default()
@@ -521,7 +523,10 @@ impl Tool for UpdateGoalChecklistTool {
                 }
             }
             "update" => {
-                let task_id = args.get("task_id").and_then(|v| v.as_u64()).map(|v| v as usize);
+                let task_id = args
+                    .get("task_id")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
                 let status_str = args.get("status").and_then(|v| v.as_str());
                 let (Some(task_id), Some(status_str)) = (task_id, status_str) else {
                     return Ok(make_result(

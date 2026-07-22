@@ -1037,6 +1037,7 @@ mod tests {
             session_id: "test-session".to_string(),
             allowed_tool_names: None,
             memory_manager: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            harness_card: None,
         });
 
         let policy = crate::harness::policy_for_profile(

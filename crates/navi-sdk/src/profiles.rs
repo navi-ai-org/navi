@@ -275,6 +275,7 @@ mod tests {
             context_packets: Vec::new(),
             available_skills: Vec::new(),
             active_skills: Vec::new(),
+            harness_card: None,
         };
         let code = ProfilePromptBuilder::new(NaviPromptProfile::CodeAgent)
             .build(input(), cache.clone())

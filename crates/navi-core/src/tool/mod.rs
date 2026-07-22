@@ -28,8 +28,8 @@ use builtin::{
     HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
     NewContextWindowTool, PackageManagerTool, PlanTool, QuestionTool, ReadTool,
     RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool,
-    builtin_metadata, truncate_tool_result,
+    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata,
+    truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};

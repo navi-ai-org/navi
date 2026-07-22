@@ -14,6 +14,7 @@ pub mod event;
 mod fs_util;
 pub mod goal;
 pub mod harness;
+pub mod harness_pack;
 pub mod logging;
 pub mod mcp_firewall;
 pub mod memory;
@@ -105,6 +106,14 @@ pub use goal::{
 pub use harness::{
     AgentRunState, HarnessPolicy, build_system_prompt, build_system_prompt_with_memory,
     compact_tool_observation, record_tool_call, select_harness_policy, tool_error_result,
+};
+pub use harness_pack::{
+    CapabilityInventory, GraphEdge, GraphNode, GraphSpec, HarnessApplyResult, HarnessPack,
+    HarnessPackStore, LoopSpec, MaterializeOptions, VerifierKind,
+    VerifierSpec as HarnessVerifierSpec, apply_harness_for_skills, build_capability_inventory,
+    capability_card, effective_allow_tools_for_pack, filter_tools_to_inventory, harness_pack_dir,
+    inventory_from_tool_names, list_harness_ids, load_pack, materialize_from_skill,
+    merge_allow_tools, write_pack,
 };
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};

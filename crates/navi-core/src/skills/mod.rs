@@ -481,9 +481,8 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
         #[serde(default)]
         instructions: String,
     }
-    let file: SkillFile = toml::from_str(raw).map_err(|e| {
-        anyhow::anyhow!("failed to parse skill TOML: {e}")
-    })?;
+    let file: SkillFile =
+        toml::from_str(raw).map_err(|e| anyhow::anyhow!("failed to parse skill TOML: {e}"))?;
     let mut name = file
         .name
         .map(|s| s.trim().to_string())

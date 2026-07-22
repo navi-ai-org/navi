@@ -253,6 +253,7 @@ async fn test_turn_loop_with_parallel_tools() {
         session_id: "test-session".to_string(),
         allowed_tool_names: None,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
+        harness_card: None,
     };
 
     let mut messages = vec![];
@@ -515,6 +516,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
+        harness_card: None,
     };
     let policy = crate::harness::policy_for_profile(
         &crate::config::HarnessConfig {
@@ -614,6 +616,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
+        harness_card: None,
     }
 }
 
