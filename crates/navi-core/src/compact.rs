@@ -621,7 +621,7 @@ If the conversation has an active plan (via the plan tool) or an in-progress Pla
 - All steps with completion status
 - Which step to work on next
 If there is no active plan, skip this section.
-Also note any active thread goal (set_goal) separately if present — do not conflate plan and goal.
+Also note any active thread goal (create_goal/update_goal) separately if present — do not conflate plan and goal.
 ## 10. Next Step (Optional)
 List the next step you would take on the current task.
 

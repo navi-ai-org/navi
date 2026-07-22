@@ -566,24 +566,8 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 ..ToolMetadata::default()
             },
         );
-        insert(
-            &mut map,
-            "set_goal",
-            ToolMetadata {
-                namespace: "goal".to_string(),
-                risk: crate::tool::ToolRisk::Medium,
-                is_read_only: false,
-                is_concurrency_safe: false,
-                // Deferred power tool: discover via tool_search; keep core schema small.
-                exposure: crate::tool::ToolExposure::Deferred,
-                capabilities: vec!["goal.create".to_string()],
-                tags: vec!["goal", "session", "long-running"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                ..ToolMetadata::default()
-            },
-        );
+        // Thread goal tools (get_goal/create_goal/update_goal) are registered by
+        // the runtime when goals are enabled; their metadata comes from ToolDefinition.
         insert(
             &mut map,
             "set_session_title",
@@ -669,7 +653,6 @@ mod tests {
             "sandbox",
             "tool_search",
             "memory",
-            "set_goal",
             "set_session_title",
         ];
         for name in &tool_names {
@@ -764,7 +747,6 @@ mod tests {
             "repo_explore",
             "browser",
             "subagent",
-            "set_goal",
         ] {
             let meta = builtin_metadata(name, ToolKind::Read);
             assert_eq!(

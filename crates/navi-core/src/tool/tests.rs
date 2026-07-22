@@ -2110,7 +2110,6 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
         "code_edit",
         "ast_search",
         "package_manager",
-        "set_goal",
         "sandbox",
         "append_note",
         "history_ops",
@@ -2127,6 +2126,16 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
             "deferred tool {deferred} should remain registered"
         );
     }
+    // set_goal is no longer a model tool; hosts use the SDK and the model uses
+    // create_goal/get_goal/update_goal when goals are enabled.
+    assert!(
+        !names.iter().any(|n| n == "set_goal"),
+        "set_goal must not appear in the model schema: {names:?}"
+    );
+    assert!(
+        executor.definition("set_goal").is_none(),
+        "set_goal must not remain registered as a deferred alias"
+    );
     // Runtime-only tools (registered by AgentRuntime, not bare ToolExecutor).
     assert!(!names.iter().any(|n| n == "repo_explore"));
     // Still invokable by name even if hidden from schema.

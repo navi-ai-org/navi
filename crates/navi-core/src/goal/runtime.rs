@@ -66,6 +66,10 @@ impl GoalRuntimeHandle {
     }
 
     /// Sets or replaces the goal with an optional compact UI label.
+    ///
+    /// When a goal already exists, mutates it in place (same `goal_id`) and
+    /// re-activates it — used by host/SDK `set_goal`. Model `create_goal` must
+    /// call [`create_new_goal`] so terminal goals get a fresh id.
     pub fn set_objective_with_short_description(
         &self,
         objective: String,
@@ -102,6 +106,31 @@ impl GoalRuntimeHandle {
                 Some(GoalAccountingState::new(cloned.clone()));
             cloned
         }
+    }
+
+    /// Creates a brand-new active goal (new `goal_id`), replacing any prior goal.
+    ///
+    /// Caller must ensure there is no unfinished goal when this is used from the
+    /// model-facing `create_goal` tool.
+    pub fn create_new_goal(
+        &self,
+        objective: String,
+        short_description: Option<String>,
+        token_budget: Option<i64>,
+    ) -> SessionGoal {
+        let session_id = self
+            .session_id
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_default();
+        let mut new_goal = SessionGoal::new(session_id, objective, token_budget);
+        new_goal.short_description = short_description;
+        let cloned = new_goal.clone();
+        *self.goal.write().unwrap_or_else(|e| e.into_inner()) = Some(new_goal);
+        *self.accounting.write().unwrap_or_else(|e| e.into_inner()) =
+            Some(GoalAccountingState::new(cloned.clone()));
+        cloned
     }
 
     /// Updates the stored goal (used after status transitions).

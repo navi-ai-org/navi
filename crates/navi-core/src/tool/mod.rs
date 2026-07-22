@@ -28,7 +28,7 @@ use builtin::{
     HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
     NewContextWindowTool, PackageManagerTool, PlanTool, QuestionTool, ReadTool,
     RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SetGoalTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool,
+    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool,
     builtin_metadata, truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
@@ -1167,7 +1167,8 @@ impl ToolExecutor {
         self.register(HistoryOpsTool::new(pr.clone()));
         self.register(CurrentTimeTool::new());
         self.register(SleepTool::new());
-        self.register(SetGoalTool);
+        // Thread goals are model tools get_goal/create_goal/update_goal (registered
+        // when goals are enabled). Hosts set goals via the SDK, not a deferred alias.
         self.register(ContextRemainingTool::new(pr.clone()));
         self.register(RequestUserInputTool::new());
         self.register(SandboxTool::new(pr.clone()));

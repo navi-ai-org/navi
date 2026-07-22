@@ -17,8 +17,7 @@ use crate::event::{
     RuntimeEventKind, SudoPasswordResponse,
 };
 use crate::goal::{
-    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService,
-    UpdateGoalChecklistTool, UpdateGoalTool,
+    CreateGoalTool, GetGoalTool, GoalExtension, GoalRuntimeHandle, GoalService, UpdateGoalTool,
 };
 use crate::harness::select_harness_policy;
 use crate::model::{ModelMessage, ModelProvider, ModelResponse};
@@ -907,7 +906,59 @@ impl AgentRuntime {
     ///
     /// When `content_parts` is non-empty, the message is created as a
     /// multimodal user message containing both text and images.
+    ///
+    /// After a successful turn, if a thread goal is still active, runs automatic
+    /// continuation turns (idle lifecycle) until the goal stops, the auto-continue
+    /// limit is hit, plan mode is on, or the user has pending input.
     pub async fn send_turn_with_parts(
+        &mut self,
+        task: String,
+        content_parts: Vec<crate::model::ContentPart>,
+        thinking_override: Option<crate::model::ThinkingConfig>,
+    ) -> Result<ModelResponse> {
+        let mut response = self
+            .send_turn_once(task, content_parts, thinking_override)
+            .await?;
+
+        let goals_config = self.goals_config();
+        let mut auto_continue_count = 0u32;
+        loop {
+            if !goals_config.enabled {
+                break;
+            }
+            if goals_config.max_auto_continue_turns > 0
+                && auto_continue_count >= goals_config.max_auto_continue_turns
+            {
+                self.goal_runtime
+                    .record_blocked_turn("auto-continuation limit reached");
+                if let Some(goal) = self.goal_runtime.get_goal() {
+                    self.publish_goal_updated(&goal);
+                }
+                break;
+            }
+            if self.has_pending_user_input() {
+                break;
+            }
+            let Some(prompt) = self.goal_idle_prompt() else {
+                break;
+            };
+            auto_continue_count += 1;
+            tracing::info!(
+                auto_continue_count,
+                "starting automatic goal continuation turn"
+            );
+            // Continuation is injected as a model-visible steering message (not a
+            // host/user chat turn). Content matches the goal steering template.
+            response = self
+                .send_turn_once(prompt, Vec::new(), None)
+                .await?;
+        }
+
+        Ok(response)
+    }
+
+    /// Single turn without goal auto-continuation.
+    async fn send_turn_once(
         &mut self,
         task: String,
         content_parts: Vec<crate::model::ContentPart>,
@@ -1598,10 +1649,11 @@ impl AgentRuntime {
         if !goals_enabled {
             return;
         }
+        // Model-facing goal surface: get / create / update only.
+        // Host checklist mutations stay on the SDK/server API, not the model schema.
         executor.register_tool(Arc::new(GetGoalTool::new(goal_runtime.clone())));
         executor.register_tool(Arc::new(CreateGoalTool::new(goal_runtime.clone())));
-        executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime.clone())));
-        executor.register_tool(Arc::new(UpdateGoalChecklistTool::new(goal_runtime)));
+        executor.register_tool(Arc::new(UpdateGoalTool::new(goal_runtime)));
     }
 
     /// Returns the configured tool executor, if any.

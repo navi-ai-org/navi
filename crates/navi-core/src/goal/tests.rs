@@ -167,7 +167,7 @@ mod tests {
         assert!(runtime.record_tokens(30)); // exceeds 100
         let prompt = runtime.budget_limit_prompt();
         assert!(prompt.is_some());
-        assert!(prompt.unwrap().contains("Budget Limit Reached"));
+        assert!(prompt.unwrap().contains("budget_limited"));
     }
 
     #[test]
@@ -193,73 +193,63 @@ mod tests {
             .invoke(ToolInvocation {
                 id: "goal-update-1".to_string(),
                 tool_name: "update_goal".to_string(),
-                input: json!({ "action": "complete" }),
+                input: json!({ "status": "complete" }),
             })
             .await
             .expect("update goal");
-        // Without a checklist, complete should be rejected.
-        assert!(!result.ok);
+        // Completion does not require a checklist; model may mark complete when verified.
+        assert!(result.ok);
 
         runtime.finish_turn();
         let goal = runtime.get_goal().unwrap();
-        assert_eq!(goal.status, GoalStatus::Active);
+        assert_eq!(goal.status, GoalStatus::Complete);
     }
 
     #[tokio::test]
-    async fn update_goal_blocked_preserves_consecutive_count() {
+    async fn update_goal_blocked_sets_status() {
         let runtime = Arc::new(GoalRuntimeHandle::new(None));
         runtime.set_session_id("sess-1");
         runtime.set_objective("test".into(), None);
         let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
 
-        for expected_count in 1..=3 {
-            let result = tool
-                .invoke(ToolInvocation {
-                    id: format!("goal-blocked-{expected_count}"),
-                    tool_name: "update_goal".to_string(),
-                    input: json!({
-                        "action": "blocked",
-                        "reason": "same blocker"
-                    }),
-                })
-                .await
-                .expect("update goal");
-            assert!(result.ok);
-            assert_eq!(
-                result.output["consecutive_blocked_turns"].as_u64(),
-                Some(expected_count)
-            );
-        }
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "goal-blocked-1".to_string(),
+                tool_name: "update_goal".to_string(),
+                input: json!({ "status": "blocked" }),
+            })
+            .await
+            .expect("update goal");
+        assert!(result.ok);
 
         let goal = runtime.get_goal().unwrap();
         assert_eq!(goal.status, GoalStatus::Blocked);
-        assert_eq!(goal.consecutive_blocked_turns, 3);
-        assert_eq!(goal.block_reason.as_deref(), Some("same blocker"));
     }
 
     #[tokio::test]
-    async fn update_goal_cannot_resume_terminal_goal() {
+    async fn update_goal_rejects_pause_resume_from_model() {
         let runtime = Arc::new(GoalRuntimeHandle::new(None));
         runtime.set_session_id("sess-1");
-        let mut goal = runtime.set_objective("test".into(), Some(10));
-        goal.transition_to(GoalStatus::BudgetLimited);
-        runtime.update_goal(goal);
+        runtime.set_objective("test".into(), None);
 
         let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
         let result = tool
             .invoke(ToolInvocation {
                 id: "goal-resume-terminal".to_string(),
                 tool_name: "update_goal".to_string(),
-                input: json!({ "action": "resume" }),
+                input: json!({ "status": "resume" }),
             })
             .await
             .expect("update goal");
 
         assert!(!result.ok);
-        assert_eq!(
-            runtime.get_goal().unwrap().status,
-            GoalStatus::BudgetLimited
+        assert!(
+            result.output["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("complete or blocked")
         );
+        assert_eq!(runtime.get_goal().unwrap().status, GoalStatus::Active);
     }
 
     #[test]
@@ -326,9 +316,10 @@ mod tests {
         let goal = SessionGoal::new("x".into(), "build feature Y".into(), Some(1000));
         let prompt = crate::goal::steering::build_continuation_prompt(&goal);
         assert!(prompt.contains("build feature Y"));
-        assert!(prompt.contains("Active Thread Goal"));
-        assert!(prompt.contains("Completion Audit"));
-        assert!(prompt.contains("Blocked Audit"));
+        assert!(prompt.contains("<objective>"));
+        assert!(prompt.contains("Completion audit"));
+        assert!(prompt.contains("Blocked audit"));
+        assert!(prompt.contains("update_goal"));
     }
 
     #[test]
@@ -336,7 +327,8 @@ mod tests {
         let mut goal = SessionGoal::new("x".into(), "task".into(), Some(10));
         goal.record_tokens(15);
         let prompt = crate::goal::steering::build_budget_limit_prompt(&goal);
-        assert!(prompt.contains("Budget Limit Reached"));
+        assert!(prompt.contains("token budget"));
+        assert!(prompt.contains("budget_limited"));
         assert!(prompt.contains("task"));
     }
 
@@ -344,7 +336,8 @@ mod tests {
     fn steering_objective_updated() {
         let goal = SessionGoal::new("x".into(), "new task".into(), None);
         let prompt = crate::goal::steering::build_objective_updated_prompt(&goal);
-        assert!(prompt.contains("Objective Updated"));
+        assert!(prompt.contains("objective was edited"));
+        assert!(prompt.contains("<untrusted_objective>"));
         assert!(prompt.contains("new task"));
     }
 
@@ -353,12 +346,12 @@ mod tests {
     #[test]
     fn goal_tool_definitions_exist() {
         let defs = crate::goal::goal_tool_definitions();
-        assert_eq!(defs.len(), 4);
+        assert_eq!(defs.len(), 3);
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"get_goal"));
         assert!(names.contains(&"create_goal"));
         assert!(names.contains(&"update_goal"));
-        assert!(names.contains(&"update_goal_checklist"));
+        assert!(!names.contains(&"update_goal_checklist"));
     }
 
     #[test]
@@ -541,7 +534,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn complete_blocked_without_checklist() {
+    async fn complete_allowed_without_checklist() {
         let runtime = Arc::new(GoalRuntimeHandle::new(None));
         runtime.set_session_id("sess-1");
         runtime.set_objective("test".into(), None);
@@ -551,74 +544,59 @@ mod tests {
             .invoke(ToolInvocation {
                 id: "t1".into(),
                 tool_name: "update_goal".into(),
-                input: json!({ "action": "complete" }),
-            })
-            .await
-            .expect("invoke");
-        assert!(!result.ok);
-        assert!(
-            result.output["error"]
-                .as_str()
-                .unwrap()
-                .contains("checklist")
-        );
-    }
-
-    #[tokio::test]
-    async fn complete_blocked_with_unfinished_tasks() {
-        let runtime = Arc::new(GoalRuntimeHandle::new(None));
-        runtime.set_session_id("sess-1");
-        runtime.set_objective("test".into(), None);
-
-        // Set a checklist with one pending task
-        runtime.update_checklist(vec![crate::goal::types::GoalTask::new(
-            0,
-            "implement feature".into(),
-        )]);
-
-        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
-        let result = tool
-            .invoke(ToolInvocation {
-                id: "t1".into(),
-                tool_name: "update_goal".into(),
-                input: json!({ "action": "complete" }),
-            })
-            .await
-            .expect("invoke");
-        assert!(!result.ok);
-        assert!(
-            result.output["error"]
-                .as_str()
-                .unwrap()
-                .contains("unfinished")
-        );
-    }
-
-    #[tokio::test]
-    async fn complete_allowed_with_all_verified() {
-        let runtime = Arc::new(GoalRuntimeHandle::new(None));
-        runtime.set_session_id("sess-1");
-        runtime.set_objective("test".into(), None);
-
-        // Set checklist and verify all tasks
-        runtime.update_checklist(vec![
-            crate::goal::types::GoalTask::new(0, "task 0".into()),
-            crate::goal::types::GoalTask::new(1, "task 1".into()),
-        ]);
-        runtime.update_task_status(0, crate::goal::types::TaskStatus::Verified);
-        runtime.update_task_status(1, crate::goal::types::TaskStatus::Verified);
-
-        let tool = crate::goal::UpdateGoalTool::new(runtime.clone());
-        let result = tool
-            .invoke(ToolInvocation {
-                id: "t1".into(),
-                tool_name: "update_goal".into(),
-                input: json!({ "action": "complete" }),
+                input: json!({ "status": "complete" }),
             })
             .await
             .expect("invoke");
         assert!(result.ok);
         assert_eq!(runtime.get_goal().unwrap().status, GoalStatus::Complete);
+    }
+
+    #[tokio::test]
+    async fn create_goal_fails_when_unfinished_goal_exists() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        runtime.set_objective("first".into(), None);
+
+        let tool = crate::goal::CreateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "create_goal".into(),
+                input: json!({ "objective": "second" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(!result.ok);
+        assert!(
+            result.output["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("unfinished goal")
+        );
+        assert_eq!(runtime.get_goal().unwrap().objective, "first");
+    }
+
+    #[tokio::test]
+    async fn create_goal_allowed_after_complete() {
+        let runtime = Arc::new(GoalRuntimeHandle::new(None));
+        runtime.set_session_id("sess-1");
+        let mut goal = runtime.set_objective("first".into(), None);
+        goal.transition_to(GoalStatus::Complete);
+        runtime.update_goal(goal);
+
+        let tool = crate::goal::CreateGoalTool::new(runtime.clone());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "t1".into(),
+                tool_name: "create_goal".into(),
+                input: json!({ "objective": "second" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(runtime.get_goal().unwrap().objective, "second");
+        assert_eq!(runtime.get_goal().unwrap().status, GoalStatus::Active);
     }
 
     #[tokio::test]
@@ -688,37 +666,19 @@ mod tests {
     }
 
     #[test]
-    fn steering_prompt_shows_checklist_warning_when_empty() {
+    fn steering_prompt_mentions_plan_for_multi_step() {
         let goal = SessionGoal::new("s1".into(), "do stuff".into(), None);
         let prompt = crate::goal::steering::build_continuation_prompt(&goal);
-        assert!(prompt.contains("NO CHECKLIST DEFINED"));
+        assert!(prompt.contains("`plan`"));
+        assert!(prompt.contains("Completion audit"));
     }
 
     #[test]
-    fn steering_prompt_shows_checklist_progress() {
-        let mut goal = SessionGoal::new("s1".into(), "do stuff".into(), None);
-        goal.checklist = vec![
-            crate::goal::types::GoalTask {
-                id: 0,
-                description: "task A".into(),
-                status: crate::goal::types::TaskStatus::Verified,
-                verification: Some("cargo test".into()),
-                verified: true,
-            },
-            crate::goal::types::GoalTask {
-                id: 1,
-                description: "task B".into(),
-                status: crate::goal::types::TaskStatus::InProgress,
-                verification: None,
-                verified: false,
-            },
-        ];
+    fn steering_prompt_includes_budget_fields() {
+        let goal = SessionGoal::new("s1".into(), "do stuff".into(), Some(50_000));
         let prompt = crate::goal::steering::build_continuation_prompt(&goal);
-        assert!(prompt.contains("1/2 verified"));
-        assert!(prompt.contains("task A"));
-        assert!(prompt.contains("task B"));
-        assert!(prompt.contains("▶"));
-        assert!(prompt.contains("✓"));
+        assert!(prompt.contains("Tokens used:"));
+        assert!(prompt.contains("50000"));
     }
 
     // ── End-to-end tool path (real tools, real runtime) ────────
@@ -774,7 +734,6 @@ mod tests {
         let rt = Arc::new(GoalRuntimeHandle::new(None));
         rt.set_session_id("sess-lifecycle");
         let create = crate::goal::CreateGoalTool::new(rt.clone());
-        let checklist = crate::goal::UpdateGoalChecklistTool::new(rt.clone());
         let update = crate::goal::UpdateGoalTool::new(rt.clone());
         let get = crate::goal::GetGoalTool::new(rt.clone());
         let ctx = ToolInvocationContext::default();
@@ -792,52 +751,15 @@ mod tests {
             .await
             .unwrap();
         assert!(r.ok);
+        assert!(rt.continue_if_idle().is_some());
 
-        // checklist
-        let r = checklist
-            .invoke_with_context(
-                ToolInvocation {
-                    id: "2".into(),
-                    tool_name: "update_goal_checklist".into(),
-                    input: json!({
-                        "action": "set",
-                        "tasks": ["step one", "step two"]
-                    }),
-                },
-                ctx.clone(),
-            )
-            .await
-            .unwrap();
-        assert!(r.ok);
-
-        // verify both tasks
-        for id in [0usize, 1usize] {
-            let r = checklist
-                .invoke_with_context(
-                    ToolInvocation {
-                        id: format!("v{id}"),
-                        tool_name: "update_goal_checklist".into(),
-                        input: json!({
-                            "action": "update",
-                            "task_id": id,
-                            "status": "verified",
-                            "verification": "unit test"
-                        }),
-                    },
-                    ctx.clone(),
-                )
-                .await
-                .unwrap();
-            assert!(r.ok, "{:?}", r.output);
-        }
-
-        // complete
+        // complete (no checklist required)
         let r = update
             .invoke_with_context(
                 ToolInvocation {
                     id: "done".into(),
                     tool_name: "update_goal".into(),
-                    input: json!({"action": "complete"}),
+                    input: json!({"status": "complete"}),
                 },
                 ctx.clone(),
             )
@@ -858,7 +780,7 @@ mod tests {
             .await
             .unwrap();
         assert!(r.ok);
-        assert_eq!(r.output["status"], "complete");
+        assert_eq!(r.output["goal"]["status"], "complete");
 
         // clear
         rt.clear_goal();
@@ -867,44 +789,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_goal_pause_and_resume_toggle_auto_continue() {
-        use crate::tool::ToolInvocationContext;
-
+    async fn host_pause_and_resume_toggle_auto_continue() {
         let rt = Arc::new(GoalRuntimeHandle::new(None));
         rt.set_session_id("sess-pause");
         rt.set_objective("work".into(), None);
-        let update = crate::goal::UpdateGoalTool::new(rt.clone());
-        let ctx = ToolInvocationContext::default();
 
         assert!(rt.continue_if_idle().is_some());
 
-        let r = update
-            .invoke_with_context(
-                ToolInvocation {
-                    id: "p".into(),
-                    tool_name: "update_goal".into(),
-                    input: json!({"action": "pause"}),
-                },
-                ctx.clone(),
-            )
-            .await
-            .unwrap();
-        assert!(r.ok);
+        // Pause/resume are host/system-controlled (not model update_goal).
+        let mut goal = rt.get_goal().unwrap();
+        goal.transition_to(GoalStatus::Paused);
+        rt.update_goal(goal);
+        rt.set_auto_continue(false);
         assert_eq!(rt.get_goal().unwrap().status, GoalStatus::Paused);
         assert!(rt.continue_if_idle().is_none());
 
-        let r = update
-            .invoke_with_context(
-                ToolInvocation {
-                    id: "r".into(),
-                    tool_name: "update_goal".into(),
-                    input: json!({"action": "resume"}),
-                },
-                ctx,
-            )
-            .await
-            .unwrap();
-        assert!(r.ok);
+        let mut goal = rt.get_goal().unwrap();
+        goal.transition_to(GoalStatus::Active);
+        rt.update_goal(goal);
+        rt.set_auto_continue(true);
         assert_eq!(rt.get_goal().unwrap().status, GoalStatus::Active);
         assert!(rt.continue_if_idle().is_some());
     }
