@@ -341,7 +341,7 @@ impl Tool for SubagentTool {
                     },
                     "options": {
                         "type": "object",
-                        "description": "Subagent behavior options: agent profile, model override, tool restrictions, and approval mode.",
+                        "description": "Subagent behavior options: agent profile, model override, tool restrictions, approval mode, and optional workflow write-path scope.",
                         "properties": {
                             "agent_profile": {
                                 "type": "string",
@@ -365,6 +365,24 @@ impl Tool for SubagentTool {
                             "max_tokens": {
                                 "type": "integer",
                                 "description": "Maximum tokens for the subagent's response."
+                            },
+                            "write_allow": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Workflow write-path allowlist (relative paths). When set, forks a WritePathScope so only these paths may be written."
+                            },
+                            "path_deny": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Workflow path deny list (relative paths). Always wins over write_allow."
+                            },
+                            "create_files": {
+                                "type": "boolean",
+                                "description": "When true (with write_allow), allow creating new files under the write scope. Default false for workflow workers."
+                            },
+                            "create_dirs": {
+                                "type": "boolean",
+                                "description": "When true (with write_allow), allow creating directories under the write scope. Default false for workflow workers."
                             }
                         },
                         "additionalProperties": false
@@ -1311,6 +1329,75 @@ mod tests {
         let opts: SubagentOptions = serde_json::from_value(json).unwrap();
         assert_eq!(opts.profile, Some(AgentProfile::Explorer));
         assert_eq!(opts.approval, ApprovalMode::Inherit);
+    }
+
+    #[test]
+    fn subagent_options_serde_workflow_write_scope() {
+        let json = json!({
+            "agent_profile": "explorer",
+            "tools": ["read_file", "search"],
+            "approval": "read_only",
+            "write_allow": [],
+            "path_deny": ["secrets/"],
+            "create_files": false,
+            "create_dirs": false
+        });
+        let opts: SubagentOptions = serde_json::from_value(json).unwrap();
+        assert_eq!(opts.profile, Some(AgentProfile::Explorer));
+        assert_eq!(opts.write_allow.as_deref(), Some([].as_slice()));
+        assert_eq!(
+            opts.path_deny.as_deref(),
+            Some(["secrets/".to_string()].as_slice())
+        );
+        assert_eq!(opts.create_files, Some(false));
+        assert_eq!(opts.create_dirs, Some(false));
+    }
+
+    #[test]
+    fn schema_accepts_workflow_bridge_options() {
+        // Mirrors SubagentBridgeBackend::run_agent options payload. Regression for:
+        // "Additional properties are not allowed ('create_dirs', 'create_files', ...)"
+        // Build a throwaway tool only for its schema (no model calls).
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            Arc::new(PromptCache::new()),
+            RuntimeComponents::default(),
+        );
+        let schema = tool.definition().input_schema;
+        let validator = jsonschema::validator_for(&schema).expect("compile schema");
+        let instance = json!({
+            "prompt": "list files",
+            "description": "collect",
+            "options": {
+                "agent_profile": "explorer",
+                "tools": ["read_file", "search", "list_dir"],
+                "approval": "read_only",
+                "write_allow": [],
+                "path_deny": [],
+                "create_files": false,
+                "create_dirs": false
+            }
+        });
+        let errors: Vec<String> = validator
+            .iter_errors(&instance)
+            .map(|e| e.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "workflow bridge options must pass subagent schema: {errors:?}"
+        );
     }
 
     #[test]
