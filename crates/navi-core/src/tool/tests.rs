@@ -1710,8 +1710,6 @@ async fn fs_browser_list_skips_hidden_and_build_dirs() {
     assert!(!file_strs.iter().any(|f| f.contains("target")));
 }
 
-// ── test_runner regression tests ─────────────────────────────────────────────
-
 // ── package_manager regression tests ─────────────────────────────────────────
 
 #[test]
