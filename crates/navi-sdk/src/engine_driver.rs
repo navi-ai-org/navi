@@ -93,10 +93,7 @@ pub trait EngineDriver: Send + Sync {
     async fn close_session(&self, session_id: &str) -> Result<bool>;
 
     /// Current thread goal, if any.
-    async fn get_goal(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<navi_core::SessionGoal>>;
+    async fn get_goal(&self, session_id: &str) -> Result<Option<navi_core::SessionGoal>>;
 
     /// Set or replace the active multi-turn thread goal (host API).
     ///
@@ -307,10 +304,7 @@ impl EngineDriver for crate::NaviEngine {
         crate::NaviEngine::close_session(self, session_id).await
     }
 
-    async fn get_goal(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<navi_core::SessionGoal>> {
+    async fn get_goal(&self, session_id: &str) -> Result<Option<navi_core::SessionGoal>> {
         crate::NaviEngine::get_goal(self, session_id).await
     }
 

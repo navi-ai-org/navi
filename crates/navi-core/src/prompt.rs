@@ -175,6 +175,13 @@ impl SystemPromptRenderer {
             developer_messages.push(ModelMessage::developer(skills));
         }
 
+        // Active harness pack cards (loop/graph soft policy).
+        if let Some(card) = &input.harness_card
+            && !card.trim().is_empty()
+        {
+            developer_messages.push(ModelMessage::developer(card.clone()));
+        }
+
         // Memory injection (auto-memory index + session memory).
         if let Some(memory) = &input.memory_injection
             && !memory.trim().is_empty()
@@ -198,6 +205,8 @@ pub struct SystemPromptInput {
     pub context_packets: Vec<ContextPacket>,
     pub available_skills: Vec<SkillManifest>,
     pub active_skills: Vec<SkillManifest>,
+    /// Optional harness pack developer card (loop/graph soft policy).
+    pub harness_card: Option<String>,
 }
 
 fn normalize_cache_path(path: &Path) -> PathBuf {
@@ -272,6 +281,7 @@ mod tests {
             context_packets: Vec::new(),
             available_skills: Vec::new(),
             active_skills: Vec::new(),
+            harness_card: None,
         };
 
         let first = renderer.render(input());

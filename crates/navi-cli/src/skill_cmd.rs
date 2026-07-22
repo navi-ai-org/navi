@@ -69,11 +69,7 @@ fn install_skill(
     let result = write_skill(&request, cwd, &loaded_config.data_dir)
         .with_context(|| format!("failed to install skill from {}", path.display()))?;
 
-    let action = if result.created {
-        "created"
-    } else {
-        "updated"
-    };
+    let action = if result.created { "created" } else { "updated" };
     let scope_label = match scope {
         SkillWriteScope::User => "user",
         SkillWriteScope::Project => "project",
@@ -88,6 +84,14 @@ fn install_skill(
     }
     if let Some(version) = &result.skill.version {
         println!("  version: {version}");
+    }
+
+    // Deterministic harness pack materialize (best-effort; install still succeeds).
+    if let Err(err) =
+        crate::harness_cmd::materialize_skill_id_after_install(loaded_config, cwd, &result.skill.id)
+    {
+        tracing::warn!(error = %err, skill = %result.skill.id, "harness materialize after install failed");
+        println!("  harness: materialize skipped ({err})");
     }
     Ok(())
 }

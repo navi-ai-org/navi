@@ -8,6 +8,7 @@ use std::path::PathBuf;
 mod bench_cmd;
 mod browser_cmd;
 mod eval_cmd;
+mod harness_cmd;
 mod mcp_cmd;
 mod memory_cmd;
 mod plugin_cmd;
@@ -124,6 +125,30 @@ enum Commands {
     Skill {
         #[command(subcommand)]
         action: SkillAction,
+    },
+    /// Manage harness packs under {data_dir}/harnesses/
+    Harness {
+        #[command(subcommand)]
+        action: HarnessAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HarnessAction {
+    /// List harness packs
+    List,
+    /// Show loop/graph details for a pack id
+    Show {
+        /// Harness / skill id
+        id: String,
+    },
+    /// Materialize a harness pack from an installed skill
+    Materialize {
+        /// Skill id to compile into a harness pack
+        skill: String,
+        /// Optional pack id override
+        #[arg(long)]
+        id: Option<String>,
     },
 }
 
@@ -508,6 +533,11 @@ async fn main() -> Result<()> {
     // Handle skill subcommand early
     if let Some(Commands::Skill { action }) = cli.command {
         return skill_cmd::handle_skill_command(action, &loaded_config, &cwd);
+    }
+
+    // Handle harness pack subcommand early
+    if let Some(Commands::Harness { action }) = cli.command {
+        return harness_cmd::handle_harness_command(action, &loaded_config, &cwd);
     }
 
     // Handle plugin subcommand early

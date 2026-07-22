@@ -386,6 +386,14 @@ pub struct AgentRuntime {
     memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
     /// Per-turn file snapshots for rewind / Revert.
     rewind_store: Arc<std::sync::Mutex<crate::rewind::RewindStore>>,
+    /// From active harness packs: override for goals.max_auto_continue_turns.
+    harness_max_auto_continue: Option<u32>,
+    /// From active harness packs: preferred token budget when setting a goal.
+    harness_token_budget: Option<i64>,
+    /// Developer-context harness card for active packs.
+    harness_card: Option<String>,
+    /// Soft graph + skill allowlist merged (None = no extra lock).
+    harness_allow_tools: Option<Vec<String>>,
 }
 
 impl AgentRuntime {
@@ -469,6 +477,10 @@ impl AgentRuntime {
             plan_parser: std::sync::Mutex::new(crate::plan_mode::ProposedPlanParser::new()),
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
             rewind_store,
+            harness_max_auto_continue: None,
+            harness_token_budget: None,
+            harness_card: None,
+            harness_allow_tools: None,
         }
     }
 
@@ -714,14 +726,62 @@ impl AgentRuntime {
     }
 
     /// Sets the active skills for this session and emits a `ContextUpdated` event.
+    ///
+    /// When a skill has a harness pack under `{data_dir}/harnesses/<id>/`, applies
+    /// soft graph allowlists, loop max_turns / token_budget, and harness card text.
     pub fn set_active_skills(&mut self, skills: Vec<String>) {
         self.active_skills = skills;
         let manifests = self.load_active_skills();
         *self
             .shared_active_skills
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = manifests;
+            .unwrap_or_else(|e| e.into_inner()) = manifests.clone();
+        self.apply_harness_packs_for_active(&manifests);
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
+    }
+
+    /// Recompute harness soft-apply state from currently active skill manifests.
+    fn apply_harness_packs_for_active(&mut self, manifests: &[crate::skills::SkillManifest]) {
+        let applied =
+            crate::harness_pack::apply_harness_for_skills(&self.loaded_config.data_dir, manifests);
+        self.harness_max_auto_continue = applied.max_auto_continue_turns;
+        self.harness_token_budget = applied.token_budget;
+        self.harness_card = if applied.harness_card.is_empty() {
+            None
+        } else {
+            Some(applied.harness_card)
+        };
+        self.harness_allow_tools = applied.allow_tools;
+        // If a harness sets a token budget and no goal exists yet, leave budget
+        // for host/model create_goal; if a goal is Active, optionally annotate budget.
+        if let Some(budget) = applied.token_budget {
+            if let Some(mut goal) = self.goal_runtime.get_goal() {
+                if goal.token_budget.is_none() && goal.status.should_auto_continue() {
+                    goal.token_budget = Some(budget);
+                    self.goal_runtime.update_goal(goal);
+                }
+            }
+        }
+    }
+
+    /// Effective max auto-continue turns (harness pack overrides goals config when set).
+    pub fn effective_max_auto_continue_turns(&self) -> u32 {
+        let cfg = self.goals_config().max_auto_continue_turns;
+        match self.harness_max_auto_continue {
+            Some(h) if h > 0 => {
+                if cfg > 0 {
+                    cfg.min(h)
+                } else {
+                    h
+                }
+            }
+            _ => cfg,
+        }
+    }
+
+    /// Developer harness card for the active pack(s), if any.
+    pub fn harness_card(&self) -> Option<&str> {
+        self.harness_card.as_deref()
     }
 
     /// Lists available model options from the loaded configuration.
@@ -921,14 +981,13 @@ impl AgentRuntime {
             .await?;
 
         let goals_config = self.goals_config();
+        let max_auto = self.effective_max_auto_continue_turns();
         let mut auto_continue_count = 0u32;
         loop {
             if !goals_config.enabled {
                 break;
             }
-            if goals_config.max_auto_continue_turns > 0
-                && auto_continue_count >= goals_config.max_auto_continue_turns
-            {
+            if max_auto > 0 && auto_continue_count >= max_auto {
                 self.goal_runtime
                     .record_blocked_turn("auto-continuation limit reached");
                 if let Some(goal) = self.goal_runtime.get_goal() {
@@ -949,9 +1008,7 @@ impl AgentRuntime {
             );
             // Continuation is injected as a model-visible steering message (not a
             // host/user chat turn). Content matches the goal steering template.
-            response = self
-                .send_turn_once(prompt, Vec::new(), None)
-                .await?;
+            response = self.send_turn_once(prompt, Vec::new(), None).await?;
         }
 
         Ok(response)
@@ -1976,10 +2033,12 @@ impl AgentRuntime {
             .shared_available_skills
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = self.load_available_skills();
+        let active_manifests = self.load_active_skills();
         *self
             .shared_active_skills
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = self.load_active_skills();
+            .unwrap_or_else(|e| e.into_inner()) = active_manifests.clone();
+        self.apply_harness_packs_for_active(&active_manifests);
 
         let ctx = Arc::new(crate::turn::TurnContext {
             model_provider: self.shared_model_provider.clone(),
@@ -2013,15 +2072,22 @@ impl AgentRuntime {
             agent_mode: self.agent_mode(),
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
-            // When active skills declare allow_tools, lock the turn to that set.
+            // When active skills or harness packs declare allow_tools, lock the turn.
             allowed_tool_names: {
                 let active = self
                     .shared_active_skills
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());
-                crate::skills::skill_tool_allowlist(&active)
+                let skill_allow = crate::skills::skill_tool_allowlist(&active);
+                match (skill_allow, self.harness_allow_tools.clone()) {
+                    (Some(s), Some(h)) => crate::harness_pack::merge_allow_tools(&[s, h]),
+                    (Some(s), None) => Some(s),
+                    (None, Some(h)) => Some(h),
+                    (None, None) => None,
+                }
             },
             memory_manager: self.memory_manager.clone(),
+            harness_card: self.harness_card.clone(),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);

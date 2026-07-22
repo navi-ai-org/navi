@@ -1,10 +1,24 @@
 # Harness System Vision
 
-**Status:** Design vision (not fully implemented)  
+**Status:** MVP implemented (materialize + soft graph + loop caps; hard graph edges and feedback evolve jobs are still design)  
 **Audience:** Product, engine, and embedding hosts  
 **Related:** [Goal System](goal-system.md) · [SDK Agents](sdk-agents.md) · [Workflow Lua](workflow-tool-lua-spec.md) · [ADR 0013 WASM plugins](adr/0013-wasm-only-plugins.md)
 
 This document captures the product and architecture vision for **harness packs** on NAVI: how skills, goals, loops, graphs, verifiers, and self-improvement jobs compose so users can build custom agent harnesses *using NAVI itself*.
+
+### MVP shipped (engine + CLI)
+
+| Capability | Status |
+|---|---|
+| Pack store `{data_dir}/harnesses/<id>/` (`loop.toml`, `graph.toml`, verifiers) | **Done** |
+| Deterministic materialize from skill + capability inventory | **Done** |
+| `navi skill install` → materialize hook | **Done** |
+| `navi harness list\|show\|materialize` | **Done** |
+| Soft graph: entry-node `allow_tools` merged with skill allowlist | **Done** |
+| Loop: pack `max_turns` / optional token budget on active skills | **Done** |
+| Capability card in developer context | **Done** |
+| Hard graph edge execution | Not yet |
+| Job B feedback / Job C evolve / LLM materialize agent | Not yet |
 
 ---
 
@@ -364,15 +378,16 @@ Feedback must not stop at “better prose.” Upgrade ladder:
 
 | Vision piece | Present foundation | Still needed |
 |---|---|---|
-| Skill install | `navi skill install`, `skill_save`, plugin skill import | Hook **on_install → materialize job** |
-| Skill activate | `--skill`, config `skills.active`, TUI | Bind skill → harness pack path |
-| Long loop | Thread [goals](goal-system.md) auto-continue | Interpret `loop.toml` (max turns, stop predicates) |
-| Multi-agent | `subagent`, `workflow` | Executable `graph.toml` |
+| Skill install | `navi skill install` → deterministic **materialize** into `{data_dir}/harnesses/` | LLM-assisted materialize (Job A agent) |
+| Skill activate | `--skill` / active skills load pack → card + allow_tools + loop caps | TUI pack browser |
+| Long loop | Thread [goals](goal-system.md) + pack `loop.max_turns` / token budget | Full stop-predicate evaluation beyond max turns / goal status |
+| Multi-agent | `subagent`, `workflow`; soft graph entry `allow_tools` | Hard edge routing from `graph.toml` |
 | Self-improve content | Model can edit files / save skills | Job C + policy + CHANGELOG |
 | Plugins / MCP | Install paths exist | Proposal pipeline + skill↔plugin binding |
-| Capability awareness | Static list + `tool_search` | Live capability card |
+| Capability awareness | Inventory filter + capability card on materialize / activate | Richer live host cards |
 | Project awareness | AGENTS.md, search | Structured project card |
 | Eval | `navi eval` / bench | Cases under harness pack |
+| CLI | `navi harness list\|show\|materialize` | — |
 
 ---
 

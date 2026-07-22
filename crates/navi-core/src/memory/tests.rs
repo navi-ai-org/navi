@@ -759,6 +759,7 @@ None.
         session_id: "integration-session".to_string(),
         allowed_tool_names: None,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
+        harness_card: None,
     };
 
     let mut messages = vec![ModelMessage {

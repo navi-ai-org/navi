@@ -27,8 +27,6 @@ mod subagent;
 mod workflow;
 mod write_tool;
 
-
-
 pub(super) use memory::{AppendNoteTool, HistoryOpsTool, MemoryTool};
 
 pub(super) use extra_tools::{
