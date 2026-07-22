@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
+# Stage platform binaries from a GitHub Release and publish @navi-agent/navi packages.
+#
+# Usage:
+#   ./scripts/publish-npm-from-release.sh v0.3.3
+#
+# Local: requires `npm login` (or equivalent token).
+# CI (Trusted Publishing / OIDC): set NAVI_NPM_OIDC=1 and workflow permissions:
+#   id-token: write
+#   contents: read
+# Do not set NODE_AUTH_TOKEN / NPM_TOKEN for publish when using OIDC.
 set -euo pipefail
 
 version="${1:-}"
@@ -24,15 +34,63 @@ require_cmd() {
   fi
 }
 
+# True when publishing via GitHub Actions OIDC trusted publishing.
+oidc_mode() {
+  [[ "${NAVI_NPM_OIDC:-}" == "1" || "${NAVI_NPM_OIDC:-}" == "true" ]] \
+    || [[ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" && -n "${GITHUB_ACTIONS:-}" ]]
+}
+
 npm_exists() {
   local pkg="$1"
   npm view "$pkg@$version" version --registry https://registry.npmjs.org/ >/dev/null 2>&1
+}
+
+# Ensure package.json version matches the release tag before publish.
+sync_package_version() {
+  local dir="$1"
+  local pkg_json="$dir/package.json"
+  node -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    const want = process.argv[2];
+    const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+    if (pkg.version !== want) {
+      console.log(`bump ${pkg.name}: ${pkg.version} -> ${want}`);
+      pkg.version = want;
+      fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+    }
+  ' "$pkg_json" "$version"
+
+  # Meta package: keep optionalDependencies on the same version.
+  if [[ "$(node -p "require('$pkg_json').name")" == "@navi-agent/navi" ]]; then
+    node -e '
+      const fs = require("fs");
+      const path = process.argv[1];
+      const want = process.argv[2];
+      const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+      let changed = false;
+      if (pkg.optionalDependencies) {
+        for (const k of Object.keys(pkg.optionalDependencies)) {
+          if (k.startsWith("@navi-agent/navi-") && pkg.optionalDependencies[k] !== want) {
+            pkg.optionalDependencies[k] = want;
+            changed = true;
+          }
+        }
+      }
+      if (changed) {
+        fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+        console.log(`synced optionalDependencies to ${want}`);
+      }
+    ' "$pkg_json" "$version"
+  fi
 }
 
 publish_dir() {
   local dir="$1"
   local pkg
   pkg="$(node -p "require('$dir/package.json').name")"
+
+  sync_package_version "$dir"
 
   if npm_exists "$pkg"; then
     echo "$pkg@$version already exists, skipping"
@@ -42,6 +100,8 @@ publish_dir() {
   echo "packing $pkg@$version"
   (cd "$dir" && npm pack --dry-run --json >/dev/null)
   echo "publishing $pkg@$version"
+  # Trusted publishing (OIDC) authenticates automatically in GHA when configured.
+  # --provenance is automatic for trusted publishing from public repos; do not force tokens.
   (cd "$dir" && npm publish --access public --registry https://registry.npmjs.org/)
 }
 
@@ -51,7 +111,13 @@ require_cmd node
 require_cmd tar
 require_cmd unzip
 
-npm whoami --registry https://registry.npmjs.org/ >/dev/null
+if oidc_mode; then
+  echo "auth: OIDC / trusted publishing (skipping npm whoami)"
+  echo "node $(node -v)  npm $(npm -v)"
+else
+  npm whoami --registry https://registry.npmjs.org/ >/dev/null
+  echo "auth: npm login as $(npm whoami --registry https://registry.npmjs.org/)"
+fi
 
 echo "downloading release assets for $repo@$tag"
 gh release download "$tag" \
@@ -102,6 +168,7 @@ stage_unix darwin-x64
 stage_unix darwin-arm64
 stage_windows
 
+# Platform packages first, then the meta package (optionalDependencies).
 publish_dir "$npm_root/npm/linux-x64"
 publish_dir "$npm_root/npm/linux-arm64"
 publish_dir "$npm_root/npm/darwin-x64"

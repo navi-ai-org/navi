@@ -18,5 +18,13 @@
   "scripts": {
     "prepack": "node -e \"require('node:fs').accessSync('navi')\"",
     "prepublishOnly": "node -e \"require('node:fs').accessSync('navi')\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navi-ai-org/navi.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }
