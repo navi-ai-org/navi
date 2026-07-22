@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NAVI · Harness Vision</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #07090f;
+      --bg-elev: #0e121b;
+      --bg-card: #121826;
+      --line: rgba(148, 163, 184, 0.14);
+      --text: #e8edf7;
+      --muted: #94a3b8;
+      --dim: #64748b;
+      --cyan: #22d3ee;
+      --violet: #a78bfa;
+      --pink: #f472b6;
+      --amber: #fbbf24;
+      --emerald: #34d399;
+      --orange: #fb923c;
+      --glow-cyan: rgba(34, 211, 238, 0.35);
+      --glow-violet: rgba(167, 139, 250, 0.3);
+      --radius: 18px;
+      --font: "DM Sans", system-ui, sans-serif;
+      --display: "Syne", "DM Sans", sans-serif;
+      --mono: "JetBrains Mono", ui-monospace, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 10% -10%, rgba(34, 211, 238, 0.12), transparent 50%),
+        radial-gradient(ellipse 60% 40% at 90% 10%, rgba(167, 139, 250, 0.14), transparent 45%),
+        radial-gradient(ellipse 50% 50% at 50% 100%, rgba(244, 114, 182, 0.08), transparent 50%),
+        linear-gradient(180deg, #07090f 0%, #0a0e18 100%);
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse at center, black 20%, transparent 75%);
+    }
+
+    .shell {
+      position: relative;
+      z-index: 1;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 0 1.5rem 4rem;
+    }
+
+    /* Nav */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(16px);
+      background: rgba(7, 9, 15, 0.72);
+      border-bottom: 1px solid var(--line);
+      margin: 0 -1.5rem 2rem;
+      padding: 0.85rem 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      font-family: var(--display);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      font-size: 1.05rem;
+    }
+
+    .brand-mark {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--cyan), var(--violet));
+      box-shadow: 0 0 24px var(--glow-cyan);
+      display: grid;
+      place-items: center;
+      font-size: 0.75rem;
+      font-weight: 800;
+      color: #041016;
+    }
+
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+    }
+
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      transition: color 0.15s;
+    }
+
+    .nav-links a:hover { color: var(--cyan); }
+
+    .badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      border: 1px solid rgba(34, 211, 238, 0.35);
+      background: rgba(34, 211, 238, 0.08);
+      padding: 0.25rem 0.55rem;
+      border-radius: 999px;
+    }
+
+    /* Hero */
+    .hero {
+      padding: 2.5rem 0 3.5rem;
+      text-align: center;
+    }
+
+    .hero-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--violet);
+      margin-bottom: 1.25rem;
+    }
+
+    .hero h1 {
+      font-family: var(--display);
+      font-weight: 800;
+      font-size: clamp(2.4rem, 6vw, 3.75rem);
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(120deg, #fff 0%, #c4d4f0 40%, #22d3ee 75%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .hero-lead {
+      max-width: 640px;
+      margin: 0 auto 2rem;
+      font-size: 1.15rem;
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .hero-lead strong { color: var(--text); font-weight: 600; }
+
+    .hero-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+    }
+
+    .pill {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      padding: 0.55rem 0.9rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--bg-card);
+      color: var(--muted);
+    }
+
+    .pill em { color: var(--cyan); font-style: normal; }
+
+    /* Sections */
+    section {
+      margin: 3.5rem 0;
+      scroll-margin-top: 5rem;
+    }
+
+    .section-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--dim);
+      margin-bottom: 0.6rem;
+    }
+
+    h2 {
+      font-family: var(--display);
+      font-weight: 700;
+      font-size: clamp(1.6rem, 3vw, 2.1rem);
+      letter-spacing: -0.03em;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-intro {
+      color: var(--muted);
+      max-width: 60ch;
+      margin-bottom: 1.75rem;
+      font-size: 1.02rem;
+    }
+
+    /* Cards grid */
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1rem;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 860px) {
+      .grid-3, .grid-2 { grid-template-columns: 1fr; }
+      .nav-links { display: none; }
+    }
+
+    .card {
+      background: linear-gradient(165deg, rgba(18, 24, 38, 0.95), rgba(14, 18, 27, 0.9));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.35rem 1.4rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+
+    .card:hover {
+      border-color: rgba(34, 211, 238, 0.28);
+      transform: translateY(-2px);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    .card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent, var(--cyan)), transparent);
+      opacity: 0.7;
+    }
+
+    .card.v { --accent: var(--violet); }
+    .card.p { --accent: var(--pink); }
+    .card.a { --accent: var(--amber); }
+    .card.e { --accent: var(--emerald); }
+    .card.o { --accent: var(--orange); }
+
+    .card h3 {
+      font-family: var(--display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-bottom: 0.45rem;
+      letter-spacing: -0.02em;
+    }
+
+    .card p { color: var(--muted); font-size: 0.92rem; }
+
+    .card .icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      display: grid;
+      place-items: center;
+      font-size: 1.1rem;
+      margin-bottom: 0.85rem;
+      background: rgba(34, 211, 238, 0.1);
+      border: 1px solid rgba(34, 211, 238, 0.2);
+    }
+
+    .card.v .icon { background: rgba(167, 139, 250, 0.12); border-color: rgba(167, 139, 250, 0.25); }
+    .card.p .icon { background: rgba(244, 114, 182, 0.12); border-color: rgba(244, 114, 182, 0.25); }
+    .card.a .icon { background: rgba(251, 191, 36, 0.12); border-color: rgba(251, 191, 36, 0.25); }
+    .card.e .icon { background: rgba(52, 211, 153, 0.12); border-color: rgba(52, 211, 153, 0.25); }
+
+    /* Problem table */
+    .compare {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 0.88rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .compare th, .compare td {
+      padding: 0.85rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .compare th {
+      background: var(--bg-elev);
+      color: var(--dim);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+
+    .compare tr:last-child td { border-bottom: none; }
+    .compare td { background: var(--bg-card); color: var(--muted); }
+    .compare td:first-child { color: var(--text); font-weight: 500; }
+    .compare .win { color: var(--emerald); }
+
+    /* Stack diagram */
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+      max-width: 520px;
+      margin: 0 auto;
+    }
+
+    .stack-layer {
+      border-radius: 14px;
+      padding: 1rem 1.25rem;
+      border: 1px solid var(--line);
+      text-align: center;
+      position: relative;
+    }
+
+    .stack-layer strong {
+      display: block;
+      font-family: var(--display);
+      font-size: 1rem;
+      margin-bottom: 0.2rem;
+    }
+
+    .stack-layer span { font-size: 0.82rem; color: var(--muted); }
+
+    .stack-layer.l1 {
+      background: linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(34, 211, 238, 0.04));
+      border-color: rgba(34, 211, 238, 0.3);
+    }
+    .stack-layer.l2 {
+      background: linear-gradient(135deg, rgba(167, 139, 250, 0.18), rgba(167, 139, 250, 0.04));
+      border-color: rgba(167, 139, 250, 0.32);
+    }
+    .stack-layer.l3 {
+      background: linear-gradient(135deg, rgba(244, 114, 182, 0.16), rgba(244, 114, 182, 0.04));
+      border-color: rgba(244, 114, 182, 0.3);
+    }
+
+    .stack-arrow {
+      text-align: center;
+      color: var(--dim);
+      font-size: 0.9rem;
+      line-height: 1;
+    }
+
+    /* Lifecycle flow */
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      position: relative;
+    }
+
+    @media (max-width: 900px) {
+      .flow { grid-template-columns: 1fr 1fr; }
+    }
+
+    .flow-step {
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1.2rem;
+      position: relative;
+    }
+
+    .flow-num {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: var(--cyan);
+      margin-bottom: 0.5rem;
+    }
+
+    .flow-step h3 {
+      font-family: var(--display);
+      font-size: 1.05rem;
+      margin-bottom: 0.4rem;
+    }
+
+    .flow-step p { font-size: 0.85rem; color: var(--muted); }
+
+    .flow-step .tag {
+      display: inline-block;
+      margin-top: 0.75rem;
+      font-size: 0.68rem;
+      font-family: var(--mono);
+      padding: 0.2rem 0.45rem;
+      border-radius: 6px;
+      background: rgba(167, 139, 250, 0.12);
+      color: var(--violet);
+    }
+
+    /* Pack tree */
+    .tree {
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      line-height: 1.7;
+      background: #0a0d14;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.35rem 1.5rem;
+      overflow-x: auto;
+      color: var(--muted);
+    }
+
+    .tree .dir { color: var(--cyan); }
+    .tree .file { color: var(--text); }
+    .tree .cmt { color: var(--dim); }
+    .tree .hl { color: var(--amber); }
+
+    /* Ladder */
+    .ladder {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    .ladder-row {
+      display: grid;
+      grid-template-columns: 48px 1fr;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .ladder-n {
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--bg);
+      background: linear-gradient(135deg, var(--cyan), var(--violet));
+      border-radius: 8px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+    }
+
+    .ladder-body {
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 0.7rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    .ladder-body strong { color: var(--text); }
+    .ladder-body span { color: var(--muted); font-size: 0.82rem; }
+
+    /* Quote / oneliner */
+    .quote-block {
+      margin: 2rem 0;
+      padding: 2rem 2.25rem;
+      border-radius: 20px;
+      border: 1px solid rgba(167, 139, 250, 0.25);
+      background:
+        linear-gradient(135deg, rgba(167, 139, 250, 0.12), rgba(34, 211, 238, 0.06));
+      position: relative;
+    }
+
+    .quote-block p {
+      font-family: var(--display);
+      font-size: clamp(1.15rem, 2.4vw, 1.45rem);
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      line-height: 1.4;
+      color: var(--text);
+    }
+
+    .quote-block .attr {
+      margin-top: 1rem;
+      font-family: var(--font);
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--violet);
+      letter-spacing: 0;
+    }
+
+    /* Timeline phases */
+    .phases {
+      display: grid;
+      gap: 0.65rem;
+    }
+
+    .phase {
+      display: grid;
+      grid-template-columns: 2.5rem 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+
+    .phase-dot {
+      width: 2.5rem;
+      height: 2.5rem;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      font-weight: 600;
+      border: 2px solid rgba(34, 211, 238, 0.4);
+      color: var(--cyan);
+      background: rgba(34, 211, 238, 0.08);
+    }
+
+    .phase-body {
+      padding: 0.35rem 0 1rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .phase:last-child .phase-body { border-bottom: none; }
+
+    .phase-body h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .phase-body p { font-size: 0.88rem; color: var(--muted); }
+
+    /* Demo strip */
+    .demo {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .demo code {
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      padding: 0.55rem 0.85rem;
+      border-radius: 10px;
+      background: #0a0d14;
+      border: 1px solid var(--line);
+      color: var(--emerald);
+    }
+
+    /* Footer */
+    footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 1rem;
+      color: var(--dim);
+      font-size: 0.82rem;
+    }
+
+    footer a { color: var(--cyan); text-decoration: none; }
+
+    .kb {
+      position: fixed;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      z-index: 40;
+      font-size: 0.72rem;
+      color: var(--dim);
+      background: rgba(14, 18, 27, 0.9);
+      border: 1px solid var(--line);
+      padding: 0.4rem 0.65rem;
+      border-radius: 8px;
+      backdrop-filter: blur(8px);
+    }
+
+    .kb kbd {
+      font-family: var(--mono);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      margin: 0 0.15rem;
+    }
+
+    /* Graph viz simple */
+    .graph-viz {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem 0.35rem;
+      padding: 1.5rem;
+      background: var(--bg-card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .gnode {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 500;
+      padding: 0.55rem 0.85rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      color: var(--text);
+    }
+
+    .gnode.explore { border-color: rgba(34, 211, 238, 0.45); color: var(--cyan); }
+    .gnode.impl { border-color: rgba(167, 139, 250, 0.45); color: var(--violet); }
+    .gnode.verify { border-color: rgba(52, 211, 153, 0.45); color: var(--emerald); }
+    .gnode.human { border-color: rgba(251, 191, 36, 0.45); color: var(--amber); }
+
+    .gedge {
+      color: var(--dim);
+      font-size: 0.9rem;
+      padding: 0 0.15rem;
+    }
+
+    .split-visual {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 1rem;
+      align-items: stretch;
+    }
+
+    @media (max-width: 700px) {
+      .split-visual { grid-template-columns: 1fr; }
+      .split-visual .vs { display: none; }
+    }
+
+    .vs {
+      display: grid;
+      place-items: center;
+      font-family: var(--display);
+      font-weight: 800;
+      color: var(--dim);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="topnav">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+        NAVI
+        <span class="badge">Harness Vision</span>
+      </div>
+      <div class="nav-links">
+        <a href="#problem">Problem</a>
+        <a href="#loop-graph">Loop &amp; Graph</a>
+        <a href="#pack">Pack</a>
+        <a href="#jobs">Jobs</a>
+        <a href="#awareness">Awareness</a>
+        <a href="#evolve">Evolve</a>
+        <a href="#roadmap">Roadmap</a>
+      </div>
+    </nav>
+
+    <!-- HERO -->
+    <header class="hero" id="top">
+      <div class="hero-kicker">Local agentic engine · Product vision</div>
+      <h1>Harnesses that<br />build themselves</h1>
+      <p class="hero-lead">
+        NAVI is not only a code agent. It is a <strong>runtime for custom harnesses</strong>:
+        skills as import UI, loops and graphs as local compilation, and feedback-driven
+        evolution—optionally extending the engine with plugins and MCP.
+      </p>
+      <div class="hero-cta">
+        <span class="pill">loop engineering · <em>control cycle</em></span>
+        <span class="pill">graph engineering · <em>who runs when</em></span>
+        <span class="pill">self-improving packs · <em>user signal</em></span>
+      </div>
+    </header>
+
+    <!-- PROBLEM -->
+    <section id="problem">
+      <div class="section-label">01 — The gap</div>
+      <h2>The world ships SKILL.md.<br />Reliability needs a system.</h2>
+      <p class="section-intro">
+        Ecosystem interchange is almost always prose. That is fine for sharing—and fragile
+        for closed-loop automation unless the engine compiles and enforces the harness.
+      </p>
+
+      <table class="compare">
+        <thead>
+          <tr>
+            <th>Approach</th>
+            <th>What the model sees</th>
+            <th>Who enforces the loop?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SKILL.md only</td>
+            <td>Long procedural text</td>
+            <td>Prompt-following luck</td>
+          </tr>
+          <tr>
+            <td>Skill + loop/graph files on disk</td>
+            <td>Extra files if read</td>
+            <td>Still the model</td>
+          </tr>
+          <tr>
+            <td>Skill + runtime-executed specs</td>
+            <td>Goals, allowlists, gates</td>
+            <td class="win">The engine</td>
+          </tr>
+          <tr>
+            <td>Skill + materialize + feedback jobs</td>
+            <td>Specs the agent wrote &amp; revises</td>
+            <td class="win">Engine + human + metrics</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- STACK -->
+    <section id="loop-graph">
+      <div class="section-label">02 — Two design axes</div>
+      <h2>Loop × Graph × Engine</h2>
+      <p class="section-intro">
+        <strong>Loop engineering</strong> designs the cycle: plan → act → verify → reflect → improve.
+        <strong>Graph engineering</strong> designs who runs, with which tools, and how edges fire.
+      </p>
+
+      <div class="stack" style="margin-bottom: 2rem;">
+        <div class="stack-layer l1">
+          <strong>Graph — structure</strong>
+          <span>Nodes · edges · roles · tool jail · human interrupts</span>
+        </div>
+        <div class="stack-arrow">↓ drives</div>
+        <div class="stack-layer l2">
+          <strong>Loop — dynamics</strong>
+          <span>Plan · execute · verify · reflect · budget · stop</span>
+        </div>
+        <div class="stack-arrow">↓ productized as</div>
+        <div class="stack-layer l3">
+          <strong>Harness pack</strong>
+          <span>Skills · goals · verifiers · eval · plugins / MCP</span>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="icon">↻</div>
+          <h3>Loop engineering</h3>
+          <p>
+            Exit criteria, feedback (score + text), retry policy, token/turn budget,
+            and durable artifacts every iteration—not “run the agent again.”
+          </p>
+        </div>
+        <div class="card v">
+          <div class="icon">◈</div>
+          <h3>Graph engineering</h3>
+          <p>
+            Explore → implement → verify, fan-out subagents, hierarchical review.
+            Shared state: session, goal, plan file, screenshots, reports.
+          </p>
+        </div>
+      </div>
+
+      <div class="graph-viz" style="margin-top: 1.25rem;">
+        <span class="gnode explore">explore</span>
+        <span class="gedge">→</span>
+        <span class="gnode impl">implement</span>
+        <span class="gedge">→</span>
+        <span class="gnode verify">verify</span>
+        <span class="gedge">↺ fail</span>
+        <span class="gnode impl">implement</span>
+        <span class="gedge">·</span>
+        <span class="gnode human">human gate</span>
+      </div>
+    </section>
+
+    <!-- PACK -->
+    <section id="pack">
+      <div class="section-label">03 — Harness pack</div>
+      <h2>SKILL.md is the import UI.<br />The rest is local compilation.</h2>
+      <p class="section-intro">
+        The ecosystem keeps shipping markdown skills. NAVI compiles them into a local pack
+        under the data directory—no mandatory project <code>.navi/</code> bookkeeping.
+      </p>
+
+      <div class="split-visual">
+        <div>
+          <div class="section-label" style="margin-bottom: 0.5rem;">Interchange (world)</div>
+          <div class="tree">
+<span class="dir">design-loop/</span>
+  <span class="file hl">SKILL.md</span>          <span class="cmt"># only required file</span>
+  <span class="file">harness.manifest.toml</span> <span class="cmt"># optional</span>
+          </div>
+        </div>
+        <div class="vs">→</div>
+        <div>
+          <div class="section-label" style="margin-bottom: 0.5rem;">Compiled (local data_dir)</div>
+          <div class="tree">
+<span class="dir">harnesses/design-loop/</span>
+  <span class="file">SKILL.md</span>
+  <span class="file hl">loop.toml</span>       <span class="cmt"># budget · stops</span>
+  <span class="file hl">graph.toml</span>      <span class="cmt"># nodes · edges</span>
+  <span class="dir">verifiers/</span>
+  <span class="file">CAPABILITY.md</span>
+  <span class="file">CHANGELOG.md</span>
+  <span class="dir">runs/</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="demo">
+        <code>navi skill install skills/design-loop.md</code>
+        <code>navi --skill design-loop --no-tui "…"</code>
+      </div>
+    </section>
+
+    <!-- JOBS -->
+    <section id="jobs">
+      <div class="section-label">04 — Lifecycle</div>
+      <h2>Three jobs around every harness</h2>
+      <p class="section-intro">
+        On import the engine materializes the pack. On use it runs. On feedback it evolves—
+        including proposals for plugins and MCP when NAVI itself is the bottleneck.
+      </p>
+
+      <div class="flow">
+        <div class="flow-step">
+          <div class="flow-num">JOB A</div>
+          <h3>Materialize</h3>
+          <p>
+            Self-interview in thinking, research best loop/graph shape, survey NAVI + project
+            capabilities, write loop/graph/verifiers. Never invent missing tools.
+          </p>
+          <span class="tag">on skill install</span>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">RUN</div>
+          <h3>Execute</h3>
+          <p>
+            Activate skill → goal budget &amp; auto-continue → tools / subagents / workflow
+            following the compiled graph, with hard gates at verify edges.
+          </p>
+          <span class="tag">user task</span>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">JOB B</div>
+          <h3>Harvest</h3>
+          <p>
+            Session traces + structured questions: what worked, what was slow, what capability
+            was missing. Persist under <code>runs/</code>.
+          </p>
+          <span class="tag">user feedback</span>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num">JOB C</div>
+          <h3>Evolve</h3>
+          <p>
+            Patch SKILL, loop, graph—and when needed, scaffold a local WASM plugin or MCP
+            server so the next run is stronger than prompt alone.
+          </p>
+          <span class="tag">self-improve</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- AWARENESS -->
+    <section id="awareness">
+      <div class="section-label">05 — Capability awareness</div>
+      <h2>If NAVI doesn’t know itself,<br />it can’t use 100% of itself.</h2>
+      <p class="section-intro">
+        Materialization and evolution fail when the model only sees a static tool list.
+        The system prompt / developer context needs a live map of the engine and the project.
+      </p>
+
+      <div class="grid-3">
+        <div class="card e">
+          <div class="icon">◎</div>
+          <h3>NAVI capability card</h3>
+          <p>
+            Goals on/off, browser, direct vs deferred tools, installed plugins, connected MCP,
+            ready harnesses—hash-stable for prompt cache.
+          </p>
+        </div>
+        <div class="card a">
+          <div class="icon">⌘</div>
+          <h3>Project card</h3>
+          <p>
+            AGENTS.md plus structured stack, test/build commands, preview URLs, constraints—
+            so verifiers match the real repo.
+          </p>
+        </div>
+        <div class="card p">
+          <div class="icon">◇</div>
+          <h3>Active harness card</h3>
+          <p>
+            Pack path, stop conditions, current graph node, tool allowlist, verifier ids—
+            injected when the skill is active.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ENFORCEMENT -->
+    <section id="enforce">
+      <div class="section-label">06 — Compliance</div>
+      <h2>Don’t only hope the model follows the skill</h2>
+      <div class="grid-3">
+        <div class="card">
+          <h3>Soft</h3>
+          <p>SKILL.md + cards in context. Creative but fragile.</p>
+        </div>
+        <div class="card v">
+          <h3>Medium</h3>
+          <p>Host injects goal + next-node steering every turn. Better reliability.</p>
+        </div>
+        <div class="card e">
+          <h3>Hard</h3>
+          <p>Only current-node tools exposed; edge advances when verifier returns OK.</p>
+        </div>
+      </div>
+      <p class="section-intro" style="margin-top: 1.25rem; margin-bottom: 0;">
+        NAVI already has knobs for hard boundaries: skill allow/deny tools, plan mode write jail,
+        goals auto-continue, subagent allowlists, Lua workflow. Materialize should <em>compile</em>
+        SKILL.md into those knobs—not reinvent them as more prose.
+      </p>
+    </section>
+
+    <!-- EVOLVE LADDER -->
+    <section id="evolve">
+      <div class="section-label">07 — Upgrade ladder</div>
+      <h2>Feedback upgrades more than prompts</h2>
+      <p class="section-intro">
+        A great harness doesn’t only rewrite its own instructions. It can extend the local engine.
+      </p>
+
+      <div class="ladder">
+        <div class="ladder-row">
+          <div class="ladder-n">1</div>
+          <div class="ladder-body"><strong>Prompt / SKILL steps</strong> <span>— policy and phrasing</span></div>
+        </div>
+        <div class="ladder-row">
+          <div class="ladder-n">2</div>
+          <div class="ladder-body"><strong>Loop params</strong> <span>— budget, max turns, verify order</span></div>
+        </div>
+        <div class="ladder-row">
+          <div class="ladder-n">3</div>
+          <div class="ladder-body"><strong>Graph topology</strong> <span>— split explorer / implementer / reviewer</span></div>
+        </div>
+        <div class="ladder-row">
+          <div class="ladder-n">4</div>
+          <div class="ladder-body"><strong>Verifier recipes</strong> <span>— bash, browser, structured reports</span></div>
+        </div>
+        <div class="ladder-row">
+          <div class="ladder-n">5</div>
+          <div class="ladder-body"><strong>WASM plugin</strong> <span>— local deterministic tools (e.g. a11y audit)</span></div>
+        </div>
+        <div class="ladder-row">
+          <div class="ladder-n">6</div>
+          <div class="ladder-body"><strong>MCP server</strong> <span>— external services the harness needs</span></div>
+        </div>
+      </div>
+
+      <p class="section-intro" style="margin-top: 1.5rem; margin-bottom: 0;">
+        Plugin install and MCP enable always require <strong>explicit approval</strong>.
+        Project config cannot silently turn them on—consistent with NAVI security policy.
+      </p>
+    </section>
+
+    <!-- QUOTE -->
+    <div class="quote-block">
+      <p>
+        Skills are the ecosystem import UI; harnesses are the local compilation that NAVI
+        materializes, runs with goals and tools, and recompiles from user feedback—
+        optionally extending the engine through plugins and MCP.
+      </p>
+      <div class="attr">Product one-liner · NAVI harness system</div>
+    </div>
+
+    <!-- ROADMAP -->
+    <section id="roadmap">
+      <div class="section-label">08 — Phased path</div>
+      <h2>From vision to shippable surface</h2>
+      <div class="phases">
+        <div class="phase">
+          <div class="phase-dot">1</div>
+          <div class="phase-body">
+            <h4>Capability card</h4>
+            <p>Live, hash-stable developer context of tools, goals, browser, plugins, MCP.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-dot">2</div>
+          <div class="phase-body">
+            <h4>Pack layout + skill link</h4>
+            <p><code>{data_dir}/harnesses/&lt;id&gt;/</code> bound to skill ids after install.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-dot">3</div>
+          <div class="phase-body">
+            <h4>Job A · Materialize</h4>
+            <p>Headless compiler session writes loop/graph/verifiers from SKILL.md + cards.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-dot">4</div>
+          <div class="phase-body">
+            <h4>Run path</h4>
+            <p>Active skill loads goal budget + soft graph (subagent/workflow) + verifiers.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-dot">5</div>
+          <div class="phase-body">
+            <h4>Jobs B &amp; C · Feedback &amp; evolve</h4>
+            <p>User ratings + traces → patch pack; propose plugins/MCP with approval.</p>
+          </div>
+        </div>
+        <div class="phase">
+          <div class="phase-dot">6</div>
+          <div class="phase-body">
+            <h4>Hard graph execution</h4>
+            <p>Once soft packs prove value: edge gates and node tool jails as first-class runtime.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOUNDATION -->
+    <section id="foundation">
+      <div class="section-label">09 — Built on today</div>
+      <h2>Not a greenfield fantasy</h2>
+      <div class="grid-3">
+        <div class="card e">
+          <h3>Goals</h3>
+          <p>Thread goals with auto-continue, budget, complete/blocked—loop driver.</p>
+        </div>
+        <div class="card">
+          <h3>Skills CLI</h3>
+          <p><code>navi skill install</code>, <code>--skill</code>, TUI activation—import surface.</p>
+        </div>
+        <div class="card v">
+          <h3>Tools</h3>
+          <p>Native code tools, browser, deferred power tools, WASM plugins, MCP client.</p>
+        </div>
+        <div class="card a">
+          <h3>Plan mode</h3>
+          <p>Markdown plan file + approval gate—design node with write jail.</p>
+        </div>
+        <div class="card p">
+          <h3>Subagent · workflow</h3>
+          <p>Nested agents and Lua orchestration—graph embryos.</p>
+        </div>
+        <div class="card">
+          <h3>SDK · headless</h3>
+          <p>Embed and CI the same engine that powers the TUI.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLOSING -->
+    <section>
+      <div class="section-label">Demo ambition</div>
+      <h2>The winning story</h2>
+      <p class="section-intro" style="max-width: 52ch;">
+        Not “refactor auth.” A design-loop harness lives as a pack, installs via CLI,
+        runs headless with a goal budget, fans explorer → implementer → verifier, and—
+        after user feedback—opens a change that improves the harness itself.
+        Loop engineering on graph engineering on the engine.
+      </p>
+      <div class="hero-cta" style="justify-content: flex-start;">
+        <span class="pill">docs · <em>docs/harness-system.md</em></span>
+        <span class="pill">engine · <em>navi-core · navi-sdk</em></span>
+      </div>
+    </section>
+
+    <footer>
+      <div>
+        <strong style="color: var(--text);">NAVI</strong> — local agentic engine<br />
+        Confidential product vision · for internal discussion
+      </div>
+      <div style="text-align: right;">
+        Full write-up:
+        <a href="../../harness-system.md">harness-system.md</a><br />
+        Press <kbd>1</kbd>–<kbd>9</kbd> to jump sections · <kbd>T</kbd> top
+      </div>
+    </footer>
+  </div>
+
+  <div class="kb"><kbd>↑</kbd><kbd>↓</kbd> scroll · <kbd>T</kbd> top</div>
+
+  <script>
+    const map = {
+      "1": "problem",
+      "2": "loop-graph",
+      "3": "pack",
+      "4": "jobs",
+      "5": "awareness",
+      "6": "enforce",
+      "7": "evolve",
+      "8": "roadmap",
+      "9": "foundation",
+      t: "top",
+      T: "top",
+    };
+    document.addEventListener("keydown", (e) => {
+      if (e.target.matches("input, textarea")) return;
+      const id = map[e.key];
+      if (!id) return;
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  </script>
+</body>
+</html>
