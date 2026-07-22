@@ -755,6 +755,101 @@ fn production_constructor_is_subagent_bridge() {
     assert_eq!(tool.definition().name, "workflow");
 }
 
+/// Production path regression: the real `SubagentBridgeBackend` payload must pass
+/// `ToolExecutor::validate_arguments` for a registered `subagent` tool.
+///
+/// Historical hole: suite used MockAgentBackend / WorkerProbeBackend for almost all
+/// agent() tests, so schema mismatches (write_allow/create_files unexpected, description
+/// null without label) never failed CI while TUI production always hit them.
+#[test]
+fn production_bridge_payload_validates_on_real_subagent_executor() {
+    use crate::config::{HarnessConfig, NaviConfig};
+    use crate::model::{ModelProvider, ModelRequest, ModelStream};
+    use crate::prompt::PromptCache;
+    use crate::runtime_components::RuntimeComponents;
+    use crate::tool::ToolExecutor;
+    use crate::tool::builtin::SubagentTool;
+    use crate::tool::builtin::workflow::backends::build_subagent_bridge_input;
+    use crate::tool::builtin::workflow::policy::{
+        AgentPolicyOpts, default_run_policy, intersect_agent_policy,
+    };
+    use std::sync::{Arc, RwLock};
+
+    struct NoopProvider;
+    impl ModelProvider for NoopProvider {
+        fn stream(&self, _req: ModelRequest) -> ModelStream {
+            Box::pin(futures_util::stream::empty())
+        }
+    }
+
+    let (_dir, policy) = temp_policy();
+    let mut executor = ToolExecutor::new(policy);
+    let subagent = SubagentTool::new(
+        std::sync::Weak::new(),
+        Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/tmp"),
+        Arc::new(RwLock::new("test".into())),
+        HarnessConfig::default(),
+        Arc::new(RwLock::new(NaviConfig::default())),
+        Arc::new(PromptCache::new()),
+        RuntimeComponents::default(),
+    );
+    executor.register_tool(Arc::new(subagent));
+
+    // Case A: no label + full write-scope options (exactly what production TUI sends).
+    let mut run = default_run_policy();
+    run.create_files = true;
+    run.write_allow = vec!["scratch/probe.txt".into()];
+    run.tools = vec![
+        "read_file".into(),
+        "write_file".into(),
+        "edit".into(),
+        "search".into(),
+    ];
+    let effective = intersect_agent_policy(
+        &run,
+        &AgentPolicyOpts {
+            profile: Some("implementer".into()),
+            ..Default::default()
+        },
+    );
+    assert!(
+        effective.create_files,
+        "run create_files must inherit when agent omits the flag"
+    );
+    let input = build_subagent_bridge_input(
+        "create scratch/probe.txt with ok",
+        None, // label missing → must NOT emit description:null
+        &effective,
+        None,
+        None,
+    );
+    assert!(
+        input.get("description").is_none(),
+        "null description regression: {input}"
+    );
+    let inv = ToolInvocation {
+        id: "wf-agent-1".into(),
+        tool_name: "subagent".into(),
+        input,
+    };
+    executor
+        .validate_arguments(&inv)
+        .unwrap_or_else(|e| panic!("production bridge payload rejected by subagent schema: {e:?}"));
+
+    // Case B: explicit label still accepted.
+    let input2 = build_subagent_bridge_input("ping", Some("worker-1"), &effective, None, None);
+    let inv2 = ToolInvocation {
+        id: "wf-agent-2".into(),
+        tool_name: "subagent".into(),
+        input: input2,
+    };
+    executor
+        .validate_arguments(&inv2)
+        .expect("labeled bridge payload must validate");
+}
+
 // ── R* Lifecycle ──────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
