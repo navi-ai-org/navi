@@ -1,7 +1,7 @@
 name: CI
 
 # Triggers:
-# - pull_request: fast quality gate (fmt / test-fast / clippy)
+# - pull_request: fast quality gate (fmt / test-fast / clippy / coverage-core)
 # - workflow_dispatch: manual full run (includes integration suite)
 #
 # Version tags (v*) do NOT run this workflow — only `.github/workflows/release.yml`
@@ -152,12 +152,52 @@ jobs:
           -A clippy::single_char_pattern
           -A clippy::unnecessary_wraps
 
+  # Targeted coverage gate: navi-core lib tests + critical production-path floors.
+  # Avoids a vague global 80% (mock-heavy suite). Local: `just coverage-core`.
+  coverage:
+    name: Coverage (navi-core critical paths)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-coverage-core
+          prefix-key: v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: navi-core lib coverage (lcov)
+        # --ignore-run-fail: still emit lcov if flaky/unrelated tests fail.
+        # The Test job owns suite pass/fail; this job gates critical-path floors.
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov -p navi-core --lib --lcov --output-path coverage/lcov-core.info \
+            --ignore-run-fail \
+            -- --test-threads=4
+
+      - name: Critical path coverage gate
+        run: python3 scripts/check-critical-coverage.py coverage/lcov-core.info
+
+      - name: Upload lcov artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov-core
+          path: coverage/lcov-core.info
+          if-no-files-found: ignore
+          retention-days: 14
+
   # Single green check for branch protection / release gates.
   # test-full is not required for PR merge (optional on main).
   ci-ok:
     name: CI OK
     if: always()
-    needs: [fmt, test, clippy]
+    needs: [fmt, test, clippy, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: Aggregate job results
@@ -166,10 +206,12 @@ jobs:
           echo "fmt=${{ needs.fmt.result }}"
           echo "test=${{ needs.test.result }}"
           echo "clippy=${{ needs.clippy.result }}"
+          echo "coverage=${{ needs.coverage.result }}"
           for r in \
             "${{ needs.fmt.result }}" \
             "${{ needs.test.result }}" \
-            "${{ needs.clippy.result }}"
+            "${{ needs.clippy.result }}" \
+            "${{ needs.coverage.result }}"
           do
             if [[ "$r" != "success" ]]; then
               echo "CI failed (job result: $r)" >&2

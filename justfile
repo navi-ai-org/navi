@@ -160,9 +160,14 @@ snapshot-update:
 
 # ─── Coverage (cargo-llvm-cov) ───────────────────────────────────────────────
 
+coverage_core_lcov := "coverage/lcov-core.info"
+# Test threads for coverage jobs (CI uses 4; keep local default modest too).
+coverage_test_threads := env_var_or_default("CARGO_TEST_THREADS", "4")
+
 _require-llvm-cov:
     @command -v cargo-llvm-cov >/dev/null || { \
-      echo "Missing cargo-llvm-cov. Install: cargo install cargo-llvm-cov"; \
+      echo "Missing cargo-llvm-cov. Install: cargo install cargo-llvm-cov --locked"; \
+      echo "Also: rustup component add llvm-tools-preview"; \
       exit 1; \
     }
 
@@ -177,6 +182,22 @@ coverage-summary: _require-llvm-cov
 coverage-html: _require-llvm-cov
     cargo llvm-cov --workspace --html -- --test-threads={{test_threads}}
     @echo "Open target/llvm-cov/html/index.html"
+
+# Package-scoped coverage + critical-path gate (mirrors CI `coverage` job).
+# Requires: cargo install cargo-llvm-cov --locked && rustup component add llvm-tools-preview
+# --ignore-run-fail: still emit lcov when unrelated/flaky tests fail; the Test job
+# is the pass/fail source of truth for the suite. This job gates critical paths only.
+coverage-core: _require-llvm-cov
+    mkdir -p coverage
+    cargo llvm-cov -p navi-core --lib --lcov --output-path {{coverage_core_lcov}} \
+      --ignore-run-fail \
+      -- --test-threads={{coverage_test_threads}}
+    @echo "Wrote {{coverage_core_lcov}}"
+    python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
+
+# Re-check floors against an existing lcov (no re-run of tests).
+coverage-core-check:
+    python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
 
 # ─── Rust tooling (direct cargo) ─────────────────────────────────────────────
 
