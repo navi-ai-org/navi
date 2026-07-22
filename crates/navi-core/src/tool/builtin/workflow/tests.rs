@@ -850,6 +850,189 @@ fn production_bridge_payload_validates_on_real_subagent_executor() {
         .expect("labeled bridge payload must validate");
 }
 
+/// Production wiring helper: real `SubagentTool` + `WorkflowTool::with_subagent_bridge`
+/// sharing one `ToolExecutor` (same shape as runtime/sdk). No live LLM.
+fn production_bridge_executor(policy: SecurityPolicy) -> Arc<crate::tool::ToolExecutor> {
+    use crate::config::{HarnessConfig, NaviConfig};
+    use crate::model::{ModelProvider, ModelRequest, ModelStream};
+    use crate::prompt::PromptCache;
+    use crate::runtime_components::RuntimeComponents;
+    use crate::tool::ToolExecutor;
+    use crate::tool::builtin::SubagentTool;
+    use std::sync::RwLock;
+
+    struct NoopProvider;
+    impl ModelProvider for NoopProvider {
+        fn stream(&self, _req: ModelRequest) -> ModelStream {
+            Box::pin(futures_util::stream::empty())
+        }
+    }
+
+    let project = policy.project_root().to_path_buf();
+    let data = policy.data_dir().to_path_buf();
+
+    Arc::new_cyclic(|weak| {
+        let mut executor = ToolExecutor::empty(policy.clone());
+        let subagent = SubagentTool::new(
+            weak.clone(),
+            Arc::new(RwLock::new(
+                Arc::new(NoopProvider) as Arc<dyn ModelProvider>
+            )),
+            project.clone(),
+            data.clone(),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            Arc::new(PromptCache::new()),
+            RuntimeComponents::default(),
+        );
+        executor.register_tool(Arc::new(subagent));
+        executor.register_tool(Arc::new(WorkflowTool::with_subagent_bridge(
+            policy.clone(),
+            WorkflowConfig::default(),
+            weak.clone(),
+        )));
+        executor
+    })
+}
+
+/// Reject schema / argument-validation failures anywhere in a nested agent result.
+fn assert_no_schema_validation_failure(output: &serde_json::Value, context: &str) {
+    let dump = output.to_string();
+    assert!(
+        !dump.contains("\"error_code\":\"invalid_arguments\"")
+            && !dump.contains("Additional properties are not allowed")
+            && !dump.contains("null is not of type"),
+        "{context}: schema/validation failure on production bridge path: {output}"
+    );
+    if let Some(code) = output.get("error_code").and_then(|v| v.as_str()) {
+        assert_ne!(
+            code, "invalid_arguments",
+            "{context}: top-level invalid_arguments: {output}"
+        );
+    }
+    if let Some(code) = output
+        .pointer("/result/error_code")
+        .and_then(|v| v.as_str())
+    {
+        assert_ne!(
+            code, "invalid_arguments",
+            "{context}: agent result invalid_arguments: {output}"
+        );
+    }
+}
+
+/// Full production path: Lua `agent("ping")` (no label) → SubagentBridgeBackend →
+/// ToolExecutor.invoke(subagent). Must not fail schema validation for description:null.
+///
+/// Noop provider is fine — later turn failure is OK; this asserts schema + bridge wiring.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_bridge_agent_without_label_not_schema_error() {
+    let (_dir, policy) = temp_policy();
+    let executor = production_bridge_executor(policy);
+
+    let result = executor
+        .invoke_with_full_context(
+            ToolInvocation {
+                id: "wf-prod-ping".into(),
+                tool_name: "workflow".into(),
+                input: json!({
+                    "script": r#"function workflow() return agent("ping") end"#,
+                    "timeout_ms": 30_000,
+                }),
+            },
+            ToolInvocationContext::default(),
+            true, // workflow already approved at parent level in production
+        )
+        .await;
+
+    assert!(
+        result.ok,
+        "workflow host must complete (agent turn may still fail later): {:?}",
+        result.output
+    );
+    assert_no_schema_validation_failure(&result.output, "agent(\"ping\") without label");
+
+    let agent = &result.output["result"];
+    assert_eq!(
+        agent["backend"].as_str(),
+        Some("subagent_bridge"),
+        "must use SubagentBridgeBackend, not mock/probe: {agent:?}"
+    );
+    // Description omitted path: success or non-schema failure only.
+    assert!(
+        agent.get("error_code").and_then(|v| v.as_str()) != Some("invalid_arguments"),
+        "description:null / schema must not reject unlabeled agent: {agent:?}"
+    );
+}
+
+/// Production path with write-scope options (create_files + write_allow).
+/// Historical hole: options.create_files / write_allow rejected as additionalProperties.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn production_bridge_agent_write_scope_options_not_schema_error() {
+    let (_dir, policy) = temp_policy();
+    let executor = production_bridge_executor(policy);
+
+    let result = executor
+        .invoke_with_full_context(
+            ToolInvocation {
+                id: "wf-prod-write-scope".into(),
+                tool_name: "workflow".into(),
+                input: json!({
+                    "policy": {
+                        "profile": "implementer",
+                        "create_files": true,
+                        "write_allow": ["scratch/x.txt"],
+                        "tools": ["read_file", "write_file", "edit", "search"]
+                    },
+                    "script": r#"
+                        function workflow()
+                            return agent("create scratch/x.txt with ok", {
+                                create_files = true,
+                                write_allow = {"scratch/x.txt"},
+                                tools = {"read_file", "write_file", "edit", "search"}
+                            })
+                        end
+                    "#,
+                    "timeout_ms": 30_000,
+                }),
+            },
+            ToolInvocationContext::default(),
+            true,
+        )
+        .await;
+
+    assert!(
+        result.ok,
+        "workflow host must complete: {:?}",
+        result.output
+    );
+    assert_no_schema_validation_failure(&result.output, "write-scope agent options");
+
+    let agent = &result.output["result"];
+    assert_eq!(
+        agent["backend"].as_str(),
+        Some("subagent_bridge"),
+        "must use SubagentBridgeBackend: {agent:?}"
+    );
+    assert_eq!(
+        agent["create_files"], true,
+        "effective create_files should surface on bridge result: {agent:?}"
+    );
+    let wa = agent["write_allow"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        wa.iter().any(|v| v.as_str() == Some("scratch/x.txt")),
+        "write_allow must pass through bridge payload: {agent:?}"
+    );
+    assert!(
+        agent.get("error_code").and_then(|v| v.as_str()) != Some("invalid_arguments"),
+        "write-scope options must pass registered subagent schema: {agent:?}"
+    );
+}
+
 // ── R* Lifecycle ──────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
