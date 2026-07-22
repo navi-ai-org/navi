@@ -142,8 +142,9 @@ pub fn intersect_agent_policy(run: &RunPolicy, opts: &AgentPolicyOpts) -> Effect
     path_deny.sort();
     path_deny.dedup();
 
-    let create_files = opts.create_files.unwrap_or(false) && run.create_files;
-    let create_dirs = opts.create_dirs.unwrap_or(false) && run.create_dirs;
+    // Non-widening flags: omit on agent ⇒ inherit run; agent cannot enable if run forbids.
+    let create_files = opts.create_files.unwrap_or(run.create_files) && run.create_files;
+    let create_dirs = opts.create_dirs.unwrap_or(run.create_dirs) && run.create_dirs;
 
     // write_allow: intersection. Empty opts or empty run ⇒ no writes.
     let write_allow = match &opts.write_allow {
@@ -269,6 +270,37 @@ mod policy_tests {
         assert_eq!(eff.write_allow, vec!["src/a.rs".to_string()]);
         assert!(!eff.allows_write_path("src/a.rs")); // deny wins
         assert!(!eff.allows_write_path("src/c.rs"));
+    }
+
+    #[test]
+    fn create_files_inherits_from_run_when_agent_omits() {
+        let mut run = default_run_policy();
+        run.create_files = true;
+        run.create_dirs = true;
+        run.write_allow = vec!["scratch/probe.txt".into()];
+        // Agent does not set create_files/create_dirs — must inherit run flags.
+        let opts = AgentPolicyOpts {
+            write_allow: Some(vec!["scratch/probe.txt".into()]),
+            ..Default::default()
+        };
+        let eff = intersect_agent_policy(&run, &opts);
+        assert!(eff.create_files, "run create_files=true should inherit");
+        assert!(eff.create_dirs, "run create_dirs=true should inherit");
+        assert_eq!(eff.write_allow, vec!["scratch/probe.txt".to_string()]);
+    }
+
+    #[test]
+    fn create_files_agent_cannot_widen_past_run() {
+        let mut run = default_run_policy();
+        run.create_files = false;
+        run.write_allow = vec!["scratch/probe.txt".into()];
+        let opts = AgentPolicyOpts {
+            create_files: Some(true),
+            write_allow: Some(vec!["scratch/probe.txt".into()]),
+            ..Default::default()
+        };
+        let eff = intersect_agent_policy(&run, &opts);
+        assert!(!eff.create_files, "agent must not widen create_files");
     }
 
     #[test]

@@ -382,26 +382,18 @@ impl AgentBackend for SubagentBridgeBackend {
             };
         }
 
-        let mut tools = request.effective.tools.clone();
-        tools.retain(|t| !NESTED_WORKFLOW_TOOLS.contains(&t.as_str()));
-
-        // Empty write_allow ⇒ strip write/command tools even if profile is implementer.
-        if request.effective.write_allow.is_empty() {
-            tools.retain(|t| {
-                !WRITE_TOOLS.contains(&t.as_str()) && !COMMAND_TOOLS.contains(&t.as_str())
-            });
-        }
-
-        let approval = if request.effective.write_allow.is_empty() {
-            "read_only"
-        } else if request.effective.approval == "escalate" {
-            "escalate"
-        } else {
-            request.effective.approval.as_str()
-        };
-
         // Embed path policy in the prompt (guidance) AND pass write scope fields
         // so SubagentTool forks a SecurityPolicy with WritePathScope (hard gate).
+        let tools_for_note: Vec<String> = {
+            let mut t = request.effective.tools.clone();
+            t.retain(|n| !NESTED_WORKFLOW_TOOLS.contains(&n.as_str()));
+            if request.effective.write_allow.is_empty() {
+                t.retain(|n| {
+                    !WRITE_TOOLS.contains(&n.as_str()) && !COMMAND_TOOLS.contains(&n.as_str())
+                });
+            }
+            t
+        };
         let path_note = format!(
             "\n\n[workflow worker policy]\n\
              profile={}\n\
@@ -413,45 +405,25 @@ impl AgentBackend for SubagentBridgeBackend {
              You MUST NOT call subagent or workflow. \
              Writes are only allowed on write_allow paths (empty ⇒ no writes).",
             request.effective.profile,
-            tools,
+            tools_for_note,
             request.effective.write_allow,
             request.effective.path_deny,
             request.effective.create_files,
             request.effective.create_dirs,
         );
 
-        let mut options = json!({
-            "agent_profile": request.effective.profile,
-            "tools": tools,
-            "approval": approval,
-            // Always pass write scope so SecurityPolicy enforces path gates.
-            "write_allow": request.effective.write_allow,
-            "path_deny": request.effective.path_deny,
-            "create_files": request.effective.create_files,
-            "create_dirs": request.effective.create_dirs,
-        });
-        if let Some(model) = &request.model {
-            options
-                .as_object_mut()
-                .unwrap()
-                .insert("model".into(), json!(model));
-        }
-        if let Some(max_tokens) = request.max_tokens {
-            options
-                .as_object_mut()
-                .unwrap()
-                .insert("max_tokens".into(), json!(max_tokens));
-        }
-
         let prompt = format!("{}{path_note}", request.prompt);
+        let input = build_subagent_bridge_input(
+            &prompt,
+            request.label.as_deref(),
+            &request.effective,
+            request.model.as_deref(),
+            request.max_tokens,
+        );
         let inv = ToolInvocation {
             id: format!("wf-agent-{}", request.agent_index),
             tool_name: "subagent".into(),
-            input: json!({
-                "prompt": prompt,
-                "description": request.label,
-                "options": options,
-            }),
+            input,
         };
 
         let result: ToolResult = executor
@@ -500,5 +472,140 @@ impl AgentBackend for SubagentBridgeBackend {
             output,
             error: err_msg,
         }
+    }
+}
+
+/// Build the JSON tool input the production bridge sends to `subagent`.
+/// Extracted for unit tests (schema + null-description regressions).
+pub(crate) fn build_subagent_bridge_input(
+    prompt: &str,
+    label: Option<&str>,
+    effective: &EffectiveAgentPolicy,
+    model: Option<&str>,
+    max_tokens: Option<usize>,
+) -> serde_json::Value {
+    let mut tools = effective.tools.clone();
+    tools.retain(|t| !NESTED_WORKFLOW_TOOLS.contains(&t.as_str()));
+    if effective.write_allow.is_empty() {
+        tools
+            .retain(|t| !WRITE_TOOLS.contains(&t.as_str()) && !COMMAND_TOOLS.contains(&t.as_str()));
+    }
+    let approval = if effective.write_allow.is_empty() {
+        "read_only"
+    } else if effective.approval == "escalate" {
+        "escalate"
+    } else {
+        effective.approval.as_str()
+    };
+    let mut options = json!({
+        "agent_profile": effective.profile,
+        "tools": tools,
+        "approval": approval,
+        "write_allow": effective.write_allow,
+        "path_deny": effective.path_deny,
+        "create_files": effective.create_files,
+        "create_dirs": effective.create_dirs,
+    });
+    if let Some(model) = model {
+        options
+            .as_object_mut()
+            .expect("options object")
+            .insert("model".into(), json!(model));
+    }
+    if let Some(max_tokens) = max_tokens {
+        options
+            .as_object_mut()
+            .expect("options object")
+            .insert("max_tokens".into(), json!(max_tokens));
+    }
+    let mut input = json!({
+        "prompt": prompt,
+        "options": options,
+    });
+    if let Some(label) = label.map(str::trim).filter(|s| !s.is_empty()) {
+        input
+            .as_object_mut()
+            .expect("input object")
+            .insert("description".into(), json!(label));
+    }
+    input
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::builtin::workflow::policy::default_run_policy;
+
+    #[test]
+    fn bridge_input_omits_null_description_when_label_missing() {
+        let mut run = default_run_policy();
+        run.create_files = true;
+        run.write_allow = vec!["scratch/a.txt".into()];
+        run.tools = vec![
+            "read_file".into(),
+            "write_file".into(),
+            "edit".into(),
+            "search".into(),
+        ];
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &crate::tool::builtin::workflow::policy::AgentPolicyOpts {
+                profile: Some("implementer".into()),
+                ..Default::default()
+            },
+        );
+        assert!(effective.create_files);
+        let input = build_subagent_bridge_input("do work", None, &effective, None, None);
+        assert!(
+            input.get("description").is_none(),
+            "missing label must not serialize description:null, got {input}"
+        );
+        assert_eq!(input["options"]["create_files"], true);
+        assert_eq!(input["options"]["write_allow"], json!(["scratch/a.txt"]));
+        // Must validate against live subagent schema.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "prompt": { "type": "string" },
+                "description": { "type": "string" },
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "agent_profile": { "type": "string" },
+                        "tools": { "type": "array", "items": { "type": "string" } },
+                        "approval": { "type": "string" },
+                        "write_allow": { "type": "array", "items": { "type": "string" } },
+                        "path_deny": { "type": "array", "items": { "type": "string" } },
+                        "create_files": { "type": "boolean" },
+                        "create_dirs": { "type": "boolean" },
+                        "model": { "type": "string" },
+                        "max_tokens": { "type": "integer" }
+                    },
+                    "additionalProperties": false
+                }
+            },
+            "required": ["prompt"],
+            "additionalProperties": false
+        });
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let errors: Vec<_> = validator
+            .iter_errors(&input)
+            .map(|e| e.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "bridge input invalid: {errors:?} input={input}"
+        );
+    }
+
+    #[test]
+    fn bridge_input_includes_non_empty_label() {
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let input = build_subagent_bridge_input("p", Some("  collect  "), &effective, None, None);
+        assert_eq!(input["description"], "collect");
     }
 }
