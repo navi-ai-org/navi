@@ -17,7 +17,12 @@ NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust.
 - [Conversation Compaction](compaction.md) — Micro-compact, auto-compact, and session memory behavior.
 - [Auto-Memory](auto-memory.md) — Persistent SQLite memory system with semantic search, extractMemories, auto-dream, and auto-distill.
 - [Goal System](goal-system.md) — Goal lifecycle, verification, and budget tracking.
+- [Harness System Vision](harness-system.md) — Loop/graph engineering, harness packs, materialize & feedback jobs, capability cards, plugins/MCP evolution.
 - [TUI Internals](tui.md) — TUI state, keybindings, rendering, modals, and performance rules.
+
+## Presentations
+
+- [Harness Vision (HTML)](presentations/harness-vision/index.html) — Visual deck for the harness / loop / graph system.
 
 ## Architecture Decisions
 
