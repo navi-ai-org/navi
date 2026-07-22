@@ -43,7 +43,7 @@ The binding exposes the full `NaviEngine` SDK surface:
 | Sessions | `startSession`, `closeSession`, `snapshotSession`, `sessionIds` |
 | Turns | `sendTurn` (with multimodal content, context packets, thinking), `cancelTurn` |
 | Events | `subscribeEvents` → `stream.next()` |
-| Goals | `getGoal`, `setGoal`, `clearGoal` |
+| Goals | `getGoal`, `setGoal`, `clearGoal`, `updateGoalStatus`, `updateGoalChecklist`, `updateGoalTaskStatus` |
 | Questions | `resolveQuestion` |
 | Approvals | `resolveApproval` |
 | Background tasks | `listBackgroundCommands`, `pollBackgroundCommand`, `cancelBackgroundCommand` |

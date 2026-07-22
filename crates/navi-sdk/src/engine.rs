@@ -675,28 +675,62 @@ impl NaviEngine {
         })
     }
 
-    /// Returns the current goal for a session.
+    /// Returns the current thread goal for a session, if any.
+    ///
+    /// Hosts use this for UI chips; the model uses the `get_goal` tool during a turn.
     pub async fn get_goal(&self, session_id: &str) -> Result<Option<SessionGoal>> {
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
         Ok(runtime.get_goal())
     }
 
-    /// Sets a goal for a session. The goal will guide the agent across turns
-    /// (auto-continuation while status is Active).
+    /// Sets or replaces the thread goal (host API).
+    ///
+    /// While status is `Active` and `[goals].enabled` is true, the runtime
+    /// auto-continues turns after each successful `send_turn` until complete,
+    /// blocked, budget-limited, paused, or cleared. Optional `token_budget`
+    /// must be a positive integer when set.
+    ///
+    /// Prefer this over the model `create_goal` tool when the product UI sets
+    /// the objective. Model tools remain for agent-driven goals when the user
+    /// explicitly asks.
     pub async fn set_goal(
         &self,
         session_id: &str,
         objective: impl Into<String>,
         token_budget: Option<i64>,
     ) -> Result<SessionGoal> {
-        let session = self.session(session_id)?;
-        let runtime = session.runtime.lock().await;
-        // set_goal publishes GoalUpdated for live clients.
-        Ok(runtime.set_goal(objective.into(), token_budget))
+        self.set_goal_with_short_description(session_id, objective, None, token_budget)
+            .await
     }
 
-    /// Clears the goal for a session (notifies live clients).
+    /// Like [`set_goal`], with an optional compact UI label (max 40 chars recommended).
+    pub async fn set_goal_with_short_description(
+        &self,
+        session_id: &str,
+        objective: impl Into<String>,
+        short_description: Option<String>,
+        token_budget: Option<i64>,
+    ) -> Result<SessionGoal> {
+        if let Some(budget) = token_budget {
+            if budget <= 0 {
+                return Err(NaviError::from(anyhow::anyhow!(
+                    "token_budget must be a positive integer when set"
+                )));
+            }
+        }
+        let session = self.session(session_id)?;
+        let runtime = session.runtime.lock().await;
+        let short = short_description
+            .map(|s| s.trim().chars().take(40).collect::<String>())
+            .filter(|s| !s.is_empty());
+        Ok(runtime.set_goal_with_short_description(objective.into(), short, token_budget))
+    }
+
+    /// Clears the thread goal for a session.
+    ///
+    /// Does not emit a terminal `GoalUpdated` (hosts clear UI optimistically
+    /// or on the next snapshot). Auto-continuation stops immediately.
     pub async fn clear_goal(&self, session_id: &str) -> Result<()> {
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
@@ -704,7 +738,11 @@ impl NaviEngine {
         Ok(())
     }
 
-    /// Updates the goal status (e.g. pause, resume, complete, blocked).
+    /// Host/system goal status changes (pause, resume, complete, blocked, …).
+    ///
+    /// Pause disables auto-continue; Active re-enables it. The model tool
+    /// `update_goal` only allows `complete` and `blocked` — hosts use this
+    /// method for pause/resume and other system transitions.
     pub async fn update_goal_status(
         &self,
         session_id: &str,
@@ -718,6 +756,8 @@ impl NaviEngine {
                 runtime.goal_runtime().set_auto_continue(false);
             } else if status == navi_core::GoalStatus::Active {
                 runtime.goal_runtime().set_auto_continue(true);
+            } else if status.is_terminal() || status == navi_core::GoalStatus::Blocked {
+                runtime.goal_runtime().set_auto_continue(false);
             }
             // update_goal publishes GoalUpdated for live clients.
             runtime.update_goal(goal.clone());
@@ -727,7 +767,9 @@ impl NaviEngine {
         }
     }
 
-    /// Replaces the goal's checklist with a new set of tasks.
+    /// Host-only optional checklist structure on the goal (not required for complete).
+    ///
+    /// Not exposed as a model tool. Prefer `plan` for multi-step agent visibility.
     pub async fn update_goal_checklist(
         &self,
         session_id: &str,
@@ -738,7 +780,7 @@ impl NaviEngine {
         Ok(runtime.update_goal_checklist(tasks))
     }
 
-    /// Updates a single task's status in the goal checklist.
+    /// Host-only update of a single checklist task status.
     pub async fn update_goal_task_status(
         &self,
         session_id: &str,

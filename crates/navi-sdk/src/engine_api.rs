@@ -26,9 +26,10 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "snapshot_session",
     "session_ids",
     "list_session_tools",
-    // Goal management
+    // Goal management (host API; model tools are get_goal/create_goal/update_goal)
     "get_goal",
     "set_goal",
+    "set_goal_with_short_description",
     "clear_goal",
     "update_goal_status",
     "update_goal_checklist",
@@ -188,9 +189,10 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "snapshot_session",
     "session_ids",
     "list_session_tools",
-    // Goal management
+    // Goal management (host API; model tools are get_goal/create_goal/update_goal)
     "get_goal",
     "set_goal",
+    "set_goal_with_short_description",
     "clear_goal",
     "update_goal_status",
     "update_goal_checklist",

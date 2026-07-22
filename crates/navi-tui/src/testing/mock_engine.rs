@@ -218,6 +218,13 @@ impl EngineDriver for MockEngine {
         })
     }
 
+    async fn get_goal(
+        &self,
+        _session_id: &str,
+    ) -> Result<Option<navi_core::SessionGoal>> {
+        Ok(None)
+    }
+
     async fn set_goal(
         &self,
         _session_id: &str,

@@ -50,6 +50,9 @@ engine.close_session(&session.id).await?;
 | `subscribe_events` | Stream `RuntimeEvent`s |
 | `set_session_skills` | Activate skills for a session |
 | `list_mcp_servers` | List configured MCP servers |
+| `get_goal` / `set_goal` / `clear_goal` | Thread goals (host API) |
+| `update_goal_status` | Host pause/resume/complete/blocked |
+| `set_goal_with_short_description` | Goal + compact UI label |
 
 ### Events
 

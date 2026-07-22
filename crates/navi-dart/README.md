@@ -81,9 +81,20 @@ cargo test -p navi-dart -- --test-threads=1
 | `navi_engine_select_model(engine, pid, model, target, cb, ud)` | async | Select model |
 | `navi_engine_loaded_config(engine)` | `*mut c_char` (JSON) | Get config |
 
+### Goals (thread goals)
+
+| Function | Description |
+|---|---|
+| `navi_engine_get_goal(engine, sid, cb, ud)` | Current goal JSON or null |
+| `navi_engine_set_goal(engine, sid, objective, token_budget, short_description, cb, ud)` | Set goal (`token_budget < 0` = none; `short_description` nullable). Auto-continues while Active |
+| `navi_engine_clear_goal(engine, sid, cb, ud)` | Clear goal |
+| `navi_engine_update_goal_status(engine, sid, status, cb, ud)` | Host status: active/paused/blocked/usage_limited/budget_limited/complete |
+| `navi_engine_update_goal_checklist(...)` | Host-only optional checklist |
+| `navi_engine_update_goal_task_status(...)` | Host-only checklist task status |
+
 ### And more...
 
-Goals, background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions — all covered via the same pattern.
+Background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions — same async callback pattern.
 
 ## Dart Package
 
