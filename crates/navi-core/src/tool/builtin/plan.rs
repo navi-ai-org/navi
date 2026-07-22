@@ -1190,6 +1190,63 @@ mod tests {
         assert!(body.contains("src/ui.tsx"));
     }
 
+    /// Production boundary: `plan` is registered on ToolExecutor and invoked
+    /// through `invoke` / schema validation — same path TUI/runtime use.
+    /// Direct `PlanTool::invoke` tests alone miss executor schema + security wiring.
+    #[tokio::test]
+    async fn production_plan_write_via_tool_executor_returns_body_markdown() {
+        use crate::tool::{ToolExecutor, ToolInvocationContext};
+        use std::sync::Arc;
+
+        let (policy, _td) = temp_policy();
+        let mut executor = ToolExecutor::empty(policy.clone());
+        executor.register_tool(Arc::new(PlanTool::new(policy)));
+
+        let md = "# Executor plan write\n\n## Context\nHit production boundary.\n\n## Approach\nRegister PlanTool on executor.\n\n## Verification\ncargo test -p navi-core\n";
+        let result = executor
+            .invoke_with_full_context(
+                ToolInvocation {
+                    id: "plan-exec-write".into(),
+                    tool_name: "plan".into(),
+                    input: json!({
+                        "action": "write",
+                        "plan": md,
+                    }),
+                },
+                ToolInvocationContext::default(),
+                true,
+            )
+            .await;
+
+        assert!(
+            result.ok,
+            "plan write via ToolExecutor must succeed: {:?}",
+            result.output
+        );
+        assert_ne!(
+            result.output.get("error_code").and_then(|v| v.as_str()),
+            Some("invalid_arguments"),
+            "plan write must pass registered schema: {:?}",
+            result.output
+        );
+        // TUI depends on body_markdown in the tool result (not only plan_file_path).
+        let body = result.output["body_markdown"]
+            .as_str()
+            .expect("body_markdown required for TUI plan display");
+        assert!(
+            body.contains("## Context") && body.contains("Executor plan write"),
+            "body_markdown missing expected content: {body}"
+        );
+        assert_eq!(result.output["needs_review"], false);
+        assert!(
+            result.output["plan_file_path"]
+                .as_str()
+                .is_some_and(|p| p.ends_with(".md")),
+            "plan_file_path: {:?}",
+            result.output["plan_file_path"]
+        );
+    }
+
     #[tokio::test]
     async fn create_markdown_design_doc_without_list_steps() {
         let (policy, _td) = temp_policy();

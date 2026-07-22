@@ -534,7 +534,37 @@ pub(crate) fn build_subagent_bridge_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{HarnessConfig, NaviConfig};
+    use crate::model::{ModelProvider, ModelRequest, ModelStream};
+    use crate::prompt::PromptCache;
+    use crate::runtime_components::RuntimeComponents;
+    use crate::tool::Tool;
+    use crate::tool::builtin::SubagentTool;
     use crate::tool::builtin::workflow::policy::default_run_policy;
+    use std::sync::{Arc, RwLock};
+
+    struct NoopProvider;
+    impl ModelProvider for NoopProvider {
+        fn stream(&self, _req: ModelRequest) -> ModelStream {
+            Box::pin(futures_util::stream::empty())
+        }
+    }
+
+    /// Schema from a real SubagentTool — never a hand-rolled duplicate that can drift.
+    fn registered_subagent_schema() -> serde_json::Value {
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            Arc::new(PromptCache::new()),
+            RuntimeComponents::default(),
+        );
+        tool.definition().input_schema
+    }
 
     #[test]
     fn bridge_input_omits_null_description_when_label_missing() {
@@ -562,31 +592,8 @@ mod tests {
         );
         assert_eq!(input["options"]["create_files"], true);
         assert_eq!(input["options"]["write_allow"], json!(["scratch/a.txt"]));
-        // Must validate against live subagent schema.
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "prompt": { "type": "string" },
-                "description": { "type": "string" },
-                "options": {
-                    "type": "object",
-                    "properties": {
-                        "agent_profile": { "type": "string" },
-                        "tools": { "type": "array", "items": { "type": "string" } },
-                        "approval": { "type": "string" },
-                        "write_allow": { "type": "array", "items": { "type": "string" } },
-                        "path_deny": { "type": "array", "items": { "type": "string" } },
-                        "create_files": { "type": "boolean" },
-                        "create_dirs": { "type": "boolean" },
-                        "model": { "type": "string" },
-                        "max_tokens": { "type": "integer" }
-                    },
-                    "additionalProperties": false
-                }
-            },
-            "required": ["prompt"],
-            "additionalProperties": false
-        });
+        // Validate against the live SubagentTool schema (not a hand-rolled twin).
+        let schema = registered_subagent_schema();
         let validator = jsonschema::validator_for(&schema).unwrap();
         let errors: Vec<_> = validator
             .iter_errors(&input)
@@ -594,7 +601,7 @@ mod tests {
             .collect();
         assert!(
             errors.is_empty(),
-            "bridge input invalid: {errors:?} input={input}"
+            "bridge input invalid vs registered SubagentTool schema: {errors:?} input={input}"
         );
     }
 
@@ -607,5 +614,15 @@ mod tests {
         );
         let input = build_subagent_bridge_input("p", Some("  collect  "), &effective, None, None);
         assert_eq!(input["description"], "collect");
+        let schema = registered_subagent_schema();
+        let validator = jsonschema::validator_for(&schema).unwrap();
+        let errors: Vec<_> = validator
+            .iter_errors(&input)
+            .map(|e| e.to_string())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "labeled bridge input invalid vs SubagentTool schema: {errors:?} input={input}"
+        );
     }
 }
