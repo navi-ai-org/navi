@@ -345,6 +345,234 @@ pub fn skill_is_editable(skill: &SkillManifest) -> bool {
     matches!(skill.source, SkillSource::Store)
 }
 
+/// Fields extracted from a skill markdown or TOML file before write.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ParsedSkillFile {
+    pub id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub author: Option<String>,
+    pub tags: Vec<String>,
+    pub allow_tools: Vec<String>,
+    pub deny_tools: Vec<String>,
+    pub instructions: String,
+}
+
+/// Parse a skill file by path extension (`.md` / `.markdown` / `.toml`).
+///
+/// When `name` is missing from the file, uses `fallback_name` (typically the file stem).
+pub fn parse_skill_file(path: &Path, raw: &str, fallback_name: &str) -> Result<ParsedSkillFile> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" => Ok(parse_skill_md(raw, fallback_name)),
+        "toml" => parse_skill_toml(raw, fallback_name),
+        other => Err(anyhow::anyhow!(
+            "unsupported skill file extension '.{other}' (expected .md, .markdown, or .toml)"
+        )),
+    }
+}
+
+/// Parse skill markdown with optional YAML-ish frontmatter between `---` fences.
+///
+/// Supported frontmatter keys: `name`, `description`, `version`, `tags`, `id`,
+/// `author`, `allow_tools`, `deny_tools`. Body after the closing `---` is instructions.
+pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
+    let trimmed = raw.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("---") {
+        // Allow optional whitespace/newlines after opening fence.
+        let rest = rest.strip_prefix('\r').unwrap_or(rest);
+        let rest = rest.strip_prefix('\n').unwrap_or(rest);
+        if let Some(end) = rest.find("\n---") {
+            let front = &rest[..end];
+            let body = rest[end + 4..]
+                .trim_start_matches('\r')
+                .trim_start_matches('\n')
+                .to_string();
+            let mut parsed = ParsedSkillFile {
+                instructions: body,
+                ..Default::default()
+            };
+            for line in front.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let Some((key, value)) = split_yaml_key_value(line) else {
+                    continue;
+                };
+                match key {
+                    "name" => parsed.name = unquote(value),
+                    "description" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            parsed.description = Some(v);
+                        }
+                    }
+                    "version" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            parsed.version = Some(v);
+                        }
+                    }
+                    "author" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            parsed.author = Some(v);
+                        }
+                    }
+                    "id" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            parsed.id = Some(v);
+                        }
+                    }
+                    "tags" => parsed.tags = parse_yaml_list(value),
+                    "allow_tools" => parsed.allow_tools = parse_yaml_list(value),
+                    "deny_tools" => parsed.deny_tools = parse_yaml_list(value),
+                    _ => {}
+                }
+            }
+            if parsed.name.trim().is_empty() {
+                parsed.name = fallback_name.trim().to_string();
+            }
+            if parsed.name.trim().is_empty() {
+                parsed.name = "Imported Skill".into();
+            }
+            return parsed;
+        }
+    }
+
+    let mut name = fallback_name.trim().to_string();
+    if name.is_empty() {
+        name = "Imported Skill".into();
+    }
+    ParsedSkillFile {
+        name,
+        instructions: raw.to_string(),
+        ..Default::default()
+    }
+}
+
+/// Parse a skill TOML file (`name`, `description`, `version`, `tags`, `instructions`, …).
+pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFile> {
+    #[derive(Deserialize)]
+    struct SkillFile {
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        version: Option<String>,
+        #[serde(default)]
+        author: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        allow_tools: Vec<String>,
+        #[serde(default)]
+        deny_tools: Vec<String>,
+        #[serde(default)]
+        instructions: String,
+    }
+    let file: SkillFile = toml::from_str(raw).map_err(|e| {
+        anyhow::anyhow!("failed to parse skill TOML: {e}")
+    })?;
+    let mut name = file
+        .name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback_name.trim().to_string());
+    if name.is_empty() {
+        name = "Imported Skill".into();
+    }
+    Ok(ParsedSkillFile {
+        id: file
+            .id
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        name,
+        description: file
+            .description
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        version: file
+            .version
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        author: file
+            .author
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        tags: file.tags,
+        allow_tools: file.allow_tools,
+        deny_tools: file.deny_tools,
+        instructions: file.instructions,
+    })
+}
+
+/// List builtins + store skills regardless of `[skills].enabled`.
+///
+/// Used by `navi skill list` so the store remains inspectable when discovery is off.
+pub fn list_installed_skills(project_dir: &Path, data_dir: &Path) -> Result<Vec<SkillManifest>> {
+    let mut skills = builtin_skills();
+    if let Ok(store) = SkillStore::open(data_dir) {
+        let project_key = project_skill_key(project_dir);
+        match store.list_for_discovery(Some(&project_key)) {
+            Ok(stored) => skills.extend(stored),
+            Err(err) => tracing::warn!(error = %err, "failed to list skills from store"),
+        }
+    }
+    skills.sort_by(|a, b| a.id.cmp(&b.id));
+    skills.dedup_by(|a, b| a.id == b.id);
+    Ok(skills)
+}
+
+fn split_yaml_key_value(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(':')?;
+    let key = key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    Some((key, value.trim()))
+}
+
+fn unquote(value: &str) -> String {
+    let v = value.trim();
+    if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
+        || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
+    {
+        v[1..v.len() - 1].to_string()
+    } else {
+        v.to_string()
+    }
+}
+
+/// Parse a simple YAML list value: `[a, b]`, comma-separated, or a single token.
+fn parse_yaml_list(value: &str) -> Vec<String> {
+    let t = value.trim();
+    if t.is_empty() {
+        return Vec::new();
+    }
+    if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+        return inner
+            .split(',')
+            .map(|s| unquote(s.trim()))
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    t.split(',')
+        .map(|s| unquote(s.trim()))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,5 +756,119 @@ mod tests {
         assert_eq!(active.len(), 1);
         let rendered = render_active_skills(&active).unwrap();
         assert!(rendered.contains("Ask one question first."));
+    }
+
+    #[test]
+    fn parse_skill_md_frontmatter() {
+        let raw = r#"---
+name: Code Reviewer
+description: Reviews PRs carefully
+version: "1.0.0"
+id: reviewer
+author: NAVI
+tags: [code, review]
+allow_tools: [read_file, bash]
+deny_tools: write_file
+---
+Review thoroughly.
+Use checklists.
+"#;
+        let parsed = parse_skill_md(raw, "fallback");
+        assert_eq!(parsed.name, "Code Reviewer");
+        assert_eq!(parsed.id.as_deref(), Some("reviewer"));
+        assert_eq!(parsed.description.as_deref(), Some("Reviews PRs carefully"));
+        assert_eq!(parsed.version.as_deref(), Some("1.0.0"));
+        assert_eq!(parsed.author.as_deref(), Some("NAVI"));
+        assert_eq!(parsed.tags, vec!["code", "review"]);
+        assert_eq!(parsed.allow_tools, vec!["read_file", "bash"]);
+        assert_eq!(parsed.deny_tools, vec!["write_file"]);
+        assert!(parsed.instructions.contains("Review thoroughly."));
+        assert!(parsed.instructions.contains("Use checklists."));
+    }
+
+    #[test]
+    fn parse_skill_md_uses_fallback_name_without_frontmatter() {
+        let parsed = parse_skill_md("Just do the thing.", "my-skill");
+        assert_eq!(parsed.name, "my-skill");
+        assert_eq!(parsed.instructions, "Just do the thing.");
+    }
+
+    #[test]
+    fn parse_skill_toml_and_install_roundtrip() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data = tempdir.path().join("data");
+        let project = tempdir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+
+        let raw = r#"
+name = "Helper"
+description = "Helps"
+version = "0.1.0"
+id = "helper"
+tags = ["util"]
+allow_tools = ["read_file"]
+instructions = "Help carefully."
+"#;
+        let path = PathBuf::from("helper.toml");
+        let parsed = parse_skill_file(&path, raw, "stem").expect("parse");
+        assert_eq!(parsed.name, "Helper");
+        assert_eq!(parsed.id.as_deref(), Some("helper"));
+
+        let result = write_skill(
+            &SkillWriteRequest {
+                id: parsed.id.clone().unwrap_or_default(),
+                name: parsed.name.clone(),
+                description: parsed.description.clone(),
+                version: parsed.version.clone(),
+                author: parsed.author.clone(),
+                tags: parsed.tags.clone(),
+                requires: vec![],
+                allow_tools: parsed.allow_tools.clone(),
+                deny_tools: parsed.deny_tools.clone(),
+                instructions: parsed.instructions.clone(),
+                scope: SkillWriteScope::User,
+            },
+            &project,
+            &data,
+        )
+        .expect("write");
+        assert!(result.created);
+        assert_eq!(result.skill.id, "helper");
+
+        let listed = list_installed_skills(&project, &data).expect("list");
+        assert!(listed.iter().any(|s| s.id == "helper"));
+        assert!(listed.iter().any(|s| s.id == CREATE_SKILL_ID));
+    }
+
+    #[test]
+    fn list_installed_skills_ignores_enabled_flag() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_skill(
+            &SkillWriteRequest {
+                id: "listed".into(),
+                name: "Listed".into(),
+                description: None,
+                version: None,
+                author: None,
+                tags: vec![],
+                requires: vec![],
+                allow_tools: vec![],
+                deny_tools: vec![],
+                instructions: "body".into(),
+                scope: SkillWriteScope::User,
+            },
+            tempdir.path(),
+            tempdir.path(),
+        )
+        .unwrap();
+        let disabled = SkillsConfig {
+            enabled: false,
+            active: Vec::new(),
+        };
+        let via_discover =
+            discover_configured_skills(&disabled, tempdir.path(), tempdir.path()).unwrap();
+        assert!(via_discover.is_empty());
+        let listed = list_installed_skills(tempdir.path(), tempdir.path()).unwrap();
+        assert!(listed.iter().any(|s| s.id == "listed"));
     }
 }

@@ -13,6 +13,7 @@ mod memory_cmd;
 mod plugin_cmd;
 mod registry_cmd;
 mod server_cmd;
+mod skill_cmd;
 mod voice_cmd;
 
 #[derive(Debug, Parser)]
@@ -119,6 +120,28 @@ enum Commands {
         #[command(subcommand)]
         action: ServerAction,
     },
+    /// Manage skills (install into skills.sqlite, list)
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SkillAction {
+    /// Install a skill from a markdown (.md) or TOML (.toml) file into skills.sqlite
+    Install {
+        /// Path to skill markdown (.md) or skill.toml
+        path: PathBuf,
+        /// Optional skill id override
+        #[arg(long)]
+        id: Option<String>,
+        /// user (default) or project scope
+        #[arg(long, default_value = "user")]
+        scope: String,
+    },
+    /// List built-in and store skills
+    List,
 }
 
 #[derive(Debug, Subcommand)]
@@ -480,6 +503,11 @@ async fn main() -> Result<()> {
     if !cli_skills.is_empty() {
         loaded_config.config.skills.enabled = true;
         loaded_config.config.skills.active = cli_skills.clone();
+    }
+
+    // Handle skill subcommand early
+    if let Some(Commands::Skill { action }) = cli.command {
+        return skill_cmd::handle_skill_command(action, &loaded_config, &cwd);
     }
 
     // Handle plugin subcommand early
