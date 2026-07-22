@@ -154,6 +154,10 @@ pub async fn check_for_update(
 ///
 /// Spawns the platform installer and waits for completion. On success the
 /// new binary is on disk; the running process should exit so the user restarts.
+///
+/// **Important:** the installer process does **not** inherit the parent
+/// stdout/stderr. That would paint raw ANSI progress over an active TUI
+/// alternate screen. Output is captured and only attached to errors.
 pub async fn apply_update(info: &UpdateInfo) -> Result<()> {
     let version = info.latest_version.clone();
     tokio::task::spawn_blocking(move || apply_update_blocking(&version))
@@ -162,70 +166,155 @@ pub async fn apply_update(info: &UpdateInfo) -> Result<()> {
     Ok(())
 }
 
+/// Run a child process with piped stdio so TUI/alternate-screen sessions are
+/// not corrupted by installer progress ANSI. Captured output is kept for errors.
+fn run_silent(mut cmd: std::process::Command) -> Result<()> {
+    use std::process::Stdio;
+
+    // Discourage colored progress from install.sh / powershell host noise.
+    cmd.env("NO_COLOR", "1");
+    cmd.env("TERM", "dumb");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("spawn installer: {:?}", cmd.get_program()))?;
+
+    if output.status.success() {
+        // Success path: discard installer chatter (TUI already shows its own toast).
+        if !output.stdout.is_empty() {
+            tracing::debug!(bytes = output.stdout.len(), "installer stdout (suppressed)");
+        }
+        if !output.stderr.is_empty() {
+            tracing::debug!(bytes = output.stderr.len(), "installer stderr (suppressed)");
+        }
+        return Ok(());
+    }
+
+    let tail = installer_error_tail(&output.stdout, &output.stderr);
+    if tail.is_empty() {
+        anyhow::bail!("installer exited with {}", output.status);
+    }
+    anyhow::bail!("installer exited with {}: {}", output.status, tail);
+}
+
+fn installer_error_tail(stdout: &[u8], stderr: &[u8]) -> String {
+    let mut combined = String::new();
+    if !stderr.is_empty() {
+        combined.push_str(&String::from_utf8_lossy(stderr));
+    }
+    if !stdout.is_empty() {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&String::from_utf8_lossy(stdout));
+    }
+    // Strip ANSI so error notifications stay readable in the TUI.
+    let plain = strip_ansi(&combined);
+    // Keep last ~1.5 KiB of meaningful lines.
+    let trimmed = plain.trim();
+    if trimmed.len() <= 1500 {
+        return trimmed.to_string();
+    }
+    let start = trimmed.len().saturating_sub(1500);
+    // Prefer cutting on a newline boundary.
+    let slice = &trimmed[start..];
+    match slice.find('\n') {
+        Some(i) => slice[i + 1..].trim().to_string(),
+        None => slice.trim().to_string(),
+    }
+}
+
+fn strip_ansi(s: &str) -> String {
+    // Minimal CSI / OSC stripper for installer progress codes (no dependency).
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\u{1b}' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                // CSI: ESC [ ... final byte @-~
+                for next in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                // OSC: ESC ] ... BEL or ST (ESC \)
+                while let Some(next) = chars.next() {
+                    if next == '\u{07}' {
+                        break;
+                    }
+                    if next == '\u{1b}' && matches!(chars.peek(), Some('\\')) {
+                        let _ = chars.next();
+                        break;
+                    }
+                }
+            }
+            Some(_) | None => {}
+        }
+    }
+    out
+}
+
 fn apply_update_blocking(version: &str) -> Result<()> {
     let version = normalize_version(version);
     match std::env::consts::OS {
         "windows" => {
             // Download install.ps1 and run with -Version
-            let status = std::process::Command::new("powershell")
-                .args([
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    &format!(
-                        "irm {INSTALL_PS1} | iex; if (Get-Command Install-Navi -ErrorAction SilentlyContinue) {{ Install-Navi -Version {version} }} else {{ & ([scriptblock]::Create((irm {INSTALL_PS1}))) -Version {version} }}"
-                    ),
-                ])
-                .status()
-                .context("spawn powershell installer")?;
-            if !status.success() {
-                // Fallback: curl-style via iwr to temp
-                let tmp = std::env::temp_dir().join("navi-install.ps1");
-                let script = std::process::Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-Command",
-                        &format!(
-                            "Invoke-WebRequest -Uri '{INSTALL_PS1}' -OutFile '{}'",
-                            tmp.display()
-                        ),
-                    ])
-                    .status()
-                    .context("download install.ps1")?;
-                if !script.success() {
-                    anyhow::bail!("failed to download install.ps1");
-                }
-                let status = std::process::Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-File",
-                        tmp.to_str().unwrap_or("navi-install.ps1"),
-                        "-Version",
-                        &version,
-                    ])
-                    .status()
-                    .context("run install.ps1")?;
-                if !status.success() {
-                    anyhow::bail!("install.ps1 exited with {status}");
-                }
+            let mut primary = std::process::Command::new("powershell");
+            primary.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &format!(
+                    "irm {INSTALL_PS1} | iex; if (Get-Command Install-Navi -ErrorAction SilentlyContinue) {{ Install-Navi -Version {version} }} else {{ & ([scriptblock]::Create((irm {INSTALL_PS1}))) -Version {version} }}"
+                ),
+            ]);
+            if run_silent(primary).is_ok() {
+                return Ok(());
             }
+            // Fallback: curl-style via iwr to temp
+            let tmp = std::env::temp_dir().join("navi-install.ps1");
+            let mut download = std::process::Command::new("powershell");
+            download.args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "Invoke-WebRequest -Uri '{INSTALL_PS1}' -OutFile '{}'",
+                    tmp.display()
+                ),
+            ]);
+            run_silent(download).context("download install.ps1")?;
+            let mut install = std::process::Command::new("powershell");
+            install.args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                tmp.to_str().unwrap_or("navi-install.ps1"),
+                "-Version",
+                &version,
+            ]);
+            run_silent(install).context("run install.ps1")?;
             Ok(())
         }
         _ => {
-            // curl | sh with pinned version (checksum verified by install.sh)
-            let status = std::process::Command::new("sh")
-                .args([
-                    "-c",
-                    &format!("curl -fsSL {INSTALL_SH} | sh -s -- --version {version}"),
-                ])
-                .status()
-                .context("spawn install.sh")?;
-            if !status.success() {
-                anyhow::bail!("install.sh exited with {status}");
-            }
+            // curl | sh with pinned version (checksum verified by install.sh).
+            // Stdio is piped (not inherited) so an active TUI is not corrupted.
+            let mut cmd = std::process::Command::new("sh");
+            cmd.args([
+                "-c",
+                &format!("curl -fsSL {INSTALL_SH} | sh -s -- --version {version}"),
+            ]);
+            run_silent(cmd).context("run install.sh")?;
             Ok(())
         }
     }
@@ -247,5 +336,36 @@ mod tests {
         assert!(version_is_newer("1.0.0", "0.9.9"));
         assert!(!version_is_newer("0.2.2", "0.2.3"));
         assert!(!version_is_newer("0.2.3", "0.2.3"));
+    }
+
+    #[test]
+    fn strip_ansi_removes_csi_sequences() {
+        let raw = "\x1b[1mlinux-x64\x1b[0m installed to \x1b[1m/home/enrell/.local/bin/navi\x1b[0m";
+        assert_eq!(
+            strip_ansi(raw),
+            "linux-x64 installed to /home/enrell/.local/bin/navi"
+        );
+    }
+
+    #[test]
+    fn installer_error_tail_prefers_stderr_and_strips_ansi() {
+        let stderr = b"\x1b[0;31m[navi]\x1b[0m boom\n";
+        let stdout = b"progress line\n";
+        let tail = installer_error_tail(stdout, stderr);
+        assert!(tail.contains("[navi] boom"));
+        assert!(tail.contains("progress line"));
+        assert!(!tail.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn run_silent_does_not_inherit_stdio_and_captures_failure() {
+        // A tiny failing command must not write to our inherited stdout.
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "printf '\\033[1mFAIL\\033[0m\\n' >&2; exit 7"]);
+        let err = run_silent(cmd).expect_err("expected failure");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("exit"), "{msg}");
+        assert!(msg.contains("FAIL"), "{msg}");
+        assert!(!msg.contains('\u{1b}'), "{msg}");
     }
 }
