@@ -156,10 +156,6 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "grep" => grep_summary(invocation, result),
         "fs_browser" => fs_browser_summary(invocation, result),
 
-        // ── Process & Command ─────────────────────────────────────────────
-        "test_runner" => test_runner_summary(invocation, result),
-        "build_runner" => build_runner_summary(invocation, result),
-
         // ── Code Intelligence ─────────────────────────────────────────────
         "code" => code_summary(invocation, result),
         "code_edit" => code_edit_summary(invocation, result),
@@ -377,10 +373,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         "search" | "list_dir" | "glob"
     ) {
         render_search_output(invocation, result, &mut content);
-    } else if invocation.tool_name == "test_runner" {
-        render_test_runner_output(result, &mut content);
-    } else if invocation.tool_name == "build_runner" {
-        render_build_runner_output(result, &mut content);
     } else if matches!(
         invocation.tool_name.as_str(),
         "code"
@@ -572,10 +564,7 @@ fn render_tool_error_body(
     let has_streams = has_stdout || has_stderr;
     let is_shellish = invocation.tool_name == "bash"
         || has_streams
-        || matches!(
-            invocation.tool_name.as_str(),
-            "test_runner" | "build_runner" | "process" | "verifier"
-        );
+        || matches!(invocation.tool_name.as_str(), "process" | "verifier");
 
     // Extra non-envelope keys (framework, path, suggestions, problems, …).
     let extra_keys: Vec<&str> = obj
@@ -785,61 +774,6 @@ fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, conten
     }
 }
 
-fn render_test_runner_output(result: &ToolResult, content: &mut String) {
-    if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
-        content.push_str(summary);
-        content.push_str("\n\n");
-    }
-    if let Some(failures) = result.output.get("failures").and_then(|v| v.as_array())
-        && !failures.is_empty()
-    {
-        content.push_str("Failures:\n\n");
-        for failure in failures {
-            let name = failure
-                .get("test_name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("test");
-            let message = failure
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            content.push_str(&format!("- {name}: {}\n", one_line(message)));
-            if let Some(location) = failure.get("location").and_then(|v| v.as_str()) {
-                content.push_str(&format!("  at {location}\n"));
-            }
-        }
-        content.push('\n');
-    }
-    if let Some(raw) = result.output.get("raw_output").and_then(|v| v.as_str()) {
-        append_plain_stream(content, raw);
-    }
-}
-
-fn render_build_runner_output(result: &ToolResult, content: &mut String) {
-    if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
-        content.push_str(summary);
-        content.push_str("\n\n");
-    }
-    render_diagnostic_list("Errors", result.output.get("errors"), content);
-    render_diagnostic_list("Warnings", result.output.get("warnings"), content);
-    // Prefer plain log streams over dumping the full structured payload as JSON.
-    if let Some(obj) = result.output.as_object() {
-        if obj.contains_key("stdout")
-            || obj.contains_key("stderr")
-            || obj.contains_key("raw_output")
-        {
-            if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
-                append_plain_stream(content, raw);
-            } else {
-                append_shell_streams(obj, content);
-            }
-            return;
-        }
-    }
-    // No stream body — keep a compact JSON fallback for unexpected shapes.
-    append_json_section(content, "Output", &result.output);
-}
-
 fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
     if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
         content.push_str(message);
@@ -896,40 +830,6 @@ fn render_file_list(files: Option<&Value>, content: &mut String) {
             content.push_str(&format!("{:>4}  {}\n", index + 1, compact_json(file)));
         }
     }
-}
-
-fn render_diagnostic_list(title: &str, value: Option<&Value>, content: &mut String) {
-    let Some(items) = value.and_then(|v| v.as_array()) else {
-        return;
-    };
-    if items.is_empty() {
-        return;
-    }
-    content.push_str(title);
-    content.push_str(":\n\n");
-    for item in items {
-        let message = item
-            .get("message")
-            .or_else(|| item.get("text"))
-            .and_then(|v| v.as_str())
-            .unwrap_or_else(|| item.as_str().unwrap_or(""));
-        let path = item.get("path").and_then(|v| v.as_str());
-        let line = item.get("line").and_then(|v| v.as_u64());
-        match (path, line) {
-            (Some(path), Some(line)) => content.push_str(&format!(
-                "- {}:{line}: {}\n",
-                display_path(path),
-                one_line(message)
-            )),
-            (Some(path), None) => content.push_str(&format!(
-                "- {}: {}\n",
-                display_path(path),
-                one_line(message)
-            )),
-            _ => content.push_str(&format!("- {}\n", one_line(message))),
-        }
-    }
-    content.push('\n');
 }
 
 fn append_json_section(content: &mut String, title: &str, value: &Value) {
@@ -1814,87 +1714,6 @@ fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> Strin
         format!("{action} {} ({count} items)", display_path(path))
     } else {
         format!("{action} {}", display_path(path))
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// New: Process & Command tools
-// ═══════════════════════════════════════════════════════════════════════════
-
-fn test_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let framework = result
-        .output
-        .get("framework")
-        .and_then(|v| v.as_str())
-        .unwrap_or("test");
-    let passed = result
-        .output
-        .get("passed")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let failed = result
-        .output
-        .get("failed")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let skipped = result
-        .output
-        .get("skipped")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    let duration = result
-        .output
-        .get("duration_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    format!(
-        "Test ({framework}) — passed {passed}, failed {failed}, skipped {skipped} · {}",
-        crate::background::format_duration_ms(duration)
-    )
-}
-
-fn build_runner_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let status = result
-        .output
-        .get("status")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let cached = result.output.get("cached").and_then(|v| v.as_bool()) == Some(true);
-    let warnings = result
-        .output
-        .get("warnings")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let errors = result
-        .output
-        .get("errors")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
-    let duration = result
-        .output
-        .get("duration_ms")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-
-    if cached {
-        format!("Build (cached, {status})")
-    } else if errors > 0 {
-        format!(
-            "Build (failed) — {errors} errors, {warnings} warnings · {}",
-            crate::background::format_duration_ms(duration)
-        )
-    } else if warnings > 0 {
-        format!(
-            "Build ({status}) — {warnings} warnings · {}",
-            crate::background::format_duration_ms(duration)
-        )
-    } else {
-        format!(
-            "Build ({status}) · {}",
-            crate::background::format_duration_ms(duration)
-        )
     }
 }
 
@@ -3470,8 +3289,6 @@ mod tests {
             "question",
             "plan",
             "package_manager",
-            "test_runner",
-            "build_runner",
             "runtime_info",
             "code",
             "code_edit",
@@ -3892,7 +3709,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn non_bash_error_humanizes_structured_fields_without_json_dump() {
         let content = tool_full_content(
-            &invocation("test_runner", json!({ "test_path": "bad" })),
+            &invocation("process", json!({ "action": "status" })),
             &err_result(json!({
                 "error": "test command failed",
                 "error_code": "test_failed",
