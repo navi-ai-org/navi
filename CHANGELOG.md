@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-07-23
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.4...v0.3.5
+
+Skill pools as folders, host goal framing for SDK/bindings, production workflow/subagent bridge hardening, and TUI chat/tool polish.
+
+### New Features
+
+- **Skill pools** — filesystem skill folders with catalog/prompt surface (root skills + pools); load by `pool/id`
+- **Host goal framing** — `build_host_set_goal_user_prompt` / `set_goal_for_host_turn` so the model sees the objective (TUI Set Goal modal + SDK/NAPI/Dart)
+- **CI** — navi-core critical-path coverage gate; auto npm publish after GitHub Release
+
+### Bug Fixes
+
+- **Workflow / subagent** — write-scope schema fields, `description` null, `create_files` inherit; production bridge tests against real ToolExecutor schema
+- **Self-update** — installer stdio isolated so ANSI/output does not paint over the TUI
+- **TUI** — plan write shows markdown body; bash failure cards sanitized; true tokens/s over active generation; hover rail/viewport stability
+- **Registry** — prune providers removed from catalog on load/sync; transcription kind for `wispr-flow` in embedded snapshot
+
+### Changes
+
+- Durable mid-turn session saves; multi-skill harness pack materialize flag
+- TUI tests aligned with Ctrl+M (empty Ctrl+Enter) and header-only pure tool-error envelopes
+
+### Bindings
+
+- Workspace crate versions and npm packages (`@navi-agent/navi`, `@navi-agent/napi`) bumped to 0.3.5
+- Homebrew tap formula updated for 0.3.5 binaries
+
 ## [0.3.4] - 2026-07-22
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
@@ -394,7 +423,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/navi-ai-org/navi/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/navi-ai-org/navi/compare/v0.3.1...v0.3.2

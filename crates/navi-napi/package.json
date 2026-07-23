@@ -1,6 +1,6 @@
 {
   "name": "@navi-agent/napi",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Node.js native bindings for the NAVI agent runtime SDK \u2014 sessions, turns, tools, events, and context injection.",
   "license": "Apache-2.0",
   "author": "NAVI Contributors",
@@ -64,11 +64,11 @@
     "arm64"
   ],
   "optionalDependencies": {
-    "@navi-agent/napi-linux-x64": "0.3.4",
-    "@navi-agent/napi-linux-arm64": "0.3.4",
-    "@navi-agent/napi-darwin-x64": "0.3.4",
-    "@navi-agent/napi-darwin-arm64": "0.3.4",
-    "@navi-agent/napi-win32-x64": "0.3.4"
+    "@navi-agent/napi-linux-x64": "0.3.5",
+    "@navi-agent/napi-linux-arm64": "0.3.5",
+    "@navi-agent/napi-darwin-x64": "0.3.5",
+    "@navi-agent/napi-darwin-arm64": "0.3.5",
+    "@navi-agent/napi-win32-x64": "0.3.5"
   },
   "publishConfig": {
     "access": "public",
