@@ -20,6 +20,23 @@ This document captures the product and architecture vision for **harness packs**
 | Hard graph edge execution | Not yet |
 | Job B feedback / Job C evolve / LLM materialize agent | Not yet |
 
+### Dual activation (CLI + chat)
+
+Harness soft policy (entry `allow_tools`, loop caps, capability card) applies only when a harness skill/pack is **session-active** — never merely because a skill is installed or visible in the catalog.
+
+| Path | Behavior |
+|------|----------|
+| **CLI / install** | `navi skill install path/to/SKILL.md` writes the skill store and best-effort **materialize**s `{data_dir}/harnesses/<id>/`. Soft-apply when that skill is activated for the session (`--skill`, host `set_active_skills`, or config `skills.active`). |
+| **Chat** | User says “use the design harness” / “adicione uma skill para X” → model opens pool `navi`, `load_skill` on builtins (`navi-create-skill`, `navi-harness-author`, …), may call `skill_save` / activate without the user pasting `graph.toml`. |
+
+**Not session-active:** root session keeps the full Direct tool set. Catalog builtins may list `allow_tools` for authoring guidance; those lists **do not** lock the main agent. Nested **subagents** keep their own allowlists (denials say “for this subagent”); root/harness denials say “for the active harness”.
+
+**Private storage:** `{data_dir}` (sessions, memory, skills store, etc.) is jailed for `search` / `bash` / raw FS tools. Browse and mutate skills only via `skill_list` / `skill_get` / `load_skill` / `skill_save`. Plugins install under `{data_dir}/plugins/` — never auto-created project `.navi/`.
+
+**Builtin vs marketplace:** engine-coupled authoring skills (`navi-create-skill`, `navi-harness-author`, `navi-skill-pools`) ship **builtin** (versioned with the binary). Marketplace skill packs can teach **stale harness APIs** after a core upgrade — prefer builtins for “how to use NAVI”, marketplace for community content.
+
+Soft graph remains **MVP-soft**: entry allowlists and loop caps are enforced; hard edge routing and feedback evolve jobs are still design-only.
+
 ---
 
 ## 1. Problem statement

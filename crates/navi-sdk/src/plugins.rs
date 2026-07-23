@@ -810,7 +810,21 @@ mod tests {
             .expect("LocalDev install");
         assert_eq!(result.id, "local-echo");
         assert_eq!(result.trust_level, "local-dev");
-        assert!(temp.path().join("plugins/local-echo/plugin.wasm").is_file());
+        let installed = temp.path().join("plugins/local-echo/plugin.wasm");
+        assert!(
+            installed.is_file(),
+            "install must land under data_dir/plugins, missing {}",
+            installed.display()
+        );
+        // Must not install into project-local .navi/plugins (state dir policy).
+        assert!(
+            !temp.path().join(".navi/plugins/local-echo").exists(),
+            "plugins must not install under project .navi/"
+        );
+        assert_eq!(
+            navi_plugin_manifest::installed_plugin_dir(temp.path(), "local-echo"),
+            temp.path().join("plugins/local-echo")
+        );
 
         let list = engine.plugin_list().unwrap();
         assert_eq!(list.len(), 1);

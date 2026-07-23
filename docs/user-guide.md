@@ -151,11 +151,11 @@ enabled = false
 | `[logging]` | `stdout_enabled` | Also write logs to stdout. |
 | `[logging]` | `include_payloads` | Include raw payloads in logs (debug only). |
 | `[skills]` | `enabled` | Enable skill discovery (store + built-ins). |
-| `[skills]` | `active` | Skill ids to activate automatically. |
-
-Skills live in `<data_dir>/skills.sqlite` (Linux: `~/.local/share/navi/skills.sqlite`). Install from a file with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed.
+| `[skills]` | `active` | Skill ids to **session-activate** (harness soft-apply when those skills are harness packs). Empty = catalog open, no harness lock. |
 | `[mcp]` | `enabled` | Enable MCP client. |
 | `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only. |
+
+Skills live under `<data_dir>/skills/` (root + pool folders with `SKILL.md`) and optionally project `.navi/skills/`. Install with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed. Harness packs materialize to `<data_dir>/harnesses/<id>/` (see [harness-system.md](harness-system.md) dual activation). Engine authoring skills (`navi-create-skill`, …) are **builtin** under pool `navi` — prefer them over marketplace packs for engine APIs. WASM plugins install under `<data_dir>/plugins/`, never auto project `.navi/`. Agents must use skill tools (`skill_list` / `load_skill` / `skill_save`), not raw FS into private `data_dir`.
 
 ### API Keys
 
