@@ -1193,7 +1193,29 @@ fn slugify_account_id(value: &str) -> String {
 
 fn provider_env_api_key(env_var: &str) -> Option<String> {
     let key = std::env::var(env_var).ok()?;
-    if key.is_empty() { None } else { Some(key) }
+    let key = key.trim();
+    if key.is_empty() || is_placeholder_api_key(key) {
+        return None;
+    }
+    Some(key.to_string())
+}
+
+/// Env vars sometimes carry local-proxy / benchmark placeholders that must not
+/// shadow a real OAuth or store credential (e.g. `CMD_API_KEY=cc-proxy`).
+fn is_placeholder_api_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "cc-proxy"
+            | "proxy"
+            | "changeme"
+            | "your-api-key"
+            | "your_api_key"
+            | "todo"
+            | "placeholder"
+            | "none"
+            | "null"
+            | "undefined"
+    )
 }
 
 fn opencode_auth_paths() -> Vec<PathBuf> {
@@ -1627,6 +1649,62 @@ mod tests {
     }
 
     #[test]
+    fn commandcode_placeholder_env_does_not_shadow_store_oauth() {
+        // Benchmarks / local Claude Code proxy set `CMD_API_KEY=cc-proxy`, which
+        // must not win over a real OAuth key in the credential store.
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = CredentialStore::new(tempdir.path().to_path_buf());
+        let provider = ProviderConfig {
+            id: ProviderId::COMMANDCODE.to_string(),
+            label: "Command Code".to_string(),
+            description: String::new(),
+            kind: ProviderKind::OpenAiChatCompletions,
+            api_key_env: "CMD_API_KEY".to_string(),
+            base_url: Some("https://api.commandcode.ai".to_string()),
+            ..Default::default()
+        };
+
+        store
+            .set_commandcode_credential(
+                ProviderId::COMMANDCODE,
+                "user_real_oauth_key",
+                CommandCodeCredentialMetadata {
+                    user_id: "user-1".to_string(),
+                    user_name: "test-user".to_string(),
+                    key_name: "cli-test".to_string(),
+                    authenticated_at: "123".to_string(),
+                },
+            )
+            .expect("save commandcode credential");
+
+        let prev = std::env::var("CMD_API_KEY").ok();
+        let prev_alias = std::env::var("COMMAND_CODE_API_KEY").ok();
+        unsafe {
+            std::env::set_var("CMD_API_KEY", "cc-proxy");
+            std::env::remove_var("COMMAND_CODE_API_KEY");
+        }
+
+        let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
+        assert_eq!(
+            result.as_deref(),
+            Some("user_real_oauth_key"),
+            "placeholder env must fall through to store OAuth key"
+        );
+
+        // restore env
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("CMD_API_KEY", v),
+                None => std::env::remove_var("CMD_API_KEY"),
+            }
+            match prev_alias {
+                Some(v) => std::env::set_var("COMMAND_CODE_API_KEY", v),
+                None => std::env::remove_var("COMMAND_CODE_API_KEY"),
+            }
+        }
+    }
+
+    #[test]
     fn provider_resolver_uses_stored_commandcode_oauth_key() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let store = CredentialStore::new(tempdir.path().to_path_buf());
@@ -1655,11 +1733,11 @@ mod tests {
         let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
         let expected = std::env::var("COMMAND_CODE_API_KEY")
             .ok()
-            .filter(|key| !key.is_empty())
+            .filter(|key| !key.is_empty() && !is_placeholder_api_key(key))
             .or_else(|| {
                 std::env::var("CMD_API_KEY")
                     .ok()
-                    .filter(|key| !key.is_empty())
+                    .filter(|key| !key.is_empty() && !is_placeholder_api_key(key))
             })
             .unwrap_or_else(|| "cmd-stored-key".to_string());
 
