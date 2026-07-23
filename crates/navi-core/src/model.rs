@@ -708,6 +708,10 @@ pub fn resolve_model_thinking_level(
     if supports_thinking == Some(false) {
         return ThinkingConfig::Off;
     }
+    // Off is always a valid user preference; do not override it with a default.
+    if current == ThinkingConfig::Off {
+        return current;
+    }
     if supported.contains(&current) {
         return current;
     }
@@ -987,6 +991,17 @@ mod tests {
             None,
         );
         assert_eq!(resolved, ThinkingConfig::Max);
+    }
+
+    #[test]
+    fn resolve_respects_off_for_thinking_model() {
+        let resolved = resolve_model_thinking_level(
+            ThinkingConfig::Off,
+            Some(true),
+            &["high".into(), "max".into()],
+            Some("high"),
+        );
+        assert_eq!(resolved, ThinkingConfig::Off);
     }
 
     #[test]
