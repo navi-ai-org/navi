@@ -624,4 +624,98 @@ mod tests {
         assert!(path.contains("navi"), "path should include pool: {path}");
         assert!(std::path::Path::new(path).is_file());
     }
+
+    #[tokio::test]
+    async fn skill_list_pool_navi_includes_builtin_create_skill() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let (list, _, _) = tool_config(tempdir.path());
+        let result = list
+            .invoke(ToolInvocation {
+                id: "1".into(),
+                tool_name: "skill_list".into(),
+                input: json!({ "pool": "navi" }),
+            })
+            .await
+            .expect("list navi pool");
+        assert!(result.ok);
+        assert_eq!(result.output["kind"], "pool_listing");
+        let skills = result.output["skills"].as_array().expect("skills");
+        assert!(
+            skills
+                .iter()
+                .any(|s| s["id"] == crate::skills::CREATE_SKILL_ID),
+            "builtin create-skill must appear in pool navi: {skills:?}"
+        );
+        assert!(
+            skills
+                .iter()
+                .any(|s| s["id"] == crate::skills::HARNESS_AUTHOR_ID),
+            "builtin harness-author must appear in pool navi: {skills:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_save_harness_materializes_pack_under_data_dir() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let data = tempdir.path().to_path_buf();
+        let save = SkillSaveTool::new(tempdir.path().to_path_buf(), data.clone());
+        let result = save
+            .invoke(ToolInvocation {
+                id: "1".into(),
+                tool_name: "skill_save".into(),
+                input: json!({
+                    "name": "Design Loop",
+                    "id": "design-loop",
+                    "instructions": "Run design steps.",
+                    "harness": true,
+                    "allow_tools": ["read_file", "search"]
+                }),
+            })
+            .await
+            .expect("save harness");
+        assert!(result.ok, "skill_save failed: {:?}", result.output);
+        assert_eq!(result.output["harness"], true);
+        let pack = result.output["harness_pack"]
+            .as_str()
+            .expect("harness_pack path");
+        assert!(
+            pack.contains("harnesses"),
+            "pack should be under harnesses/: {pack}"
+        );
+        assert!(
+            std::path::Path::new(pack).is_dir() || std::path::Path::new(pack).exists(),
+            "pack path missing: {pack}"
+        );
+        // Soft apply only when skill is treated as active — pack on disk alone
+        // must not lock when active list is empty.
+        let idle = crate::harness_pack::apply_harness_for_skills(&data, &[]);
+        assert!(
+            idle.allow_tools.is_none(),
+            "empty active list must not lock after materialize: {:?}",
+            idle.allow_tools
+        );
+        let skill = crate::skills::load_skill_by_id(
+            &SkillsConfig {
+                enabled: true,
+                active: vec![],
+            },
+            tempdir.path(),
+            &data,
+            "design-loop",
+        )
+        .expect("load saved harness skill");
+        assert!(skill.harness, "saved skill must retain harness flag");
+        // Session-active harness with pack → soft allowlist from entry and/or skill.
+        let active =
+            crate::harness_pack::apply_harness_for_skills(&data, std::slice::from_ref(&skill));
+        assert!(
+            !active.packs.is_empty(),
+            "session-active harness skill must load materialized pack"
+        );
+        assert!(
+            active.allow_tools.is_some(),
+            "session-active harness must soft-lock tools via pack entry or harness allow_tools: {:?}",
+            active.allow_tools
+        );
+    }
 }

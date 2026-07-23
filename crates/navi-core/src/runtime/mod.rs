@@ -750,13 +750,29 @@ impl AgentRuntime {
             .shared_skill_pools
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = pools;
-        let harness_skills = self.discover_available_skills().unwrap_or_default();
+        // Soft harness applies only to session-active skills, never the full catalog.
+        let harness_skills = self.session_active_skill_manifests();
         *self
             .shared_active_skills
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = harness_skills.clone();
         self.apply_harness_packs_for_active(&harness_skills);
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
+    }
+
+    /// Skill manifests selected for **session** activation (CLI `--skill`, host
+    /// `set_active_skills`, config `skills.active` when session list is empty).
+    /// Empty selection → no soft harness allowlist.
+    fn session_active_skill_manifests(&self) -> Vec<crate::skills::SkillManifest> {
+        let available = self.discover_available_skills().unwrap_or_default();
+        let session = &self.active_skills;
+        let configured = &self.loaded_config.config.skills.active;
+        // Unlike catalog `active_skills`, an empty selection means **no**
+        // harness soft-apply (do not default to every discovered skill).
+        if session.is_empty() && configured.is_empty() {
+            return Vec::new();
+        }
+        crate::skills::active_skills(&available, configured, session)
     }
 
     /// Recompute harness soft-apply state from currently active skill manifests.
@@ -2058,8 +2074,8 @@ impl AgentRuntime {
             .shared_skill_pools
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = pools;
-        // Harness soft-apply uses full skill discovery when packs exist.
-        let harness_skills = self.discover_available_skills().unwrap_or_default();
+        // Soft harness only for session-active skills (not every discovered skill).
+        let harness_skills = self.session_active_skill_manifests();
         *self
             .shared_active_skills
             .lock()
@@ -2100,9 +2116,10 @@ impl AgentRuntime {
             agent_mode: self.agent_mode(),
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
-            // Catalog-active skills do not lock tools. Only harness pack soft graph
-            // (if materialize applied) may contribute an allowlist.
+            // Catalog-active skills do not lock tools. Only session-active harness
+            // packs / harness-flagged skills may contribute an allowlist.
             allowed_tool_names: self.harness_allow_tools.clone(),
+            is_subagent: false,
             memory_manager: self.memory_manager.clone(),
             harness_card: self.harness_card.clone(),
         });
