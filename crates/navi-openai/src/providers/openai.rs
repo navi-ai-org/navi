@@ -310,10 +310,7 @@ pub(crate) fn parse_openai_responses_sse(data: &str) -> Vec<Result<ModelStreamEv
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let delta = value
-                .get("delta")
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let delta = value.get("delta").and_then(Value::as_str).unwrap_or("");
             // Without a name we still signal activity so the UI leaves idle wait.
             if name.is_empty() && delta.is_empty() {
                 Vec::new()
@@ -603,7 +600,8 @@ impl PartialChatToolCall {
         }
         let args_len = self.arguments.len();
         let name_just_appeared = !self.name_emitted;
-        let args_step = args_len.saturating_sub(self.last_progress_args) >= TOOL_CALL_PROGRESS_ARG_STEP
+        let args_step = args_len.saturating_sub(self.last_progress_args)
+            >= TOOL_CALL_PROGRESS_ARG_STEP
             || (args_len > 0 && self.last_progress_args == 0);
         if !name_just_appeared && !args_step {
             return None;

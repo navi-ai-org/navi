@@ -442,17 +442,16 @@ mod tests {
         fn stream(&self, _request: ModelRequest) -> ModelStream {
             let mut calls = self.calls.lock().unwrap();
             *calls += 1;
-            if *calls == 1 {
-                Box::pin(stream::iter(vec![
+            match *calls {
+                1 => Box::pin(stream::iter(vec![
                     Ok(ModelStreamEvent::ToolCall(ToolInvocation {
                         id: "health-1".to_string(),
                         tool_name: HEALTH_CHECK_TOOL.to_string(),
                         input: json!({}),
                     })),
                     Ok(ModelStreamEvent::Done),
-                ]))
-            } else {
-                Box::pin(stream::iter(vec![
+                ])),
+                2 => Box::pin(stream::iter(vec![
                     Ok(ModelStreamEvent::ToolCall(ToolInvocation {
                         id: "report-1".to_string(),
                         tool_name: EMIT_REPORT_TOOL.to_string(),
@@ -466,11 +465,15 @@ mod tests {
                             }
                         }),
                     })),
+                    Ok(ModelStreamEvent::Done),
+                ])),
+                // After tools: finish with text only (no more tool calls).
+                _ => Box::pin(stream::iter(vec![
                     Ok(ModelStreamEvent::TextDelta {
                         text: "{\"ok\":true}".to_string(),
                     }),
                     Ok(ModelStreamEvent::Done),
-                ]))
+                ])),
             }
         }
     }

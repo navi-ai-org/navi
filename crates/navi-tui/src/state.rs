@@ -766,9 +766,8 @@ impl UsageUiState {
             self.stream_started_at = Some(now);
         }
         self.stream_last_byte_at = Some(now);
-        self.estimated_request_output_bytes = self
-            .estimated_request_output_bytes
-            .saturating_add(bytes);
+        self.estimated_request_output_bytes =
+            self.estimated_request_output_bytes.saturating_add(bytes);
         self.stream_output_bytes = self.stream_output_bytes.saturating_add(bytes);
     }
 

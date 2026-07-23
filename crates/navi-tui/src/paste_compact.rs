@@ -144,7 +144,8 @@ pub(crate) fn try_delete_paste_before_cursor(app: &mut TuiApp) -> bool {
         return delete_paste_tag(app, start, end, index_1based);
     }
     // Or cursor is inside a tag.
-    if let Some((start, end, index_1based)) = paste_tag_covering(cursor.saturating_sub(1), &app.input)
+    if let Some((start, end, index_1based)) =
+        paste_tag_covering(cursor.saturating_sub(1), &app.input)
     {
         return delete_paste_tag(app, start, end, index_1based);
     }

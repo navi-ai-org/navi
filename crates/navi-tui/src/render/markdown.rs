@@ -107,9 +107,7 @@ pub(crate) fn build_chat_render_for_messages(
                                 rendered_lines.push(Line::from(vec![
                                     Span::styled(
                                         label.to_string(),
-                                        Style::default()
-                                            .fg(signal())
-                                            .add_modifier(Modifier::BOLD),
+                                        Style::default().fg(signal()).add_modifier(Modifier::BOLD),
                                     ),
                                     Span::styled(line, Style::default().fg(text())),
                                 ]));

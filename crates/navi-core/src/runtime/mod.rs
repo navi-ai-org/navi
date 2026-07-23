@@ -25,7 +25,9 @@ use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::session_title::SessionTitleHandle;
-use crate::skills::{SkillManifest, SkillPool, active_skills, discover_catalog_entries, discover_configured_skills};
+use crate::skills::{
+    SkillManifest, SkillPool, active_skills, discover_catalog_entries, discover_configured_skills,
+};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
 use crate::trace::{TraceStore, turn_traces_from_events};
