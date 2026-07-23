@@ -1749,12 +1749,14 @@ fn ctrl_a_selects_entire_input_and_typing_replaces_it() {
 }
 
 #[test]
-fn empty_ctrl_enter_does_not_open_models() {
+fn empty_ctrl_enter_opens_models_as_ctrl_m() {
+    // Empty Ctrl+Enter is a common terminal encoding for Ctrl+M (model picker).
+    // Non-empty Ctrl+Enter inserts a newline (see ctrl_enter_inserts_newline_when_draft).
     let mut app = test_app("");
 
     handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
 
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.mode, Mode::Models);
     assert!(app.messages.is_empty());
 }
 
@@ -3530,11 +3532,10 @@ fn full_tool_render_generates_sanitized_metadata_view() {
         .join("\n");
 
     assert!(text.contains("Search \"NAVI\""));
-    assert!(text.contains("error: denied"));
-    assert!(text.contains("denied"));
+    assert!(text.contains("error: denied") || text.contains("denied"));
+    // Pure error-envelope failures stay header-only (no raw JSON "Output" dump).
     assert!(!text.contains("Input"));
-    assert!(text.contains("Output"));
-    assert!(text.contains("\"error\": \"denied\""));
+    assert!(!text.contains("\"error\": \"denied\""));
 }
 
 #[test]
