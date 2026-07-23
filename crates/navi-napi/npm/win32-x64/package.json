@@ -1,6 +1,6 @@
 {
   "name": "@navi-agent/napi-win32-x64",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Windows x64 prebuilt binary for @navi-agent/napi.",
   "license": "Apache-2.0",
   "os": [
