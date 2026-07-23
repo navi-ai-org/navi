@@ -112,8 +112,8 @@ pub use harness_pack::{
     HarnessPackStore, LoopSpec, MaterializeOptions, VerifierKind,
     VerifierSpec as HarnessVerifierSpec, apply_harness_for_skills, build_capability_inventory,
     capability_card, effective_allow_tools_for_pack, filter_tools_to_inventory, harness_pack_dir,
-    inventory_from_tool_names, list_harness_ids, load_pack, materialize_from_skill,
-    merge_allow_tools, write_pack,
+    inventory_from_tool_names, list_harness_ids, load_pack, materialize_after_save,
+    materialize_from_skill, merge_allow_tools, write_pack,
 };
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};
@@ -178,11 +178,11 @@ pub use skill_mining::{
     SkillDraft, SkillReplayReport, activate_skill_after_replay, draft_skill_from_traces,
 };
 pub use skills::{
-    CREATE_SKILL_ID, ParsedSkillFile, SkillManifest, SkillSource, SkillStore, SkillWriteRequest,
-    SkillWriteResult, SkillWriteScope, active_skills, builtin_skills, delete_skill,
-    discover_configured_skills, list_installed_skills, load_skill_by_id, parse_skill_file,
-    parse_skill_md, parse_skill_toml, project_skill_key, skill_is_editable, skill_tool_allowlist,
-    slugify_skill_id, write_skill,
+    CREATE_SKILL_ID, HARNESS_AUTHOR_ID, ParsedSkillFile, SKILL_POOLS_ID, SkillManifest,
+    SkillSource, SkillStore, SkillWriteRequest, SkillWriteResult, SkillWriteScope, active_skills,
+    builtin_skills, delete_skill, discover_configured_skills, list_installed_skills,
+    load_skill_by_id, parse_skill_file, parse_skill_md, parse_skill_toml, project_skill_key,
+    skill_is_editable, skill_tool_allowlist, slugify_skill_id, write_skill,
 };
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};

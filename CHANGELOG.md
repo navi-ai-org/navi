@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-07-23
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.5...v0.3.6
+
+Harness soft-lock fix for root sessions, essential builtin skills, and SDK skill DTO completeness.
+
+### Bug Fixes
+
+- **Root session tool allowlist** — soft harness apply only for **session-active skills with `harness: true`** (on-disk packs no longer lock authoring builtins like `navi-create-skill`)
+- **Deny wording** — root/harness denials say “for the active harness”, not “for this subagent”
+- **Private storage errors** — steer agents to `skill_list` / `skill_get` / `load_skill` / `skill_save`
+
+### New Features
+
+- **Builtin essentials** (pool `navi`): `navi-create-skill` hardened, plus `navi-harness-author` and `navi-skill-pools`
+- **Dual harness activation** documented (CLI/install vs chat)
+
+### Bindings / SDK
+
+- `NaviSkillInfo` includes `harness` and `pool`
+- Re-export `CREATE_SKILL_ID`, `HARNESS_AUTHOR_ID`, `SKILL_POOLS_ID`, `apply_harness_for_skills`, `materialize_from_skill`, `materialize_after_save`
+- Workspace crates and npm packages (`@navi-agent/navi`, `@navi-agent/napi`) bumped to **0.3.6**
+
 ## [0.3.5] - 2026-07-23
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.4...v0.3.5
@@ -423,7 +446,8 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/navi-ai-org/navi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/navi-ai-org/navi/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/navi-ai-org/navi/compare/v0.3.2...v0.3.3

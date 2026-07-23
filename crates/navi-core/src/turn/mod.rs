@@ -85,8 +85,12 @@ pub struct TurnContext {
     /// Model name for the compaction provider.
     pub compaction_model_name: Option<String>,
     pub session_id: String,
-    /// Optional set of tool names the subagent is allowed to call.
+    /// Optional set of tool names this turn may call (subagent or active harness).
+    /// `None` means unrestricted (beyond security policy / agent mode).
     pub allowed_tool_names: Option<Vec<String>>,
+    /// When true, allowlist denials use subagent-specific wording. Root/harness
+    /// turns set this false so denials do not say "for this subagent".
+    pub is_subagent: bool,
     /// Session-scoped memory manager. Lazily opened once and reused for history
     /// sync, auto-memory index, checkpoints, and rebuilds (avoids reopening
     /// three SQLite DBs every tool-loop iteration).
@@ -990,6 +994,19 @@ async fn execute_tool_call_with_parallelism(
     }
 }
 
+/// Deny message when `allowed_tool_names` rejects a tool.
+///
+/// Root/harness turns must not say "subagent" — that misled the TUI when catalog
+/// skills incorrectly locked the session.
+pub fn tool_allowlist_deny_message(is_subagent: bool, tool_name: &str) -> String {
+    let scope = if is_subagent {
+        "for this subagent"
+    } else {
+        "for the active harness"
+    };
+    format!("tool `{tool_name}` is not in the allowed tool set {scope}")
+}
+
 async fn execute_tool_call(
     ctx: &TurnContext,
     policy: HarnessPolicy,
@@ -1004,15 +1021,12 @@ async fn execute_tool_call(
         return (invocation, result, observation, Vec::new());
     }
 
-    // Check allowed tool names for subagent tool filtering.
+    // Optional tool allowlist (nested subagent or soft harness on the root turn).
     if let Some(ref allowed) = ctx.allowed_tool_names {
         if !allowed.contains(&invocation.tool_name) {
             let result = tool_error_result(
                 &invocation,
-                format!(
-                    "tool `{}` is not in the allowed tool set for this subagent",
-                    invocation.tool_name
-                ),
+                tool_allowlist_deny_message(ctx.is_subagent, &invocation.tool_name),
             );
             if let Some(ref tx) = ctx.event_tx {
                 let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
