@@ -160,6 +160,13 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
 /// from the cached version. This merges new models and pricing updates into
 /// the local cache without overwriting providers that are newer in the cache
 /// (e.g. from a remote sync).
+///
+/// Also **prunes** providers (and transcription providers) that exist only in
+/// the local cache and are no longer in the embedded catalog. Without this,
+/// deleted registry entries (e.g. removed third-party gateways) stick forever
+/// when the cache already has the same manifest version as the snapshot —
+/// remote sync early-returns on version match and never runs
+/// `delete_providers_not_in`.
 fn merge_embedded_provider_updates(store: &RegistryStore) {
     let embedded_manifest = match embedded_manifest() {
         Ok(m) => m,
@@ -226,6 +233,17 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
         }
     }
 
+    // Drop providers removed from the embedded catalog (including ones marked
+    // local-api-sync — the upstream entry is gone, so the cache row is stale).
+    let keep: std::collections::HashSet<&str> = embedded_manifest
+        .providers
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+    if let Err(err) = store.delete_providers_not_in(&keep) {
+        tracing::warn!(error = %err, "failed to prune stale providers against embedded catalog");
+    }
+
     // Merge embedded transcription / dictation providers by sha256.
     let mut tx_updated = 0;
     if let Ok(tx_providers) = embedded_transcription_providers() {
@@ -252,6 +270,18 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
                 }
             }
         }
+    }
+
+    let tx_keep: std::collections::HashSet<&str> = embedded_manifest
+        .transcription_providers
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+    if let Err(err) = store.delete_transcription_providers_not_in(&tx_keep) {
+        tracing::warn!(
+            error = %err,
+            "failed to prune stale transcription providers against embedded catalog"
+        );
     }
 
     if updated > 0 || tx_updated > 0 {
@@ -993,6 +1023,52 @@ mod tests {
 
         let loaded = load_registry(&store);
         assert_eq!(loaded.source, RegistrySource::Cache);
+    }
+
+    #[test]
+    fn load_registry_prunes_providers_removed_from_embedded_catalog() {
+        // Reproduces sticky-cache bug: same manifest version as the embedded
+        // snapshot, but a deleted provider row still in SQLite (often marked
+        // local-api-sync after `sync models`).
+        let store = RegistryStore::open_memory().expect("open");
+        let embedded_manifest = super::embedded_manifest().expect("manifest");
+        let embedded_providers = super::embedded_providers().expect("providers");
+        store.replace_all(&embedded_providers).expect("seed");
+        store
+            .save_manifest_meta(&embedded_manifest)
+            .expect("save meta");
+        save_registry_metadata(&store, &embedded_manifest, None, None).expect("save manifest json");
+
+        let stale = test_provider("stale-removed-provider", "ghost-model");
+        store
+            .upsert_provider_with_sha256(&stale, Some(crate::registry::LOCAL_API_SYNC_SHA))
+            .expect("inject stale provider");
+        assert!(
+            store
+                .load_all_providers()
+                .expect("load")
+                .iter()
+                .any(|p| p.id == "stale-removed-provider"),
+            "precondition: stale provider must be present before load"
+        );
+
+        let loaded = load_registry(&store);
+        assert_eq!(loaded.source, RegistrySource::Cache);
+        assert!(
+            loaded
+                .providers
+                .iter()
+                .all(|p| p.id != "stale-removed-provider"),
+            "load_registry must drop providers absent from the embedded catalog"
+        );
+        assert!(
+            store
+                .load_all_providers()
+                .expect("reload")
+                .iter()
+                .all(|p| p.id != "stale-removed-provider"),
+            "stale provider must be deleted from the cache"
+        );
     }
 
     #[test]
