@@ -264,47 +264,56 @@ pub(crate) fn apply_thinking_to_body(
     api_kind: OpenAiApiKind,
     provider_id: &str,
 ) {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let Some(object) = body.as_object_mut() else {
         return;
     };
-
-    if !thinking.enabled {
-        return;
-    }
 
     let provider = navi_core::ProviderId::from_config_id(provider_id);
 
     match api_kind {
         OpenAiApiKind::Responses => {
-            if let Some(effort) = thinking.effort {
-                object.insert("reasoning".to_string(), json!({ "effort": effort }));
+            if thinking.enabled {
+                if let Some(effort) = thinking.effort {
+                    object.insert("reasoning".to_string(), json!({ "effort": effort }));
+                }
             }
         }
         OpenAiApiKind::ChatCompletions => match provider.as_str() {
             navi_core::ProviderId::ANTHROPIC => {
-                if let Some(budget) = thinking.budget_tokens {
-                    object.insert(
-                        "thinking".to_string(),
-                        json!({ "type": "enabled", "budget_tokens": budget }),
-                    );
-                    let max_tokens = (budget + 1024).max(4096);
-                    object.insert("max_tokens".to_string(), json!(max_tokens));
+                if thinking.enabled {
+                    if let Some(budget) = thinking.budget_tokens {
+                        object.insert(
+                            "thinking".to_string(),
+                            json!({ "type": "enabled", "budget_tokens": budget }),
+                        );
+                        let max_tokens = (budget + 1024).max(4096);
+                        object.insert("max_tokens".to_string(), json!(max_tokens));
+                    }
                 }
             }
             navi_core::ProviderId::GOOGLE_GEMINI => {
-                if let Some(budget) = thinking.budget_tokens {
-                    object.insert(
-                        "extra_body".to_string(),
-                        json!({ "google": { "thinking_config": { "thinkingBudget": budget } } }),
-                    );
+                if thinking.enabled {
+                    if let Some(budget) = thinking.budget_tokens {
+                        object.insert(
+                            "extra_body".to_string(),
+                            json!({ "google": { "thinking_config": { "thinkingBudget": budget } } }),
+                        );
+                    }
                 }
             }
             navi_core::ProviderId::OPENROUTER => {
-                if let Some(effort) = thinking.effort {
-                    object.insert(
-                        "reasoning".to_string(),
-                        json!({ "effort": effort, "exclude": true }),
-                    );
+                if thinking.enabled {
+                    if let Some(effort) = thinking.effort {
+                        object.insert(
+                            "reasoning".to_string(),
+                            json!({ "effort": effort, "exclude": true }),
+                        );
+                    }
                 }
             }
             // OpenCode Zen hosts Tencent Hy3 / Hunyuan family among others.
@@ -313,27 +322,47 @@ pub(crate) fn apply_thinking_to_body(
             navi_core::ProviderId::OPENCODE
             | navi_core::ProviderId::OPENCODE_ZEN
             | navi_core::ProviderId::OPENCODE_GO => {
-                if let Some(effort) = thinking.effort {
-                    // Map NAVI effort labels onto Hy's no_think/low/high when possible.
-                    let hy_effort = match effort.as_str() {
-                        "off" | "none" | "minimal" => "no_think",
-                        "max" | "xhigh" | "highest" => "high",
-                        other => other,
-                    };
-                    object.insert("reasoning_effort".to_string(), json!(hy_effort));
-                    object.insert(
-                        "extra_body".to_string(),
-                        json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
-                    );
+                if thinking.enabled {
+                    if let Some(effort) = thinking.effort {
+                        // Map NAVI effort labels onto Hy's no_think/low/high when possible.
+                        let hy_effort = match effort.as_str() {
+                            "off" | "none" | "minimal" => "no_think",
+                            "max" | "xhigh" | "highest" => "high",
+                            other => other,
+                        };
+                        object.insert("reasoning_effort".to_string(), json!(hy_effort));
+                        object.insert(
+                            "extra_body".to_string(),
+                            json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
+                        );
+                    }
                 }
             }
             _ => {
-                if let Some(effort) = thinking.effort {
-                    object.insert("reasoning_effort".to_string(), json!(effort));
+                let is_deepseek_v4 = is_deepseek_v4_model(&model);
+                if is_deepseek_v4 {
+                    // DeepSeek V4 defaults thinking to enabled. Explicitly toggle it
+                    // so `reasoning_effort` is honored and users can disable it.
+                    object.insert(
+                        "thinking".to_string(),
+                        json!({ "type": if thinking.enabled { "enabled" } else { "disabled" } }),
+                    );
+                }
+                if thinking.enabled {
+                    if let Some(effort) = thinking.effort {
+                        object.insert("reasoning_effort".to_string(), json!(effort));
+                    }
                 }
             }
         },
     }
+}
+
+fn is_deepseek_v4_model(model: &str) -> bool {
+    let lower = model.to_ascii_lowercase();
+    // Canonical ids (deepseek-v4-flash, deepseek-v4-pro) and provider-prefixed
+    // aliases (openrouter's deepseek/deepseek-v4-flash, etc.).
+    lower.starts_with("deepseek-v4-") || lower.contains("/deepseek-v4-")
 }
 
 /// Build a thinking request without registry labels (tests / fallbacks).

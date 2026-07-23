@@ -2318,6 +2318,57 @@ fn applies_generic_reasoning_effort_for_unknown_provider() {
     assert_eq!(body["reasoning_effort"], "medium");
 }
 
+#[test]
+fn applies_deepseek_v4_thinking_toggle_and_reasoning_effort() {
+    let mut body = json!({ "model": "deepseek-v4-flash", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::ChatCompletions,
+            "charm-hyper",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "charm-hyper",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+    assert_eq!(body["reasoning_effort"], "high");
+}
+
+#[test]
+fn applies_deepseek_v4_thinking_disabled_when_off() {
+    let mut body = json!({ "model": "deepseek-v4-flash", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Off,
+            OpenAiApiKind::ChatCompletions,
+            "deepseek",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "deepseek",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+    assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn deepseek_v4_alias_also_gets_thinking_toggle() {
+    let mut body = json!({ "model": "deepseek/deepseek-v4-pro", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Max,
+            OpenAiApiKind::ChatCompletions,
+            "custom-provider",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "custom-provider",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+    assert_eq!(body["reasoning_effort"], "high");
+}
+
 // ── anthropic_tool_to_json / gemini_tool_to_json structure ────────────────────
 
 #[test]
