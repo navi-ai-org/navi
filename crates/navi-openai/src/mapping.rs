@@ -224,7 +224,12 @@ pub(crate) fn responses_input_item_to_json(message: &ModelMessage) -> Vec<Value>
         return Vec::new();
     }
 
-    vec![message_to_json(message)]
+    // Plain user/assistant messages for the Responses API are typed items.
+    let mut item = message_to_json(message);
+    if let Some(obj) = item.as_object_mut() {
+        obj.insert("type".into(), Value::String("message".into()));
+    }
+    vec![item]
 }
 
 pub(crate) fn chat_tool_call_to_json(invocation: &ToolInvocation) -> Value {

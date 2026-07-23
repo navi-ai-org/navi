@@ -29,6 +29,7 @@ impl crate::provider::OpenAiProvider {
         let mut headers = behavior
             .build_headers(&api_key, crate::providers::behavior::Endpoint::Responses)?;
         behavior.apply_request_headers(&mut headers, &request)?;
+        apply_extra_headers(&mut headers, &request_options);
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "responses", tools = request.tools.len(), "provider stream started");
         let mut body = json!({
@@ -77,6 +78,11 @@ impl crate::provider::OpenAiProvider {
             ),
             OpenAiApiKind::Responses,
             &provider_id,
+        );
+        apply_openai_request_options(
+            &mut body,
+            &request_options,
+            OpenAiApiKind::Responses,
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
@@ -142,6 +148,7 @@ impl crate::provider::OpenAiProvider {
             crate::providers::behavior::Endpoint::ChatCompletions,
         )?;
         behavior.apply_request_headers(&mut headers, &request)?;
+        apply_extra_headers(&mut headers, &request_options);
         let model = request.model.clone();
         tracing::info!(provider = %provider_id, model = %model, api = "chat-completions", tools = request.tools.len(), "provider stream started");
         let messages_json = chat_completions_messages(&request);
@@ -186,6 +193,11 @@ impl crate::provider::OpenAiProvider {
             ),
             OpenAiApiKind::ChatCompletions,
             &provider_id,
+        );
+        apply_openai_request_options(
+            &mut body,
+            &request_options,
+            OpenAiApiKind::ChatCompletions,
         );
         body["stream"] = json!(true);
         body["stream_options"] = json!({ "include_usage": true });
@@ -335,6 +347,11 @@ pub(crate) fn parse_openai_responses_sse(data: &str) -> Vec<Result<ModelStreamEv
             let mut events = usage_from_value(value.get("response").and_then(|v| v.get("usage")));
             events.push(Ok(ModelStreamEvent::Done));
             events
+        }
+        Some("response.incomplete") => {
+            // The model stopped generating before finishing (e.g. max_tokens).
+            // Treat as end-of-stream; downstream can still use text/tool deltas.
+            vec![Ok(ModelStreamEvent::Done)]
         }
         Some("response.failed") => vec![Err(anyhow::anyhow!(
             "{}",
@@ -1173,6 +1190,65 @@ fn should_send_prompt_cache_retention(model: &str, retention: &str) -> bool {
     retention != "24h" || model_supports_extended_cache(model)
 }
 
+/// Apply first-class and passthrough request options to the OpenAI request body.
+///
+/// First-class options (`temperature`, `top_p`, `max_tokens`, `response_format`)
+/// are applied after `extra_body` so explicit config wins over passthrough
+/// values. `model`, `messages`, `input`, `stream`, and `stream_options` are set
+/// by the caller after this function, so they cannot be accidentally disabled.
+fn apply_openai_request_options(
+    body: &mut Value,
+    request_options: &navi_core::ProviderRequestOptions,
+    api_kind: OpenAiApiKind,
+) {
+    if let Some(extra_body) = &request_options.extra_body {
+        if let Some(obj) = extra_body.as_object() {
+            for (k, v) in obj {
+                body[k] = v.clone();
+            }
+        }
+    }
+
+    if let Some(temperature) = request_options.temperature {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = request_options.top_p {
+        body["top_p"] = json!(top_p);
+    }
+    if let Some(max_tokens) = request_options.max_tokens {
+        match api_kind {
+            OpenAiApiKind::Responses => body["max_tokens"] = json!(max_tokens),
+            OpenAiApiKind::ChatCompletions => body["max_completion_tokens"] = json!(max_tokens),
+        }
+    }
+    if let Some(response_format) = &request_options.response_format {
+        match api_kind {
+            OpenAiApiKind::Responses => {
+                body["text"] = json!({ "format": response_format });
+            }
+            OpenAiApiKind::ChatCompletions => {
+                body["response_format"] = response_format.clone();
+            }
+        }
+    }
+}
+
+/// Apply provider-configured extra HTTP headers to the outbound request.
+fn apply_extra_headers(
+    headers: &mut reqwest::header::HeaderMap,
+    request_options: &navi_core::ProviderRequestOptions,
+) {
+    if let Some(extra_headers) = &request_options.extra_headers {
+        for (name, value) in extra_headers {
+            if let Ok(name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) {
+                if let Ok(value) = reqwest::header::HeaderValue::from_str(value) {
+                    headers.insert(name, value);
+                }
+            }
+        }
+    }
+}
+
 /// Apply OpenAI-style prompt-cache body fields.
 ///
 /// - OpenAI / providers that benefit from explicit keys: optional session
@@ -1335,5 +1411,122 @@ mod message_build_tests {
             messages[0].get("content").and_then(|c| c.as_str()),
             Some("fallback system")
         );
+    }
+}
+
+#[cfg(test)]
+mod request_options_tests {
+    use super::apply_openai_request_options;
+    use navi_core::ProviderRequestOptions;
+    use serde_json::json;
+
+    #[test]
+    fn applies_chat_completions_request_options() {
+        let mut body = json!({"model":"gpt-5","messages":[]});
+        let opts = ProviderRequestOptions {
+            temperature: Some(0.5),
+            top_p: Some(0.9),
+            max_tokens: Some(256),
+            response_format: Some(json!({"type": "json_object"})),
+            extra_body: Some(json!({"metadata": {"run_id": "abc"}})),
+            ..Default::default()
+        };
+        apply_openai_request_options(&mut body, &opts, super::OpenAiApiKind::ChatCompletions);
+
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(body["top_p"], 0.9);
+        assert_eq!(body["max_completion_tokens"], 256);
+        assert_eq!(body["response_format"], json!({"type": "json_object"}));
+        assert_eq!(body["metadata"], json!({"run_id": "abc"}));
+    }
+
+    #[test]
+    fn applies_responses_api_request_options() {
+        let mut body = json!({"model":"gpt-5","input":[]});
+        let opts = ProviderRequestOptions {
+            temperature: Some(0.2),
+            top_p: Some(0.95),
+            max_tokens: Some(128),
+            response_format: Some(json!({"type": "json_schema"})),
+            extra_body: Some(json!({"store": false, "metadata": {"key": "val"}})),
+            ..Default::default()
+        };
+        apply_openai_request_options(&mut body, &opts, super::OpenAiApiKind::Responses);
+
+        assert_eq!(body["temperature"], 0.2);
+        assert_eq!(body["top_p"], 0.95);
+        assert_eq!(body["max_tokens"], 128);
+        assert_eq!(body["text"], json!({"format": {"type": "json_schema"}}));
+        assert_eq!(body["store"], false);
+        assert_eq!(body["metadata"], json!({"key": "val"}));
+    }
+
+    #[test]
+    fn first_class_options_override_extra_body() {
+        let mut body = json!({});
+        let opts = ProviderRequestOptions {
+            temperature: Some(0.7),
+            extra_body: Some(json!({"temperature": 0.1, "presence_penalty": 0.5})),
+            ..Default::default()
+        };
+        apply_openai_request_options(&mut body, &opts, super::OpenAiApiKind::ChatCompletions);
+
+        assert_eq!(
+            body["temperature"], 0.7,
+            "first-class temperature should win"
+        );
+        assert_eq!(
+            body["presence_penalty"], 0.5,
+            "extra_body-only field should remain"
+        );
+    }
+
+    #[test]
+    fn ignores_non_object_extra_body() {
+        let mut body = json!({"model":"gpt-5"});
+        let opts = ProviderRequestOptions {
+            extra_body: Some(json!(["not", "an", "object"])),
+            ..Default::default()
+        };
+        apply_openai_request_options(&mut body, &opts, super::OpenAiApiKind::ChatCompletions);
+
+        assert_eq!(body["model"], "gpt-5");
+        assert!(
+            body.as_object().unwrap().len() == 1,
+            "non-object extra_body should be ignored"
+        );
+    }
+
+    #[test]
+    fn empty_options_leave_body_unchanged() {
+        let mut body = json!({"model":"gpt-5"});
+        apply_openai_request_options(
+            &mut body,
+            &ProviderRequestOptions::default(),
+            super::OpenAiApiKind::ChatCompletions,
+        );
+        assert_eq!(body, json!({"model":"gpt-5"}));
+    }
+
+    #[test]
+    fn applies_extra_headers_and_skips_invalid_ones() {
+        use std::collections::BTreeMap;
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        let mut extras = BTreeMap::new();
+        extras.insert("OpenAI-Project".to_string(), "proj_123".to_string());
+        extras.insert("OpenAI-Organization".to_string(), "org_456".to_string());
+        extras.insert("\n".to_string(), "bad-name".to_string());
+        extras.insert("Good-Name".to_string(), "bad\r\nvalue".to_string());
+        let opts = ProviderRequestOptions {
+            extra_headers: Some(extras),
+            ..Default::default()
+        };
+        super::apply_extra_headers(&mut headers, &opts);
+
+        assert_eq!(headers["OpenAI-Project"], "proj_123");
+        assert_eq!(headers["OpenAI-Organization"], "org_456");
+        assert!(!headers.contains_key("\n"));
+        assert!(!headers.contains_key("Good-Name"));
     }
 }

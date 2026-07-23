@@ -690,6 +690,31 @@ pub struct ProviderRequestOptions {
     /// Anthropic `cache_control` object, for example `{ "type": "ephemeral" }`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_cache_control: Option<serde_json::Value>,
+    /// Extra JSON body fields merged into the provider request *after*
+    /// NAVI-generated fields. Allows pass-through of provider-specific or
+    /// schema-1:1 options (e.g. `metadata`, `store`, `service_tier`) without
+    /// adding a first-class engine field for each one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_body: Option<serde_json::Value>,
+    /// Response format object forwarded to the provider, e.g.
+    /// `{ "type": "json_object" }` or `{ "type": "json_schema", "json_schema": {...} }`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<serde_json::Value>,
+    /// Maximum number of tokens to generate. For OpenAI Chat Completions this
+    /// is emitted as `max_completion_tokens`; for Responses API as `max_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+    /// Sampling temperature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    /// Nucleus sampling probability mass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    /// Extra HTTP headers merged into the provider request after NAVI-generated
+    /// auth headers. Allows provider-specific or schema-1:1 header passthrough
+    /// (e.g. OpenAI `OpenAI-Project`, `OpenAI-Organization`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<std::collections::BTreeMap<String, String>>,
 }
 
 impl ProviderRequestOptions {
@@ -697,6 +722,12 @@ impl ProviderRequestOptions {
         self.prompt_cache_key.is_none()
             && self.prompt_cache_retention.is_none()
             && self.anthropic_cache_control.is_none()
+            && self.extra_body.is_none()
+            && self.response_format.is_none()
+            && self.max_tokens.is_none()
+            && self.temperature.is_none()
+            && self.top_p.is_none()
+            && self.extra_headers.is_none()
     }
 }
 

@@ -180,4 +180,115 @@ mod tests {
         assert!(message.contains("Authentication failed"));
         assert!(message.contains("authentication_error"));
     }
+
+    #[test]
+    fn api_error_handles_various_status_codes() {
+        let cases = [
+            (
+                StatusCode::BAD_REQUEST,
+                "invalid_api_key",
+                "Invalid API key format",
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                "model does not exist",
+                "not available for this provider",
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                "generic bad request",
+                "request was invalid",
+            ),
+            (StatusCode::UNAUTHORIZED, "", "Authentication failed"),
+            (StatusCode::FORBIDDEN, "", "Access denied"),
+            (StatusCode::NOT_FOUND, "", "API endpoint was not found"),
+            (StatusCode::REQUEST_TIMEOUT, "", "timed out"),
+            (StatusCode::UNPROCESSABLE_ENTITY, "", "invalid parameters"),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "insufficient_quota",
+                "Quota exhausted",
+            ),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limit_error",
+                "Rate limited",
+            ),
+            (StatusCode::TOO_MANY_REQUESTS, "generic 429", "Rate limited"),
+            (StatusCode::TOO_MANY_REQUESTS, "", "Rate limited"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "", "upstream error"),
+            (StatusCode::BAD_GATEWAY, "", "Bad gateway"),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "",
+                "temporarily unavailable",
+            ),
+            (
+                StatusCode::UPGRADE_REQUIRED,
+                "outdated Grok CLI version",
+                "xAI rejected",
+            ),
+            (
+                StatusCode::UPGRADE_REQUIRED,
+                "",
+                "protocol or client upgrade",
+            ),
+            (
+                StatusCode::from_u16(200).unwrap(),
+                "",
+                "Unexpected response status",
+            ),
+        ];
+
+        for (status, body_fragment, expected) in cases {
+            let body = if body_fragment.is_empty() {
+                r#"{"error":{"message":""}}"#.to_string()
+            } else {
+                format!(r#"{{"error":{{"message":"err","code":"{body_fragment}"}}}}"#)
+            };
+            let message = format_api_error(&status, &body, &None);
+            assert!(
+                message.to_lowercase().contains(&expected.to_lowercase()),
+                "status {status} should contain '{expected}', got: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn api_error_includes_provider_detail_when_available() {
+        let body = r#"{"error":{"message":"Limit reached","code":"rate_limit_error"}}"#;
+        let message = format_api_error(
+            &StatusCode::TOO_MANY_REQUESTS,
+            body,
+            &Some(Duration::from_secs(65)),
+        );
+        assert!(message.contains("wait 1 minutes"), "message: {message}");
+        assert!(message.contains("Limit reached"));
+        assert!(message.contains("rate_limit_error"));
+    }
+
+    #[test]
+    fn api_error_without_provider_detail_still_works() {
+        let body = "not json";
+        let message = format_api_error(&StatusCode::BAD_REQUEST, body, &None);
+        assert!(
+            message.contains("request was invalid"),
+            "message: {message}"
+        );
+    }
+
+    #[test]
+    fn format_delay_variants() {
+        assert_eq!(format_delay(&Duration::from_secs(120)), "2 minutes");
+        assert_eq!(format_delay(&Duration::from_secs(1)), "1 seconds");
+        assert_eq!(format_delay(&Duration::from_millis(500)), "500ms");
+    }
+
+    #[test]
+    fn provider_error_body_detail_with_message_and_code() {
+        let body = r#"{"error":{"message":"boom","code":"boom_code"}}"#;
+        let message = format_api_error(&StatusCode::BAD_REQUEST, body, &None);
+        assert!(message.contains("boom"));
+        assert!(message.contains("boom_code"));
+    }
 }
