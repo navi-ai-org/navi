@@ -560,6 +560,7 @@ impl SubagentTool {
             compaction_model_name: None,
             session_id,
             allowed_tool_names,
+            is_subagent: true,
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
             harness_card: None,
         };
@@ -725,6 +726,7 @@ impl SubagentTool {
                 session_id,
                 agent_mode: crate::plan_mode::AgentMode::Default,
                 allowed_tool_names: allowed_tool_names_clone,
+                is_subagent: true,
                 memory_manager: Arc::new(std::sync::Mutex::new(None)),
                 harness_card: None,
             };

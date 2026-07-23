@@ -172,7 +172,7 @@ impl SecurityPolicy {
 
         if self.is_data_dir_private_path(&path) {
             return SecurityDecision::Deny(format!(
-                "path {} is inside NAVI private storage",
+                "path {} is inside NAVI private storage; use skill_list / skill_get / load_skill / skill_save for skills (not raw FS under data_dir)",
                 path.display()
             ));
         }
@@ -294,7 +294,7 @@ impl SecurityPolicy {
             };
             if self.is_data_dir_private_path(&path) {
                 return SecurityDecision::Deny(format!(
-                    "command references NAVI private storage: {}",
+                    "command references NAVI private storage: {}; use skill tools (skill_list / skill_get / load_skill / skill_save), not bash under data_dir",
                     path.display()
                 ));
             }
@@ -2660,6 +2660,31 @@ mod tests {
             matches!(decision, SecurityDecision::Deny(_)),
             "NAVI data dir must be denied, got: {decision:?}"
         );
+    }
+
+    #[test]
+    fn private_storage_deny_mentions_skill_tools() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        // Nest data_dir under project so path jail does not fire first as "outside project".
+        let data = project.join("navi-data");
+        std::fs::create_dir_all(data.join("skills")).expect("skills");
+        let policy = policy(project, data.clone());
+
+        let decision = policy.validate_path(data.join("skills/foo/SKILL.md").as_path(), false);
+        match decision {
+            SecurityDecision::Deny(msg) => {
+                assert!(
+                    msg.contains("private storage"),
+                    "expected private storage wording: {msg}"
+                );
+                assert!(
+                    msg.contains("skill_list") || msg.contains("skill_get"),
+                    "deny should steer agents to skill tools: {msg}"
+                );
+            }
+            other => panic!("expected deny, got {other:?}"),
+        }
     }
 
     #[test]

@@ -253,6 +253,7 @@ async fn test_turn_loop_with_parallel_tools() {
         compaction_model_name: None,
         session_id: "test-session".to_string(),
         allowed_tool_names: None,
+        is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
     };
@@ -517,6 +518,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         session_id: "test-session".to_string(),
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
+        is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
     };
@@ -618,6 +620,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         session_id: "test-session".to_string(),
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
+        is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
     }
@@ -1076,4 +1079,16 @@ fn rewrite_unsupported_images_do_not_inline_base64() {
     );
     assert!(text.contains("image/png"));
     assert!(text.contains("cannot view") || text.contains("unavailable"));
+}
+
+#[test]
+fn allowlist_deny_message_distinguishes_subagent_and_harness() {
+    let sub = super::tool_allowlist_deny_message(true, "bash");
+    let root = super::tool_allowlist_deny_message(false, "bash");
+    assert!(sub.contains("for this subagent"), "subagent deny: {sub}");
+    assert!(
+        !root.contains("subagent"),
+        "root/harness deny must not say subagent: {root}"
+    );
+    assert!(root.contains("for the active harness"), "root deny: {root}");
 }

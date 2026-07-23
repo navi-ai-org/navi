@@ -51,10 +51,10 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Done on main (v0.3.5 fix path):** catalog skills with `harness: false` no longer push `allow_tools` into the session lock. **Still verify** end-to-end:
 
-- [ ] Fresh session, no harness activated → full Direct tool set works (`skill_list`, `read_file`, …).
-- [ ] Activating a harness skill with pack graph **does** restrict only as designed.
-- [ ] Subagent still gets its own allowlist; root never inherits subagent allowlist by accident.
-- [ ] Error messages: root denials must not say “for this subagent” when the deny is harness/root policy.
+- [x] Fresh session, no harness activated → full Direct tool set works (`skill_list`, `read_file`, …).
+- [x] Activating a harness skill with pack graph **does** restrict only as designed.
+- [x] Subagent still gets its own allowlist; root never inherits subagent allowlist by accident.
+- [x] Error messages: root denials must not say “for this subagent” when the deny is harness/root policy.
 
 **Tests required:** unit + integration on `navi-core` runtime/turn:
 
@@ -68,10 +68,10 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Work:**
 
-- [ ] Confirm builtin `navi-create-skill` (pool `navi`) is in catalog + prompt surface correctly (pools: root + pool folders, members via `skill_list { pool }`).
-- [ ] `skill_save` / `skill_list` / `load_skill` work under default security modes used by TUI.
-- [ ] Natural language path: system/prompt or skill description makes the model **load_skill** create-skill before inventing formats.
-- [ ] CLI: `navi skill install|list` + materialize hook still green.
+- [x] Confirm builtin `navi-create-skill` (pool `navi`) is in catalog + prompt surface correctly (pools: root + pool folders, members via `skill_list { pool }`).
+- [x] `skill_save` / `skill_list` / `load_skill` work under default security modes used by TUI.
+- [x] Natural language path: system/prompt or skill description makes the model **load_skill** create-skill before inventing formats.
+- [x] CLI: `navi skill install|list` + materialize hook still green.
 
 ### B3 — Private storage path jail false positives (session transcript)
 
@@ -79,9 +79,9 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Work:**
 
-- [ ] Document that agents must use **skill tools**, not raw FS into `{data_dir}`.
-- [ ] If product should allow read-only skill browsing via tools only — keep jail; do not open private storage to bash/search.
-- [ ] Optional: clearer tool error → “use skill_list / skill_get, not filesystem under data_dir”.
+- [x] Document that agents must use **skill tools**, not raw FS into `{data_dir}`.
+- [x] If product should allow read-only skill browsing via tools only — keep jail; do not open private storage to bash/search.
+- [x] Optional: clearer tool error → “use skill_list / skill_get, not filesystem under data_dir”.
 
 ---
 
@@ -103,10 +103,10 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Work:**
 
-- [ ] Document activation contract in `docs/harness-system.md` (two paths).
-- [ ] Ensure soft-apply only when skill is **session-active / harness-flagged**, not merely discovered.
-- [ ] If graph edges are still MVP-soft, document limits; do not fake hard routing.
-- [ ] Tests: install → materialize → activate → allowlist; chat-driven save skill without locking root tools.
+- [x] Document activation contract in `docs/harness-system.md` (two paths).
+- [x] Ensure soft-apply only when skill is **session-active / harness-flagged**, not merely discovered.
+- [x] If graph edges are still MVP-soft, document limits; do not fake hard routing.
+- [x] Tests: install → materialize → activate → allowlist; chat-driven save skill without locking root tools.
 
 ### T3 — Built-in essential skills (not marketplace-first)
 
@@ -129,9 +129,9 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Work:**
 
-- [ ] Inventory current `builtin_skills()`.
-- [ ] Add/update builtins with tests for discovery, catalog rendering, pool membership.
-- [ ] No marketplace dependency for create-skill / harness-author.
+- [x] Inventory current `builtin_skills()`.
+- [x] Add/update builtins with tests for discovery, catalog rendering, pool membership.
+- [x] No marketplace dependency for create-skill / harness-author.
 
 ### T4 — Marketplace correctness
 
@@ -139,10 +139,10 @@ Many subagents may edit the same repo. **Do not thrash the working tree.**
 
 **Work:**
 
-- [ ] Trace `navi plugin search|install|update` against config `plugin_marketplace.registry_url`.
-- [ ] Integration test or docker-friendly mock if network-flaky.
-- [ ] Confirm install lands under `{data_dir}/plugins/`, not project `.navi/`.
-- [ ] Document “skills via marketplace vs builtin” version risk in user-guide or harness-system.
+- [x] Trace `navi plugin search|install|update` against config `plugin_marketplace.registry_url`.
+- [x] Integration test or docker-friendly mock if network-flaky.
+- [x] Confirm install lands under `{data_dir}/plugins/`, not project `.navi/`.
+- [x] Document “skills via marketplace vs builtin” version risk in user-guide or harness-system.
 
 ### T5 — Harness system correctness audit
 
@@ -230,10 +230,10 @@ git pull --ff-only origin feat/harness-skills-hardening
 
 ## Acceptance checklist
 
-- [ ] Root session never blocked by catalog skill `allow_tools`.
-- [ ] Harness soft allowlist only when harness skill/pack is active.
-- [ ] “Adicione uma skill…” path works via builtin create-skill + `skill_save`.
-- [ ] CLI skill install + harness materialize still work.
-- [ ] Marketplace plugin search/install verified or fixed + tested.
-- [ ] Package-scoped tests green; no bulk git restore used during multi-agent work.
-- [ ] Docs updated (`harness-system.md` activation paths; this plan checked off).
+- [x] Root session never blocked by catalog skill `allow_tools`.
+- [x] Harness soft allowlist only when harness skill/pack is active.
+- [x] “Adicione uma skill…” path works via builtin create-skill + `skill_save`.
+- [x] CLI skill install + harness materialize still work.
+- [x] Marketplace plugin search/install verified or fixed + tested.
+- [x] Package-scoped tests green; no bulk git restore used during multi-agent work.
+- [x] Docs updated (`harness-system.md` activation paths; this plan checked off).

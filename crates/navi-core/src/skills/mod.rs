@@ -1,7 +1,7 @@
 mod builtin;
 mod store;
 
-pub use builtin::{CREATE_SKILL_ID, builtin_skills};
+pub use builtin::{CREATE_SKILL_ID, HARNESS_AUTHOR_ID, SKILL_POOLS_ID, builtin_skills};
 pub use store::{SkillPool, SkillStore};
 
 use crate::config::SkillsConfig;
@@ -749,6 +749,32 @@ mod tests {
         assert!(!create.allow_tools.is_empty());
         assert!(create.allow_tools.iter().any(|t| t == "skill_save"));
         assert_eq!(create.pool.as_deref(), Some("navi"));
+        assert!(
+            !create.harness,
+            "create-skill must not be harness-flagged (would soft-lock root)"
+        );
+    }
+
+    #[test]
+    fn discovers_essential_navi_pool_builtins() {
+        let skills = builtin_skills();
+        for id in [CREATE_SKILL_ID, HARNESS_AUTHOR_ID, SKILL_POOLS_ID] {
+            let s = skills
+                .iter()
+                .find(|s| s.id == id)
+                .unwrap_or_else(|| panic!("missing builtin {id}"));
+            assert_eq!(s.pool.as_deref(), Some("navi"), "{id} must be in pool navi");
+            assert!(!s.harness, "{id} must not soft-lock via harness flag");
+            assert_eq!(s.source, SkillSource::Builtin);
+            assert!(!s.instructions.is_empty(), "{id} needs instructions");
+        }
+        // create-skill description steers natural-language "add a skill" path.
+        let create = skills.iter().find(|s| s.id == CREATE_SKILL_ID).unwrap();
+        let desc = create.description.as_deref().unwrap_or("");
+        assert!(
+            desc.to_ascii_lowercase().contains("skill"),
+            "create-skill description should advertise authoring: {desc}"
+        );
     }
 
     #[test]
@@ -765,11 +791,32 @@ mod tests {
             .iter()
             .find(|p| p.id == "navi")
             .expect("navi pool in catalog");
-        assert!(navi.skill_count >= 1);
+        // create-skill + harness-author + skill-pools
+        assert!(
+            navi.skill_count >= 3,
+            "navi pool should include essential builtins, got {}",
+            navi.skill_count
+        );
         let rendered = render_catalog_entries(&catalog).expect("render");
         assert!(rendered.contains("Skill pools"));
         assert!(rendered.contains("navi"));
         assert!(!rendered.contains(CREATE_SKILL_ID));
+    }
+
+    #[test]
+    fn builtin_allow_tools_do_not_imply_session_lock_via_apply() {
+        // Production path: apply_harness_for_skills on catalog builtins must leave
+        // tools unrestricted (root session unlock contract).
+        use crate::harness_pack::apply_harness_for_skills;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let skills = builtin_skills();
+        assert!(skills.iter().any(|s| !s.allow_tools.is_empty()));
+        let applied = apply_harness_for_skills(dir.path(), &skills);
+        assert!(
+            applied.allow_tools.is_none(),
+            "builtin catalog allow_tools must not soft-lock: {:?}",
+            applied.allow_tools
+        );
     }
 
     #[test]

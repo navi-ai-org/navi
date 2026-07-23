@@ -230,4 +230,86 @@ mod tests {
         let m = merge_allow_tools(&[a, b]).unwrap();
         assert_eq!(m, vec!["b".to_string(), "c".to_string()]);
     }
+
+    #[test]
+    fn catalog_create_skill_style_allow_tools_do_not_lock_without_harness_flag() {
+        // Builtin create-skill has allow_tools but harness:false — catalog discovery
+        // must not produce a session allowlist (root tools stay open).
+        let dir = tempfile::tempdir().unwrap();
+        let create = skill(
+            "navi-create-skill",
+            &["skill_list", "skill_save", "load_skill", "read_file"],
+        );
+        assert!(!create.harness);
+        let applied = apply_harness_for_skills(dir.path(), &[create]);
+        assert!(
+            applied.allow_tools.is_none(),
+            "non-harness skill allow_tools must not lock the session: {:?}",
+            applied.allow_tools
+        );
+        assert!(applied.packs.is_empty());
+    }
+
+    #[test]
+    fn empty_active_list_means_no_soft_allowlist() {
+        let dir = tempfile::tempdir().unwrap();
+        let applied = apply_harness_for_skills(dir.path(), &[]);
+        assert!(applied.allow_tools.is_none());
+        assert!(applied.packs.is_empty());
+        assert!(applied.harness_card.is_empty());
+    }
+
+    #[test]
+    fn harness_flagged_skill_allow_tools_lock_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut s = skill("design-loop", &["read_file", "search"]);
+        s.harness = true;
+        let applied = apply_harness_for_skills(dir.path(), &[s]);
+        assert_eq!(
+            applied.allow_tools.as_deref(),
+            Some(["read_file".to_string(), "search".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn pack_entry_allowlist_only_when_skill_passed_as_active() {
+        // Packs on disk for skills that are *not* in the active list must not
+        // be consulted — callers pass only session-active manifests.
+        let dir = tempfile::tempdir().unwrap();
+        let inv = inventory_from_tool_names(
+            [
+                "search",
+                "read_file",
+                "edit",
+                "write_file",
+                "bash",
+                "tool_search",
+            ],
+            ["browser"],
+            true,
+            true,
+            50,
+            None::<String>,
+            None::<String>,
+            None::<String>,
+        );
+        let s = skill("design-loop", &[]);
+        materialize_from_skill(dir.path(), &s, &inv, MaterializeOptions::default()).unwrap();
+
+        // Not in active list → no lock even though pack exists on disk.
+        let idle = apply_harness_for_skills(dir.path(), &[]);
+        assert!(idle.allow_tools.is_none());
+
+        // Activated → soft entry allowlist from pack.
+        let active = apply_harness_for_skills(dir.path(), &[skill("design-loop", &[])]);
+        assert!(
+            active.allow_tools.is_some(),
+            "active skill with pack should soft-lock tools"
+        );
+        let tools = active.allow_tools.unwrap();
+        assert!(
+            tools.iter().any(|t| t == "search" || t == "read_file"),
+            "expected explore-oriented entry tools, got {tools:?}"
+        );
+    }
 }
