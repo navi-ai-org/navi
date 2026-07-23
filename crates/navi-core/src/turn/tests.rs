@@ -209,6 +209,35 @@ impl ModelProvider for DegenerateOutputProvider {
     }
 }
 
+/// Provider that returns an empty stream on the first call and text on the second.
+/// Used to exercise the self-repair retry-without-thinking path.
+struct EmptyThenTextProvider {
+    calls: Mutex<usize>,
+    requests: Arc<Mutex<Vec<ModelRequest>>>,
+}
+
+#[async_trait]
+impl ModelProvider for EmptyThenTextProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        self.requests.lock().unwrap().push(request);
+        let mut calls = self.calls.lock().unwrap();
+        *calls += 1;
+        let text = if *calls == 1 {
+            String::new()
+        } else {
+            "fixed".to_string()
+        };
+        if text.is_empty() {
+            Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+        } else {
+            Box::pin(stream::iter(vec![
+                Ok(ModelStreamEvent::TextDelta { text }),
+                Ok(ModelStreamEvent::Done),
+            ]))
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_turn_loop_with_parallel_tools() {
     let tempdir = tempfile::tempdir().unwrap();
@@ -274,6 +303,31 @@ async fn test_turn_loop_with_parallel_tools() {
         .filter(|m| m.role == ModelRole::Tool)
         .collect();
     assert_eq!(tool_results.len(), 2);
+}
+
+#[tokio::test]
+async fn empty_response_self_repair_retries_with_thinking_off() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    ctx.model_provider = Arc::new(std::sync::RwLock::new(Arc::new(EmptyThenTextProvider {
+        calls: Mutex::new(0),
+        requests: requests.clone(),
+    })));
+    ctx.config.write().unwrap().tui.thinking_level = "max".to_string();
+
+    let policy = crate::harness::policy_for_profile(
+        &ctx.harness_config,
+        crate::config::HarnessProfile::Small,
+    );
+    let mut messages = vec![];
+    let result = run_turn(&ctx, &mut messages, policy).await.unwrap();
+
+    assert_eq!(result, "fixed");
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2, "should retry once after empty response");
+    assert_ne!(captured[0].thinking, crate::model::ThinkingConfig::Off);
+    assert_eq!(captured[1].thinking, crate::model::ThinkingConfig::Off);
 }
 
 #[tokio::test]
@@ -632,7 +686,7 @@ fn agent_turn_request_propagates_its_session_identity() {
     let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
     ctx.session_id = crate::SessionStore::create_id().into_inner();
 
-    let request = build_model_request(&ctx, &[ModelMessage::user("hello")]);
+    let request = build_model_request(&ctx, &[ModelMessage::user("hello")], None);
 
     assert_eq!(request.session_id.as_deref(), Some(ctx.session_id.as_str()));
 }

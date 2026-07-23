@@ -8,6 +8,7 @@ pub mod config;
 pub mod context;
 pub mod credentials;
 pub mod dataset;
+pub mod diagnose;
 pub mod effect;
 pub mod eval;
 pub mod event;
@@ -87,6 +88,7 @@ pub use credentials::{
 pub use dataset::{
     DatasetRow, DatasetRowType, export_jsonl, trace_to_dataset_rows, traces_to_eval_candidates,
 };
+pub use diagnose::{Diagnosis, FailureKind, ReliabilityIndex, RepairAction, TurnDiagnostician};
 pub use effect::{BlastRadius, EffectAnalyzer, EffectReport, PostDecision};
 pub use eval::{
     EvalCase, EvalCaseMetrics, EvalCaseResult, EvalMode, EvalRun, EvalRunMetrics, EvalRunner,

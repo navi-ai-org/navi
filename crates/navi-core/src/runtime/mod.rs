@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use crate::cancel::CancelToken;
 use crate::config::{LoadedConfig, PermissionMode, SecurityConfig};
 use crate::context::ContextPacket;
+use crate::diagnose::{ReliabilityIndex, TurnDiagnostician};
 use crate::event::{
     AgentEvent, ApprovalDecision, PlanReviewResponse, QuestionResponse, RuntimeEvent,
     RuntimeEventKind, SudoPasswordResponse,
@@ -36,6 +37,7 @@ use crate::{
     provider_request_model_name,
 };
 use anyhow::Result;
+use serde_json::{Value, json};
 
 pub use event_bus::EventBus;
 pub use session_state::SessionState;
@@ -1239,6 +1241,8 @@ impl AgentRuntime {
 
                 // Auto-distill: fire-and-forget check after each turn
                 self.try_auto_distill();
+
+                self.diagnose_last_turn();
             }
             Err(err) => {
                 self.goal_extension.on_turn_error(&err.to_string());
@@ -1248,6 +1252,7 @@ impl AgentRuntime {
                 self.record_event(AgentEvent::Error {
                     message: err.to_string(),
                 });
+                self.diagnose_last_turn();
                 // Best-effort persist immediately — Desktop/TUI also snapshot after.
                 if let Err(snap_err) = self.snapshot_session() {
                     tracing::warn!(
@@ -1624,6 +1629,30 @@ impl AgentRuntime {
         if let Err(err) = store.save_session_traces(session_id, &traces) {
             tracing::warn!(error = %err, session_id, "failed to save turn traces");
         }
+    }
+
+    /// Diagnoses the most recent turn from the current session events and
+    /// records a `HarnessTrace` diagnosis event. This enriches saved traces
+    /// with a concise, AI-friendly summary and a suggested repair action.
+    fn diagnose_last_turn(&mut self) {
+        let session_id = self.session.id().as_str().to_string();
+        let provider = self.loaded_config.config.model.provider.clone();
+        let model = self.loaded_config.config.model.name.clone();
+        let traces = turn_traces_from_events(&session_id, &provider, &model, self.session.events());
+        let Some(trace) = traces.last().cloned() else {
+            return;
+        };
+
+        let reliability = ReliabilityIndex::load(&self.loaded_config.data_dir);
+        let recent: Vec<_> = traces.iter().rev().skip(1).cloned().collect();
+        let diagnosis = TurnDiagnostician::diagnose(&trace, &recent, &reliability);
+
+        self.record_event(AgentEvent::HarnessTrace(json!({
+            "kind": "diagnosis",
+            "failure_kind": serde_json::to_value(diagnosis.failure_kind).unwrap_or(Value::Null),
+            "repair_action": serde_json::to_value(diagnosis.repair_action).unwrap_or(Value::Null),
+            "summary": diagnosis.summary,
+        })));
     }
 
     /// Test-only accessor; production code uses `self.session_store` directly.

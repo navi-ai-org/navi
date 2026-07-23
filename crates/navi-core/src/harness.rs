@@ -25,6 +25,11 @@ pub struct HarnessPolicy {
     pub max_consecutive_malformed_arguments: usize,
     /// Maximum consecutive unknown-tool calls before stopping.
     pub max_consecutive_unknown_tools: usize,
+    /// Whether the runtime may automatically recover from empty/degenerate
+    /// model responses by retrying with adjusted settings.
+    pub self_repair: bool,
+    /// Maximum number of self-repair attempts allowed per turn.
+    pub self_repair_max_attempts: u32,
 }
 
 /// Mutable state tracked across tool-loop iterations for detecting repetition
@@ -161,6 +166,8 @@ pub fn policy_for_profile(config: &HarnessConfig, profile: HarnessProfile) -> Ha
         max_consecutive_invalid_arguments: config.max_consecutive_invalid_arguments,
         max_consecutive_malformed_arguments: config.max_consecutive_malformed_arguments,
         max_consecutive_unknown_tools: config.max_consecutive_unknown_tools,
+        self_repair: config.self_repair,
+        self_repair_max_attempts: config.self_repair_max_attempts,
     }
 }
 
@@ -618,6 +625,7 @@ pub fn tool_error_result(invocation: &ToolInvocation, reason: impl Into<String>)
 /// full message content (logged separately at debug level).
 pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> Value {
     json!({
+        "kind": "request",
         "model": request.model,
         "profile": format!("{:?}", policy.profile).to_lowercase(),
         "tool_calling_mode": if request.tools.is_empty() { "no-native-tools" } else { "native" },

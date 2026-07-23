@@ -63,6 +63,9 @@ pub use types::{
 
 // Re-export engine types so TUI/clients can import from navi_sdk instead of navi_core.
 pub use navi_core::ProviderId;
+pub use navi_core::diagnose::{
+    Diagnosis, FailureKind, ReliabilityIndex, RepairAction, TurnDiagnostician,
+};
 pub use navi_core::{AgentMode, AttachmentKind, ContentPart, ProposedPlan, ProposedPlanParser};
 // Session utilities
 pub use navi_core::session::{

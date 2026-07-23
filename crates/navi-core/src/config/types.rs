@@ -370,6 +370,11 @@ pub struct HarnessConfig {
     /// Fraction of recent turns to keep intact during autocompact (0.0–1.0).
     /// Default 0.25 keeps the most recent 25% of turns unsummarized.
     pub autocompact_keep_ratio: f64,
+    /// Whether the runtime may automatically recover from empty/degenerate
+    /// model responses by retrying with adjusted settings.
+    pub self_repair: bool,
+    /// Maximum number of self-repair attempts allowed per turn.
+    pub self_repair_max_attempts: u32,
 }
 
 /// Harness profile that controls observation limits and prompt complexity.

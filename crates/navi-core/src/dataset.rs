@@ -133,6 +133,7 @@ fn outcome_label(outcome: &TurnOutcome) -> String {
         TurnOutcome::PartialSuccess => "partial_success".to_string(),
         TurnOutcome::Stopped(reason) => format!("stopped:{reason}"),
         TurnOutcome::Failed(reason) => format!("failed:{reason}"),
+        TurnOutcome::EmptyResponse => "empty_response".to_string(),
     }
 }
 
