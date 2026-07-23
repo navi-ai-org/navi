@@ -691,6 +691,12 @@ impl NaviEngine {
     /// blocked, budget-limited, paused, or cleared. Optional `token_budget`
     /// must be a positive integer when set.
     ///
+    /// **Important:** this only stores the goal for auto-continue / `get_goal`.
+    /// The model does **not** see the objective until the host sends a turn.
+    /// Use [`Self::set_goal_for_host_turn`] (or call `send_turn` with
+    /// [`crate::build_host_set_goal_user_prompt`]) so the agent receives it —
+    /// same contract as the TUI Set Goal modal.
+    ///
     /// Prefer this over the model `create_goal` tool when the product UI sets
     /// the objective. Model tools remain for agent-driven goals when the user
     /// explicitly asks.
@@ -725,6 +731,30 @@ impl NaviEngine {
             .map(|s| s.trim().chars().take(40).collect::<String>())
             .filter(|s| !s.is_empty());
         Ok(runtime.set_goal_with_short_description(objective.into(), short, token_budget))
+    }
+
+    /// Set the thread goal and return the model-facing first-turn prompt.
+    ///
+    /// Hosts should call `send_turn` with `start_prompt` (same framing as the TUI)
+    /// so the agent sees the objective. Returns `(goal, start_prompt)`.
+    pub async fn set_goal_for_host_turn(
+        &self,
+        session_id: &str,
+        objective: impl Into<String>,
+        short_description: Option<String>,
+        token_budget: Option<i64>,
+    ) -> Result<(SessionGoal, String)> {
+        let objective = objective.into();
+        let goal = self
+            .set_goal_with_short_description(
+                session_id,
+                objective.clone(),
+                short_description,
+                token_budget,
+            )
+            .await?;
+        let start_prompt = navi_core::build_host_set_goal_user_prompt(&objective);
+        Ok((goal, start_prompt))
     }
 
     /// Clears the thread goal for a session.
@@ -1388,10 +1418,10 @@ impl NaviEngine {
         ))
     }
 
-    /// Create or update a skill in the SQLite store (`data_dir/skills.sqlite`).
+    /// Create or update a skill as markdown on disk (`data_dir/skills/<id>/SKILL.md`).
     ///
-    /// Shared by TUI and Desktop. User scope is global; project scope is keyed
-    /// by the engine project directory.
+    /// Shared by TUI and Desktop. User scope is global; project scope lives under
+    /// `{project}/.navi/skills/<id>/SKILL.md`.
     pub fn save_skill(
         &self,
         request: navi_core::SkillWriteRequest,

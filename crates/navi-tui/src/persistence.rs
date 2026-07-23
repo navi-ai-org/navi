@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use navi_sdk::{
     AgentEvent, CompactState, SessionSnapshot, SessionStore, SessionUsageSnapshot,
     effective_context_window, model_messages_from_agent_events, save_global_config,
@@ -9,9 +11,15 @@ use crate::chat::reset_system_context;
 use crate::session::session_created_at;
 use crate::state::{ChatImage, ChatMessage, ChatRole};
 
+/// Debounce for mid-turn checkpoints (tool batches, streaming finalize).
+/// User prompts always flush immediately so a kill mid-agent still keeps the ask.
+const CHECKPOINT_DEBOUNCE: Duration = Duration::from_millis(150);
+
 /// Save current session snapshot without destroying in-memory state.
 pub(crate) fn snapshot_current_session(app: &TuiApp) {
-    if app.messages.is_empty() && app.events.is_empty() {
+    // Persist only when the event log has content. UI messages alone after a
+    // session-id rotation must not write a ghost empty snapshot under a new id.
+    if app.events.is_empty() {
         return;
     }
     let now = navi_sdk::current_unix_timestamp();
@@ -19,11 +27,15 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
         .session_title
         .clone()
         .or_else(|| session_title_from_events(&app.events));
-    let existing_goal = tokio::task::block_in_place(|| {
-        app.session_store
-            .load(app.session_id.as_str())
-            .ok()
-            .and_then(|snapshot| snapshot.goal)
+    // Prefer the in-memory goal cache so frequent checkpoints do not re-read
+    // the whole session JSON on every tool completion.
+    let existing_goal = app.session_goal.clone().or_else(|| {
+        tokio::task::block_in_place(|| {
+            app.session_store
+                .load(app.session_id.as_str())
+                .ok()
+                .and_then(|snapshot| snapshot.goal)
+        })
     });
     let snapshot = SessionSnapshot {
         version: SessionSnapshot::CURRENT_VERSION,
@@ -58,12 +70,50 @@ pub(crate) fn snapshot_current_session(app: &TuiApp) {
     }
 }
 
+/// Persist immediately and cancel any pending debounced checkpoint.
+///
+/// Call after accepting a user prompt (before the agent turn runs) so a
+/// process kill still leaves a resumable session with that prompt on disk.
+pub(crate) fn checkpoint_session_now(app: &mut TuiApp) {
+    app.session_checkpoint_due = None;
+    snapshot_current_session(app);
+}
+
+/// Schedule a debounced checkpoint (coalesces rapid tool/model events).
+pub(crate) fn schedule_session_checkpoint(app: &mut TuiApp) {
+    if app.events.is_empty() {
+        return;
+    }
+    app.session_checkpoint_due = Some(Instant::now() + CHECKPOINT_DEBOUNCE);
+}
+
+/// Flush a due debounced checkpoint. Call from the TUI event loop tick.
+pub(crate) fn flush_session_checkpoint_if_due(app: &mut TuiApp) {
+    let Some(due) = app.session_checkpoint_due else {
+        return;
+    };
+    if Instant::now() < due {
+        return;
+    }
+    checkpoint_session_now(app);
+}
+
+/// Flush any pending checkpoint and force a final write (quit / signal path).
+pub(crate) fn flush_session_checkpoint(app: &mut TuiApp) {
+    if app.session_checkpoint_due.is_some() || !app.events.is_empty() {
+        checkpoint_session_now(app);
+    }
+}
+
 /// Destructive save: writes snapshot, then creates fresh session id and clears state.
 /// Used for fork/session-switch operations.
 pub(crate) fn save_current_session(app: &mut TuiApp) {
-    snapshot_current_session(app);
+    flush_session_checkpoint(app);
     app.session_id = SessionStore::create_id();
     app.events.clear();
+    app.session_goal = None;
+    app.session_title = None;
+    app.session_checkpoint_due = None;
     app.message_action_target = None;
     // Keep selected_message_action — last Message Actions choice is a preference.
     app.expanded_tool_results.clear();
@@ -119,6 +169,8 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.messages.clear();
     app.session_id = snapshot.id.clone();
     app.session_title = snapshot.title.clone();
+    app.session_goal = snapshot.goal.clone();
+    app.session_checkpoint_due = None;
     reset_system_context(app);
     app.events.clear();
     app.compact_state = CompactState::new(effective_context_window(&app.loaded_config.config));
@@ -152,7 +204,6 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.chat_view = crate::state::ChatView::Parent;
     app.tool_invocations.clear();
     app.pending_images.clear();
-    app.pending_pastes.clear();
     app.background_commands.clear();
 
     let mut tool_invocations = std::collections::HashMap::new();

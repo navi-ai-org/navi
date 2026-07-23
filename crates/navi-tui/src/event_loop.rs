@@ -44,12 +44,15 @@ fn is_desktop_tile() -> bool {
 
 use crate::app::TuiApp;
 use crate::chat::submit_message;
-use crate::dispatch::handle_async_event;
+use crate::dispatch::{AsyncEvent, handle_async_event};
 use crate::input::{insert_api_key_text, insert_input_text};
 use crate::keybindings::handle_key;
 use crate::mouse::handle_mouse;
 use crate::notifications::{expire_notification, visible_notification};
-use crate::persistence::{save_current_session, save_preferences};
+use crate::persistence::{
+    flush_session_checkpoint, flush_session_checkpoint_if_due, save_current_session,
+    save_preferences,
+};
 use crate::state::Mode;
 use crate::view::render;
 
@@ -125,7 +128,12 @@ pub fn run(app: TuiApp) -> Result<()> {
 
     let mut input = CrosstermInput;
     let mut app = app;
+    install_exit_signal_forwarder(&app);
     let result = run_loop(&mut terminal, &mut app, &mut input);
+
+    // Best-effort final flush if the loop exited without its normal cleanup
+    // (e.g. early error). Normal quit already flushed inside `run_loop`.
+    flush_session_checkpoint(&mut app);
 
     let cursor_result = terminal.show_cursor();
     let restore_result = terminal_modes.restore();
@@ -134,6 +142,54 @@ pub fn run(app: TuiApp) -> Result<()> {
     restore_result?;
 
     result
+}
+
+/// Forward process exit signals into the TUI async channel so the event loop
+/// can flush the session before process death.
+fn install_exit_signal_forwarder(app: &TuiApp) {
+    let tx = app.async_sender();
+    crate::runtime::spawn_runtime_task(async move {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            let mut sigterm = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to install SIGTERM handler");
+                    return;
+                }
+            };
+            let mut sighup = match signal(SignalKind::hangup()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to install SIGHUP handler");
+                    return;
+                }
+            };
+            // SIGINT: terminals in raw mode usually deliver Ctrl+C as a key
+            // event, but external `kill -INT` still needs a durable flush path.
+            let mut sigint = match signal(SignalKind::interrupt()) {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to install SIGINT handler");
+                    return;
+                }
+            };
+            tokio::select! {
+                _ = sigterm.recv() => {}
+                _ = sighup.recv() => {}
+                _ = sigint.recv() => {}
+            }
+            let _ = tx.send(AsyncEvent::ShutdownRequested);
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows: Ctrl+C / console close via ctrl_c future.
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let _ = tx.send(AsyncEvent::ShutdownRequested);
+            }
+        }
+    });
 }
 
 fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
@@ -642,10 +698,23 @@ where
         }
 
         // Check for async model stream events (non-blocking)
+        let mut shutdown = false;
         while let Some(event) = app.try_recv_async_event() {
+            if matches!(event, AsyncEvent::ShutdownRequested) {
+                shutdown = true;
+                break;
+            }
             needs_draw = true;
             handle_async_event(app, event);
         }
+        if shutdown {
+            break;
+        }
+
+        // Debounced mid-turn session checkpoints (tool batches / stream finalize).
+        flush_session_checkpoint_if_due(app);
+        // Wake soon enough for a pending debounced checkpoint.
+        let checkpoint_due_soon = app.session_checkpoint_due.is_some();
 
         let done_plan_pending = app
             .active_plan
@@ -654,6 +723,8 @@ where
         let mut timeout = if activity_animating || composer_animating {
             // ~30fps is enough for a 320ms pulse frame and keeps CPU low.
             Duration::from_millis(33)
+        } else if checkpoint_due_soon {
+            Duration::from_millis(50)
         } else if app.messages.is_empty() || visible_notification(app).is_some() {
             Duration::from_millis(80)
         } else if done_plan_pending {
@@ -738,6 +809,7 @@ where
         }
     }
 
+    flush_session_checkpoint(app);
     save_current_session(app);
     save_preferences(app);
 

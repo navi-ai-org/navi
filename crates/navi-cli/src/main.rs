@@ -121,7 +121,7 @@ enum Commands {
         #[command(subcommand)]
         action: ServerAction,
     },
-    /// Manage skills (install into skills.sqlite, list)
+    /// Manage skills (install markdown into data_dir/skills, list)
     Skill {
         #[command(subcommand)]
         action: SkillAction,
@@ -154,7 +154,7 @@ pub enum HarnessAction {
 
 #[derive(Debug, Subcommand)]
 pub enum SkillAction {
-    /// Install a skill from a markdown (.md) or TOML (.toml) file into skills.sqlite
+    /// Install a skill from a markdown (.md) or TOML (.toml) file into data_dir/skills
     Install {
         /// Path to skill markdown (.md) or skill.toml
         path: PathBuf,
@@ -165,7 +165,7 @@ pub enum SkillAction {
         #[arg(long, default_value = "user")]
         scope: String,
     },
-    /// List built-in and store skills
+    /// List built-in and filesystem skills
     List,
 }
 

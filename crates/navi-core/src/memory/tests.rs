@@ -745,6 +745,7 @@ None.
         include_tool_prompt_manifest: false,
         context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
         available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+        skill_pools: Arc::new(std::sync::Mutex::new(Vec::new())),
         active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
         prompt_cache: Arc::new(crate::prompt::PromptCache::new()),
         instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),

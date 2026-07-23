@@ -817,14 +817,27 @@ pub struct WasmPluginConfig {
     pub enabled: bool,
 }
 
-/// Skill discovery and activation settings.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Skill discovery and catalog settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SkillsConfig {
     /// Whether skill discovery is enabled.
     pub enabled: bool,
-    /// Skill ids that are always active for new sessions.
+    /// Optional catalog filter: when non-empty, only these skill ids appear in
+    /// Available Skills. When empty (default), **all** discovered/installed
+    /// skills are catalog-active. Catalog-active never injects instruction
+    /// bodies — the model loads content via `load_skill`.
     pub active: Vec<String>,
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            // Installed skills should be discoverable/catalog-active by default.
+            enabled: true,
+            active: Vec::new(),
+        }
+    }
 }
 
 /// MCP (Model Context Protocol) client configuration.

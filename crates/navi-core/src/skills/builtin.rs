@@ -16,10 +16,10 @@ fn create_skill_manifest() -> SkillManifest {
         id: CREATE_SKILL_ID.into(),
         name: "Create NAVI Skill".into(),
         description: Some(
-            "Author a durable NAVI skill in the local skill database with the right tools and instructions."
+            "Author a durable NAVI skill as markdown on disk (optionally inside a skill pool)."
                 .into(),
         ),
-        version: Some("1.1.0".into()),
+        version: Some("1.2.0".into()),
         author: Some("NAVI".into()),
         tags: vec![
             "navi".into(),
@@ -29,7 +29,6 @@ fn create_skill_manifest() -> SkillManifest {
             "harness".into(),
         ],
         requires: vec![],
-        // Tools needed to invent and persist skills — not general coding tools.
         allow_tools: vec![
             "skill_list".into(),
             "skill_get".into(),
@@ -41,7 +40,10 @@ fn create_skill_manifest() -> SkillManifest {
         ],
         deny_tools: vec![],
         harness: false,
-        path: PathBuf::from("builtin:navi-create-skill"),
+        // Lives in the `navi` pool so the model opens the pool first instead of
+        // seeing every authoring skill at the top-level catalog.
+        pool: Some("navi".into()),
+        path: PathBuf::from("builtin:navi/navi-create-skill"),
         source: SkillSource::Builtin,
         scope: SkillWriteScope::User,
         instructions: CREATE_SKILL_INSTRUCTIONS.into(),
@@ -50,9 +52,33 @@ fn create_skill_manifest() -> SkillManifest {
 
 const CREATE_SKILL_INSTRUCTIONS: &str = r#"# Create a NAVI Skill
 
-You help the user design and **save** a durable skill into NAVI’s skill database
-(`skills.sqlite` under the data dir). Skills are **not** free-form MD files in
-`~/.config/navi`. They are records with instructions **and** a tool policy.
+You help the user design and **save** a durable skill as markdown on disk.
+
+## Skill pools (folders)
+
+Skills are organized like a filesystem:
+
+| Path | Meaning |
+|------|---------|
+| `{data_dir}/skills/<id>/SKILL.md` | Root-level skill (top catalog) |
+| `{data_dir}/skills/<pool>/<id>/SKILL.md` | Skill inside a **pool** (folder) |
+| `{project}/.navi/skills/…` | Same layout for project scope |
+
+The **Available Skills** catalog and bare `skill_list` show only:
+- root skills (metadata), and
+- **pools** as folders (id, name, skill_count) — **not** every nested skill.
+
+To work with pool members (e.g. NAVI authoring skills under `navi`):
+
+1. `skill_list` with `{ "pool": "navi" }` — catalog of skills in that folder.
+2. `load_skill` / `skill_get` with `{ "id": "navi-create-skill", "pool": "navi" }`
+   or `{ "id": "navi/navi-create-skill" }` — full instructions.
+3. `skill_save` with `"pool": "navi"` (or another pool id) to place a new skill
+   inside a folder; ommit `pool` for root-level skills.
+
+Example: user asks to add a skill for NAVI itself → open pool `navi`, read the
+create-skill skill, then `skill_save` (often with `pool: "navi"` if it is a
+NAVI-product skill).
 
 ## What a skill is
 
@@ -62,11 +88,12 @@ You help the user design and **save** a durable skill into NAVI’s skill databa
 | `name` | Human title. |
 | `description` | One line for pickers / catalogs. |
 | `instructions` | Markdown the agent follows when the skill is active. |
-| `allow_tools` | **Required for focused skills.** Only these tools are offered to the model while this skill is active (intersection if several skills set allow lists). |
+| `pool` | Optional folder id (e.g. `navi`). Empty = root catalog. |
+| `allow_tools` | **Required for focused skills.** Only these tools while the skill is active. |
 | `deny_tools` | Optional extra denylist. |
-| `tags` / `requires` | Optional metadata. `requires` lists skill ids that must run before this one in a harness. |
+| `tags` / `requires` | Optional metadata. `requires` lists skill ids for harness chains. |
 | `scope` | `user` (shared Desktop + TUI) or `project` (this repo only). |
-| `harness` | When `true`, NAVI materializes a harness pack (`loop.toml` + `graph.toml`) after saving. |
+| `harness` | When `true`, NAVI materializes a harness pack (`loop.toml` + `graph.toml`). |
 
 ## Tool policy rules
 
@@ -91,11 +118,12 @@ pack under `{data_dir}/harnesses/<skill-id>/`. When you create a harness:
 ## Workflow
 
 1. Clarify the job: when should this skill activate? What must the agent do / not do?
-2. If ambiguous, use `question` before saving.
-3. Draft a **template** (below) with the user.
-4. Choose a **minimal** `allow_tools` list from real tool names.
-5. Call `skill_save` with the structured fields. For harnesses, set `harness: true`.
-6. Call `skill_get` to verify; offer to refine.
+2. If the skill belongs to a product area (e.g. NAVI), `skill_list` that pool first.
+3. If ambiguous, use `question` before saving.
+4. Draft a **template** (below) with the user.
+5. Choose a **minimal** `allow_tools` list from real tool names.
+6. Call `skill_save` with the structured fields (set `pool` when appropriate). For harnesses, set `harness: true`.
+7. Call `skill_get` to verify; offer to refine.
 
 ## Skill template (copy into `instructions`)
 
@@ -131,18 +159,20 @@ Use **`skill_save`** with JSON fields:
   "instructions": "…",
   "allow_tools": ["read_file", "…"],
   "tags": ["…"],
+  "pool": "navi",
   "scope": "user",
-  "harness": true,
-  "requires": ["sub-skill-1", "sub-skill-2"]
+  "harness": false
 }
 ```
 
-Use **`skill_list`** / **`skill_get`** to inspect existing skills.
-Use **`skill_delete`** only if the user confirms removing a skill.
+- **`skill_list`** — catalog (no pool) or open a pool (`pool` set).
+- **`skill_get`** / **`load_skill`** — full body.
+- **`skill_delete`** — only if the user confirms removing a skill.
 
 ## Anti-patterns
 
-- Do **not** write `SKILL.md` into the user’s config tree.
+- Do **not** dump every skill into the root catalog when a pool fits better.
+- Do **not** write skills into random config trees outside `data_dir/skills` or `.navi/skills`.
 - Do **not** grant `bash` / `edit` / `write_file` unless the skill truly needs them.
 - Do **not** save empty instructions or empty names.
 - Do **not** set `harness = true` without defining `requires` or writing a clear multi-step procedure; a vague harness is just a slow prompt.

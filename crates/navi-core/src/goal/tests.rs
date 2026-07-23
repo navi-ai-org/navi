@@ -341,6 +341,16 @@ mod tests {
         assert!(prompt.contains("new task"));
     }
 
+    #[test]
+    fn host_set_goal_user_prompt_frames_objective() {
+        let prompt =
+            crate::goal::steering::build_host_set_goal_user_prompt("  Ship the coverage gate  ");
+        assert!(prompt.starts_with("# Goal\n\nShip the coverage gate\n"));
+        assert!(prompt.contains("get_goal"));
+        assert!(prompt.contains("update_goal"));
+        assert!(prompt.contains("active thread goal"));
+    }
+
     // ── tools definitions ──────────────────────────────────────
 
     #[test]

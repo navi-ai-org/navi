@@ -466,6 +466,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 }
             }
             app.events.push(AgentEvent::ToolCompleted(result));
+            // Mid-turn durability: coalesce rapid tool batches into one write.
+            crate::persistence::schedule_session_checkpoint(app);
             // The next model call after a tool has a new prompt and therefore
             // a new cumulative usage snapshot.
             app.streaming_tool_calls.clear();
@@ -1099,6 +1101,8 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
     app.subagent_activity.clear();
     app.pending_approvals.clear();
     app.pending_questions.clear();
+    // Turn boundary: force a durable snapshot (includes ModelOutput / errors).
+    crate::persistence::checkpoint_session_now(app);
     if app.mode == Mode::Question {
         crate::keybindings::close_active_modal(app);
     }

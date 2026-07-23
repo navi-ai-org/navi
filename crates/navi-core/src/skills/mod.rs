@@ -2,7 +2,7 @@ mod builtin;
 mod store;
 
 pub use builtin::{CREATE_SKILL_ID, builtin_skills};
-pub use store::SkillStore;
+pub use store::{SkillPool, SkillStore};
 
 use crate::config::SkillsConfig;
 use anyhow::Result;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 pub enum SkillSource {
     /// Shipped with the engine binary.
     Builtin,
-    /// Stored in `data_dir/skills.sqlite` (canonical user store).
+    /// Stored on disk under `data_dir/skills/<id>/SKILL.md` (or project `.navi/skills/`).
     #[default]
     Store,
 }
@@ -47,7 +47,10 @@ pub struct SkillManifest {
     /// When true, this skill is treated as a harness and materialized into a pack.
     #[serde(default)]
     pub harness: bool,
-    /// Path to the SQLite store or `builtin:…` marker.
+    /// Optional skill pool (folder). Empty/None = root-level skill.
+    #[serde(default)]
+    pub pool: Option<String>,
+    /// Path to the skill file or `builtin:…` marker.
     pub path: PathBuf,
     /// Instruction body when the skill is active.
     pub instructions: String,
@@ -59,7 +62,7 @@ pub struct SkillManifest {
     pub scope: SkillWriteScope,
 }
 
-/// Discovers skills: builtins + SQLite store only.
+/// Discovers skills: builtins + filesystem store (root + all pools).
 pub fn discover_configured_skills(
     config: &SkillsConfig,
     project_dir: &Path,
@@ -71,17 +74,92 @@ pub fn discover_configured_skills(
 
     let mut skills = builtin_skills();
 
-    if let Ok(store) = SkillStore::open(data_dir) {
-        let project_key = project_skill_key(project_dir);
-        match store.list_for_discovery(Some(&project_key)) {
+    if let Ok(store) = SkillStore::open_with_project(data_dir, project_dir) {
+        match store.list_for_discovery(None) {
             Ok(stored) => skills.extend(stored),
             Err(err) => tracing::warn!(error = %err, "failed to list skills from store"),
         }
     }
 
-    skills.sort_by(|a, b| a.id.cmp(&b.id));
-    skills.dedup_by(|a, b| a.id == b.id);
+    skills.sort_by(|a, b| {
+        a.pool
+            .cmp(&b.pool)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    skills.dedup_by(|a, b| a.id == b.id && a.pool == b.pool);
     Ok(skills)
+}
+
+/// Catalog surface for the model prompt: **root skills + pools** (not pool members).
+///
+/// Pool members are listed only after the model opens a pool via `skill_list` with `pool`.
+pub fn discover_catalog_entries(
+    config: &SkillsConfig,
+    project_dir: &Path,
+    data_dir: &Path,
+) -> Result<CatalogEntries> {
+    if !config.enabled {
+        return Ok(CatalogEntries::default());
+    }
+
+    let mut root_skills = builtin_skills()
+        .into_iter()
+        .filter(|s| s.pool.is_none())
+        .collect::<Vec<_>>();
+    let mut pools = Vec::new();
+
+    // Builtin skills that declare a pool become virtual pool members; ensure the
+    // pool appears in the catalog even if no POOL.md exists on disk yet.
+    let mut builtin_pool_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for skill in builtin_skills() {
+        if let Some(pool) = skill.pool.clone() {
+            *builtin_pool_counts.entry(pool).or_default() += 1;
+        }
+    }
+
+    if let Ok(store) = SkillStore::open_with_project(data_dir, project_dir) {
+        match store.list_root_skills() {
+            Ok(stored) => root_skills.extend(stored),
+            Err(err) => tracing::warn!(error = %err, "failed to list root skills"),
+        }
+        match store.list_pools() {
+            Ok(p) => pools.extend(p),
+            Err(err) => tracing::warn!(error = %err, "failed to list skill pools"),
+        }
+    }
+
+    for (pool_id, count) in builtin_pool_counts {
+        if !pools.iter().any(|p| p.id == pool_id) {
+            pools.push(SkillPool {
+                id: pool_id.clone(),
+                name: pool_id.clone(),
+                description: Some(format!("Skill pool `{pool_id}`")),
+                scope: SkillWriteScope::User,
+                path: PathBuf::from(format!("builtin-pool:{pool_id}")),
+                skill_count: count,
+            });
+        } else if let Some(p) = pools.iter_mut().find(|p| p.id == pool_id) {
+            p.skill_count = p.skill_count.saturating_add(count);
+        }
+    }
+
+    root_skills.sort_by(|a, b| a.id.cmp(&b.id));
+    root_skills.dedup_by(|a, b| a.id == b.id);
+    pools.sort_by(|a, b| a.id.cmp(&b.id));
+    pools.dedup_by(|a, b| a.id == b.id);
+
+    Ok(CatalogEntries {
+        root_skills,
+        pools,
+    })
+}
+
+/// Top-level catalog: root skills + pool folders (no nested skill bodies).
+#[derive(Debug, Clone, Default)]
+pub struct CatalogEntries {
+    pub root_skills: Vec<SkillManifest>,
+    pub pools: Vec<SkillPool>,
 }
 
 /// Stable project key for project-scoped store rows.
@@ -97,13 +175,18 @@ pub fn project_skill_key(project_dir: &Path) -> String {
     format!("{:x}", h.finish())
 }
 
-/// Compute the tool allowlist from active skill policies.
+/// Compute the tool allowlist from skill policies.
 ///
-/// - If no active skill sets `allow_tools`, returns `None` (no skill-based filter).
+/// Catalog-active skills (visible in the Available Skills list) do **not** lock
+/// session tools. Tool allowlists apply only when a host explicitly requests a
+/// skill-tool policy for an execution context — not merely because a skill is
+/// installed and visible.
+///
+/// - If no skill sets `allow_tools`, returns `None` (no skill-based filter).
 /// - Otherwise returns the **intersection** of all non-empty `allow_tools` lists,
-///   minus any `deny_tools` from active skills.
-pub fn skill_tool_allowlist(active: &[SkillManifest]) -> Option<Vec<String>> {
-    let with_allow: Vec<&SkillManifest> = active
+///   minus any `deny_tools`.
+pub fn skill_tool_allowlist(skills: &[SkillManifest]) -> Option<Vec<String>> {
+    let with_allow: Vec<&SkillManifest> = skills
         .iter()
         .filter(|s| !s.allow_tools.is_empty())
         .collect();
@@ -114,7 +197,7 @@ pub fn skill_tool_allowlist(active: &[SkillManifest]) -> Option<Vec<String>> {
     for skill in with_allow.iter().skip(1) {
         set.retain(|t| skill.allow_tools.iter().any(|a| a == t));
     }
-    for skill in active {
+    for skill in skills {
         for deny in &skill.deny_tools {
             set.remove(deny);
         }
@@ -124,21 +207,30 @@ pub fn skill_tool_allowlist(active: &[SkillManifest]) -> Option<Vec<String>> {
     Some(list)
 }
 
-/// Filters discovered skills to only those that are explicitly active in config
-/// or included in the `active` list.
+/// Resolve which discovered skills are **active for the catalog**.
+///
+/// Semantics (product rule):
+/// - Installed / discovered skills are active by default → they appear in the
+///   Available Skills catalog (metadata only; no instruction body).
+/// - If `session_active` is non-empty, only those ids/names are catalog-active.
+/// - Else if `configured_active` is non-empty, only those are catalog-active.
+/// - Else (both empty) → **all** discovered skills are catalog-active.
+///
+/// Being catalog-active does **not** inject skill instructions into the prompt.
+/// The model loads full content with the `load_skill` tool.
 pub fn active_skills(
     available: &[SkillManifest],
     configured_active: &[String],
     session_active: &[String],
 ) -> Vec<SkillManifest> {
-    let requested = if session_active.is_empty() {
+    let requested = if !session_active.is_empty() {
+        session_active
+    } else if !configured_active.is_empty() {
         configured_active
     } else {
-        session_active
+        // Default: every discovered skill is catalog-active.
+        return available.to_vec();
     };
-    if requested.is_empty() {
-        return Vec::new();
-    }
 
     available
         .iter()
@@ -151,80 +243,90 @@ pub fn active_skills(
         .collect()
 }
 
-/// Renders active skills into a text block for injection into the system prompt.
-/// Returns `None` if there are no active skills.
-pub fn render_active_skills(skills: &[SkillManifest]) -> Option<String> {
-    if skills.is_empty() {
+/// Renders the Available Skills catalog for the system/developer prompt.
+///
+/// Shows **root-level skills** and **skill pools** (folders). Pool members are
+/// **not** listed here — the model opens a pool with `skill_list` (`pool` arg)
+/// and loads bodies with `load_skill`. Returns `None` if empty.
+pub fn render_available_skills(skills: &[SkillManifest]) -> Option<String> {
+    // Backward-compatible path: treat input as flat list (filter out pool members).
+    let root: Vec<&SkillManifest> = skills.iter().filter(|s| s.pool.is_none()).collect();
+    if root.is_empty() {
         return None;
     }
-
-    let mut output = String::from("=== Active Skills ===\n");
-    for skill in skills {
-        output.push_str(&format!("- id: {}; name: {}\n", skill.id, skill.name));
-        if let Some(description) = &skill.description {
-            output.push_str(&format!("  description: {}\n", description.trim()));
-        }
-        if let Some(version) = &skill.version {
-            output.push_str(&format!("  version: {}\n", version));
-        }
-        if let Some(author) = &skill.author {
-            output.push_str(&format!("  author: {}\n", author));
-        }
-        if !skill.tags.is_empty() {
-            output.push_str(&format!("  tags: {}\n", skill.tags.join(", ")));
-        }
-        if !skill.requires.is_empty() {
-            output.push_str(&format!("  requires: {}\n", skill.requires.join(", ")));
-        }
-        output.push_str(skill.instructions.trim());
-        output.push_str("\n\n");
-    }
-    Some(output)
+    render_catalog_entries(&CatalogEntries {
+        root_skills: root.into_iter().cloned().collect(),
+        pools: Vec::new(),
+    })
 }
 
-/// Renders a catalog of available skills without exposing their instruction text.
-/// Returns `None` if there are no available skills.
-pub fn render_available_skills(skills: &[SkillManifest]) -> Option<String> {
-    if skills.is_empty() {
+/// Renders root skills + pools for the prompt (preferred).
+pub fn render_catalog_entries(catalog: &CatalogEntries) -> Option<String> {
+    if catalog.root_skills.is_empty() && catalog.pools.is_empty() {
         return None;
     }
 
     let mut output = String::from(
-        "=== Available Skills ===\nThese skills are available. Use the `load_skill` tool with a skill id when you decide a skill is relevant. The instruction text is not included here.\n",
+        "=== Available Skills ===\n\
+Skills and skill pools for this session. Metadata only — no instruction bodies.\n\
+- Use `skill_list` with `pool` to open a pool (like listing a folder).\n\
+- Use `load_skill` with a skill id (or `pool/id`) to read full instructions.\n",
     );
-    for skill in skills {
-        output.push_str(&format!("- id: {}; name: {}\n", skill.id, skill.name));
-        if let Some(description) = &skill.description {
-            output.push_str(&format!("  description: {}\n", description.trim()));
-        }
-        if let Some(version) = &skill.version {
-            output.push_str(&format!("  version: {}\n", version));
-        }
-        if let Some(author) = &skill.author {
-            output.push_str(&format!("  author: {}\n", author));
-        }
-        if !skill.tags.is_empty() {
-            output.push_str(&format!("  tags: {}\n", skill.tags.join(", ")));
-        }
-        if !skill.requires.is_empty() {
-            output.push_str(&format!("  requires: {}\n", skill.requires.join(", ")));
+
+    if !catalog.pools.is_empty() {
+        output.push_str("\n## Skill pools (folders)\n");
+        for pool in &catalog.pools {
+            output.push_str(&format!(
+                "- pool: {}; name: {}; skills: {}\n",
+                pool.id, pool.name, pool.skill_count
+            ));
+            if let Some(description) = &pool.description {
+                output.push_str(&format!("  description: {}\n", description.trim()));
+            }
         }
     }
+
+    if !catalog.root_skills.is_empty() {
+        output.push_str("\n## Root skills\n");
+        for skill in &catalog.root_skills {
+            output.push_str(&format!("- id: {}; name: {}\n", skill.id, skill.name));
+            if let Some(description) = &skill.description {
+                output.push_str(&format!("  description: {}\n", description.trim()));
+            }
+            if let Some(version) = &skill.version {
+                output.push_str(&format!("  version: {}\n", version));
+            }
+            if !skill.tags.is_empty() {
+                output.push_str(&format!("  tags: {}\n", skill.tags.join(", ")));
+            }
+            if !skill.requires.is_empty() {
+                output.push_str(&format!("  requires: {}\n", skill.requires.join(", ")));
+            }
+        }
+    }
+
     Some(output)
+}
+
+/// Deprecated: skill instruction bodies must not be injected into the prompt.
+/// Kept as a thin alias of [`render_available_skills`] for API compatibility.
+#[deprecated(note = "use render_available_skills; skill bodies are loaded via load_skill only")]
+pub fn render_active_skills(skills: &[SkillManifest]) -> Option<String> {
+    render_available_skills(skills)
 }
 
 /// Where a user-authored skill is stored (SQLite scope).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum SkillWriteScope {
-    /// User skill in `data_dir/skills.sqlite` — shared across Desktop + TUI.
+    /// User skill under `data_dir/skills/<id>/SKILL.md` — shared across Desktop + TUI.
     #[default]
     User,
-    /// Project-scoped row in the same database (keyed by project path hash).
+    /// Project-scoped skill under `{project}/.navi/skills/<id>/SKILL.md`.
     Project,
 }
 
-/// Payload for creating or updating a skill in the SQLite skill store.
+/// Payload for creating or updating a skill on the filesystem skill store.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillWriteRequest {
@@ -250,6 +352,9 @@ pub struct SkillWriteRequest {
     /// When true, materialize a harness pack for this skill after saving.
     #[serde(default)]
     pub harness: bool,
+    /// Optional pool folder id (e.g. `navi`). Empty = root-level skill.
+    #[serde(default)]
+    pub pool: Option<String>,
     /// Markdown body (instructions). Required non-empty after trim.
     pub instructions: String,
     #[serde(default)]
@@ -305,36 +410,60 @@ pub fn slugify_skill_id(raw: &str) -> String {
     if out.is_empty() { "skill".into() } else { out }
 }
 
-/// Create or update a skill in the SQLite skill store (shared Desktop + TUI).
+/// Create or update a skill as markdown on disk (shared Desktop + TUI).
 pub fn write_skill(
     request: &SkillWriteRequest,
     project_dir: &Path,
     data_dir: &Path,
 ) -> Result<SkillWriteResult> {
-    let store = SkillStore::open(data_dir)?;
-    let project_key = match request.scope {
-        SkillWriteScope::Project => Some(project_skill_key(project_dir)),
-        SkillWriteScope::User => None,
-    };
-    store.upsert(request, project_key.as_deref())
+    let store = SkillStore::open_with_project(data_dir, project_dir)?;
+    store.upsert(request, None)
 }
 
 /// Load full skill content (including instructions) by id from discovered skills.
+///
+/// Accepts bare id/name, or `pool/id` form (e.g. `navi/navi-create-skill`).
 pub fn load_skill_by_id(
     config: &SkillsConfig,
     project_dir: &Path,
     data_dir: &Path,
     skill_id: &str,
 ) -> Result<SkillManifest> {
+    let raw = skill_id.trim();
+    if raw.is_empty() {
+        return Err(anyhow::anyhow!("skill id is required"));
+    }
+
+    // Prefer store resolution for pool paths / scoped ids.
+    if let Ok(store) = SkillStore::open_with_project(data_dir, project_dir)
+        && let Ok(Some(skill)) = store.get_in_pool(raw, None)
+    {
+        return Ok(skill);
+    }
+
     let skills = discover_configured_skills(config, project_dir, data_dir)?;
-    skills
-        .into_iter()
-        .find(|s| s.id == skill_id || s.name == skill_id)
-        .ok_or_else(|| anyhow::anyhow!("skill `{skill_id}` not found"))
+    let (pool_hint, bare_id) = if let Some((p, id)) = raw.split_once('/') {
+        (Some(p), id)
+    } else {
+        (None, raw)
+    };
+
+    if let Some(skill) = skills.into_iter().find(|s| {
+        let id_match = s.id == bare_id || s.name == bare_id || s.id == raw || s.name == raw;
+        let pool_match = match pool_hint {
+            Some(p) => s.pool.as_deref() == Some(p),
+            None => true,
+        };
+        id_match && pool_match
+    }) {
+        return Ok(skill);
+    }
+
+    Err(anyhow::anyhow!("skill `{skill_id}` not found"))
 }
 
-/// Delete a skill from the SQLite store (never deletes builtins).
-pub fn delete_skill(skill_id: &str, _project_dir: &Path, data_dir: &Path) -> Result<bool> {
+/// Delete a skill from the filesystem store (never deletes builtins).
+pub fn delete_skill(skill_id: &str, project_dir: &Path, data_dir: &Path) -> Result<bool> {
     let id = slugify_skill_id(skill_id);
     if id.is_empty() {
         return Err(anyhow::anyhow!("invalid skill id"));
@@ -342,7 +471,7 @@ pub fn delete_skill(skill_id: &str, _project_dir: &Path, data_dir: &Path) -> Res
     if builtin_skills().iter().any(|s| s.id == id) {
         return Err(anyhow::anyhow!("cannot delete built-in skill `{id}`"));
     }
-    let store = SkillStore::open(data_dir)?;
+    let store = SkillStore::open_with_project(data_dir, project_dir)?;
     store.delete(&id)
 }
 
@@ -360,9 +489,11 @@ pub struct ParsedSkillFile {
     pub version: Option<String>,
     pub author: Option<String>,
     pub tags: Vec<String>,
+    pub requires: Vec<String>,
     pub allow_tools: Vec<String>,
     pub deny_tools: Vec<String>,
     pub harness: bool,
+    pub pool: Option<String>,
     pub instructions: String,
 }
 
@@ -403,6 +534,7 @@ pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
             let mut parsed = ParsedSkillFile {
                 instructions: body,
                 harness: false,
+        pool: None,
                 ..Default::default()
             };
             for line in front.lines() {
@@ -440,9 +572,16 @@ pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
                         }
                     }
                     "tags" => parsed.tags = parse_yaml_list(value),
+                    "requires" => parsed.requires = parse_yaml_list(value),
                     "allow_tools" => parsed.allow_tools = parse_yaml_list(value),
                     "deny_tools" => parsed.deny_tools = parse_yaml_list(value),
                     "harness" => parsed.harness = parse_yaml_bool(value),
+                    "pool" => {
+                        let v = unquote(value);
+                        if !v.is_empty() {
+                            parsed.pool = Some(v);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -484,11 +623,15 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
         #[serde(default)]
         tags: Vec<String>,
         #[serde(default)]
+        requires: Vec<String>,
+        #[serde(default)]
         allow_tools: Vec<String>,
         #[serde(default)]
         deny_tools: Vec<String>,
         #[serde(default)]
         harness: bool,
+        #[serde(default)]
+        pool: Option<String>,
         #[serde(default)]
         instructions: String,
     }
@@ -521,9 +664,11 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         tags: file.tags,
+        requires: file.requires,
         allow_tools: file.allow_tools,
         deny_tools: file.deny_tools,
         harness: file.harness,
+        pool: file.pool.filter(|s| !s.trim().is_empty()),
         instructions: file.instructions,
     })
 }
@@ -533,9 +678,8 @@ pub fn parse_skill_toml(raw: &str, fallback_name: &str) -> Result<ParsedSkillFil
 /// Used by `navi skill list` so the store remains inspectable when discovery is off.
 pub fn list_installed_skills(project_dir: &Path, data_dir: &Path) -> Result<Vec<SkillManifest>> {
     let mut skills = builtin_skills();
-    if let Ok(store) = SkillStore::open(data_dir) {
-        let project_key = project_skill_key(project_dir);
-        match store.list_for_discovery(Some(&project_key)) {
+    if let Ok(store) = SkillStore::open_with_project(data_dir, project_dir) {
+        match store.list_for_discovery(None) {
             Ok(stored) => skills.extend(stored),
             Err(err) => tracing::warn!(error = %err, "failed to list skills from store"),
         }
@@ -611,6 +755,42 @@ mod tests {
         let create = skills.iter().find(|s| s.id == CREATE_SKILL_ID).unwrap();
         assert!(!create.allow_tools.is_empty());
         assert!(create.allow_tools.iter().any(|t| t == "skill_save"));
+        assert_eq!(create.pool.as_deref(), Some("navi"));
+    }
+
+    #[test]
+    fn catalog_shows_navi_pool_not_create_skill_at_root() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let catalog =
+            discover_catalog_entries(&cfg(), tempdir.path(), tempdir.path()).expect("catalog");
+        assert!(
+            !catalog.root_skills.iter().any(|s| s.id == CREATE_SKILL_ID),
+            "create skill must live under pool, not root catalog"
+        );
+        let navi = catalog
+            .pools
+            .iter()
+            .find(|p| p.id == "navi")
+            .expect("navi pool in catalog");
+        assert!(navi.skill_count >= 1);
+        let rendered = render_catalog_entries(&catalog).expect("render");
+        assert!(rendered.contains("Skill pools"));
+        assert!(rendered.contains("navi"));
+        assert!(!rendered.contains(CREATE_SKILL_ID));
+    }
+
+    #[test]
+    fn load_skill_by_id_resolves_pool_path() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let skill = load_skill_by_id(
+            &cfg(),
+            tempdir.path(),
+            tempdir.path(),
+            &format!("navi/{CREATE_SKILL_ID}"),
+        )
+        .expect("load pool path");
+        assert_eq!(skill.id, CREATE_SKILL_ID);
+        assert!(skill.instructions.contains("Skill pools"));
     }
 
     #[test]
@@ -632,6 +812,7 @@ mod tests {
                 allow_tools: vec!["read_file".into()],
                 deny_tools: vec![],
                 harness: false,
+        pool: None,
                 instructions: "Do the thing carefully.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -663,6 +844,7 @@ mod tests {
                 allow_tools: vec!["read_file".into(), "bash".into()],
                 deny_tools: vec![],
                 harness: false,
+        pool: None,
                 instructions: "Review thoroughly.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -690,7 +872,8 @@ mod tests {
             allow_tools: vec!["read_file".into(), "bash".into()],
             deny_tools: vec![],
             harness: false,
-            path: PathBuf::from("a"),
+            pool: None,
+        path: PathBuf::from("a"),
             instructions: "a".into(),
             source: SkillSource::Store,
             scope: SkillWriteScope::User,
@@ -706,7 +889,8 @@ mod tests {
             allow_tools: vec!["read_file".into(), "skill_save".into()],
             deny_tools: vec![],
             harness: false,
-            path: PathBuf::from("b"),
+            pool: None,
+        path: PathBuf::from("b"),
             instructions: "b".into(),
             source: SkillSource::Store,
             scope: SkillWriteScope::User,
@@ -736,6 +920,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
+        pool: None,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },
@@ -753,7 +938,42 @@ mod tests {
     }
 
     #[test]
-    fn active_skills_match_by_id() {
+    fn active_skills_default_all_discovered() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_skill(
+            &SkillWriteRequest {
+                id: "socratic".into(),
+                name: "Socratic".into(),
+                description: Some("Asks questions".into()),
+                version: None,
+                author: None,
+                tags: vec!["interview".into()],
+                requires: vec![],
+                allow_tools: vec![],
+                deny_tools: vec![],
+                harness: false,
+        pool: None,
+                instructions: "Ask one question first.".into(),
+                scope: SkillWriteScope::User,
+            },
+            tempdir.path(),
+            tempdir.path(),
+        )
+        .unwrap();
+        let skills =
+            discover_configured_skills(&cfg(), tempdir.path(), tempdir.path()).expect("skills");
+        // Empty active lists → all discovered skills are catalog-active.
+        let active = active_skills(&skills, &[], &[]);
+        assert!(active.iter().any(|s| s.id == "socratic"));
+        let rendered = render_available_skills(&active).unwrap();
+        assert!(rendered.contains("socratic"));
+        assert!(rendered.contains("Asks questions"));
+        // Instruction body must never appear in the catalog.
+        assert!(!rendered.contains("Ask one question first."));
+    }
+
+    #[test]
+    fn active_skills_filter_when_configured() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         write_skill(
             &SkillWriteRequest {
@@ -767,7 +987,28 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
+        pool: None,
                 instructions: "Ask one question first.".into(),
+                scope: SkillWriteScope::User,
+            },
+            tempdir.path(),
+            tempdir.path(),
+        )
+        .unwrap();
+        write_skill(
+            &SkillWriteRequest {
+                id: "other".into(),
+                name: "Other".into(),
+                description: None,
+                version: None,
+                author: None,
+                tags: vec![],
+                requires: vec![],
+                allow_tools: vec![],
+                deny_tools: vec![],
+                harness: false,
+        pool: None,
+                instructions: "Other body.".into(),
                 scope: SkillWriteScope::User,
             },
             tempdir.path(),
@@ -778,8 +1019,10 @@ mod tests {
             discover_configured_skills(&cfg(), tempdir.path(), tempdir.path()).expect("skills");
         let active = active_skills(&skills, &["socratic".into()], &[]);
         assert_eq!(active.len(), 1);
-        let rendered = render_active_skills(&active).unwrap();
-        assert!(rendered.contains("Ask one question first."));
+        assert_eq!(active[0].id, "socratic");
+        let rendered = render_available_skills(&active).unwrap();
+        assert!(!rendered.contains("Other body."));
+        assert!(!rendered.contains("Ask one question first."));
     }
 
     #[test]
@@ -850,6 +1093,7 @@ instructions = "Help carefully."
                 allow_tools: parsed.allow_tools.clone(),
                 deny_tools: parsed.deny_tools.clone(),
                 harness: false,
+        pool: None,
                 instructions: parsed.instructions.clone(),
                 scope: SkillWriteScope::User,
             },
@@ -880,6 +1124,7 @@ instructions = "Help carefully."
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
+        pool: None,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },

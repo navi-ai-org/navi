@@ -2,7 +2,7 @@ use crate::NaviConfig;
 use crate::context::{ContextPacket, render_context_packets};
 use crate::harness::{build_system_prompt_with_manifest_text, tool_prompt_manifest};
 use crate::model::ModelMessage;
-use crate::skills::{SkillManifest, render_active_skills, render_available_skills};
+use crate::skills::{SkillManifest, SkillPool, render_catalog_entries, CatalogEntries};
 use crate::tool::ToolDefinition;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
@@ -165,13 +165,12 @@ impl SystemPromptRenderer {
             developer_messages.push(ModelMessage::developer(context));
         }
 
-        // Available skills catalog.
-        if let Some(skills) = render_available_skills(&input.available_skills) {
-            developer_messages.push(ModelMessage::developer(skills));
-        }
-
-        // Active skills with instruction text.
-        if let Some(skills) = render_active_skills(&input.active_skills) {
+        // Catalog of root skills + pools (metadata only; open pool / load_skill for more).
+        let catalog = CatalogEntries {
+            root_skills: input.available_skills.clone(),
+            pools: input.skill_pools.clone(),
+        };
+        if let Some(skills) = render_catalog_entries(&catalog) {
             developer_messages.push(ModelMessage::developer(skills));
         }
 
@@ -205,6 +204,8 @@ pub struct SystemPromptInput {
     pub context_packets: Vec<ContextPacket>,
     pub available_skills: Vec<SkillManifest>,
     pub active_skills: Vec<SkillManifest>,
+    /// Skill pools (folders) shown next to root skills in the catalog.
+    pub skill_pools: Vec<SkillPool>,
     /// Optional harness pack developer card (loop/graph soft policy).
     pub harness_card: Option<String>,
 }
@@ -281,6 +282,7 @@ mod tests {
             context_packets: Vec::new(),
             available_skills: Vec::new(),
             active_skills: Vec::new(),
+            skill_pools: Vec::new(),
             harness_card: None,
         };
 

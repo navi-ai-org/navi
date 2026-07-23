@@ -725,6 +725,10 @@ impl NaviNapiEngine {
 
     /// Set or replace the thread goal. Optional positive `tokenBudget`.
     /// Optional `shortDescription` is a compact UI label (max 40 chars).
+    ///
+    /// **Does not start a model turn.** After this, call `sendTurn` with a
+    /// prompt from `buildHostSetGoalUserPrompt` / `setGoalForHostTurn`, or the
+    /// agent will not see the objective until some later user message.
     #[napi]
     pub async fn set_goal(
         &self,
@@ -744,6 +748,41 @@ impl NaviNapiEngine {
             .await
             .map_err(to_napi_error)?;
         serde_json::to_value(goal).map_err(to_napi_error)
+    }
+
+    /// Set the thread goal and return `{ goal, startPrompt }` for the first turn.
+    ///
+    /// Hosts should call `sendTurn({ sessionId, prompt: startPrompt, ... })` so the
+    /// model sees the objective (same framing as the TUI Set Goal modal).
+    #[napi]
+    pub async fn set_goal_for_host_turn(
+        &self,
+        session_id: String,
+        objective: String,
+        token_budget: Option<i64>,
+        short_description: Option<String>,
+    ) -> Result<JsonValue> {
+        let (goal, start_prompt) = self
+            .inner
+            .set_goal_for_host_turn(
+                &session_id,
+                objective,
+                short_description,
+                token_budget,
+            )
+            .await
+            .map_err(to_napi_error)?;
+        let goal_json = serde_json::to_value(goal).map_err(to_napi_error)?;
+        Ok(serde_json::json!({
+            "goal": goal_json,
+            "startPrompt": start_prompt,
+        }))
+    }
+
+    /// Model-facing first-turn text after a host `setGoal` (no side effects).
+    #[napi]
+    pub fn build_host_set_goal_user_prompt(&self, objective: String) -> String {
+        navi_sdk::build_host_set_goal_user_prompt(&objective)
     }
 
     /// Clear the thread goal (stops auto-continue).

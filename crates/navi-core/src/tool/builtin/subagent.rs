@@ -545,6 +545,7 @@ impl SubagentTool {
             include_tool_prompt_manifest: include_tool_prompt,
             context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
             available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+            skill_pools: Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             // Fresh cache: do not share parent session prefix-cache keys.
             prompt_cache: Arc::new(PromptCache::new()),
@@ -710,6 +711,7 @@ impl SubagentTool {
                 ),
                 context_packets: Arc::new(std::sync::Mutex::new(Vec::new())),
                 available_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
+                skill_pools: Arc::new(std::sync::Mutex::new(Vec::new())),
                 active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
                 prompt_cache: Arc::new(PromptCache::new()),
                 instructions,

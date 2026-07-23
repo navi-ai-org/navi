@@ -72,6 +72,7 @@ pub(crate) fn handle_model_error(app: &mut TuiApp, message: String) {
     app.is_loading = false;
     app.loading_start = None;
     app.clear_stream_task();
+    crate::persistence::checkpoint_session_now(app);
 }
 
 fn schedule_model_retry(app: &mut TuiApp, delay: Duration) {

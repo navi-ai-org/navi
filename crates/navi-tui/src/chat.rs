@@ -72,12 +72,8 @@ pub(crate) fn submit_goal_objective(app: &mut TuiApp, objective: String) {
     chat_msg.is_goal = true;
     app.messages.push(chat_msg);
 
-    // Model-visible framing so the agent knows this defines the thread goal.
-    let model_text = format!(
-        "# Goal\n\n{objective}\n\n\
-This is the active thread goal for this session. Pursue it until complete or blocked. \
-Use get_goal / update_goal for status. Prefer plan() for multi-step design work before large edits."
-    );
+    // Model-visible framing (shared with SDK/bindings hosts).
+    let model_text = navi_core::build_host_set_goal_user_prompt(&objective);
     app.compact_state.add_unsent_bytes(model_text.len());
     app.conversation_history
         .push(ModelMessage::user(model_text.clone()));
@@ -91,6 +87,7 @@ Use get_goal / update_goal for status. Prefer plan() for multi-step design work 
         content_parts: Vec::new(),
         submitted_at,
     });
+    crate::persistence::checkpoint_session_now(app);
 
     app.input.clear();
     app.input_cursor = 0;
@@ -300,6 +297,9 @@ fn submit_current_message_now(app: &mut TuiApp) {
         },
         submitted_at,
     });
+    // Durability: persist the accepted user prompt before the agent turn runs.
+    // A kill mid-tool-loop still leaves a resumable session with this ask.
+    crate::persistence::checkpoint_session_now(app);
 
     app.input.clear();
     app.input_cursor = 0;
@@ -530,6 +530,7 @@ pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallb
         ));
     app.events.push(AgentEvent::ModelOutput { text, thinking });
     tracing::info!(elapsed_ms, "TUI model stream finalized");
+    crate::persistence::schedule_session_checkpoint(app);
 }
 
 pub(crate) fn remove_active_empty_generation_placeholder(app: &mut TuiApp) {
@@ -677,7 +678,7 @@ pub(crate) fn fork_from_user_message(app: &mut TuiApp, message_index: usize) -> 
 }
 
 pub(crate) fn start_new_session(app: &mut TuiApp) {
-    crate::persistence::snapshot_current_session(app);
+    crate::persistence::flush_session_checkpoint(app);
 
     let old_session_id = app.session_id.as_str().to_string();
     let engine = app.engine();
@@ -733,6 +734,8 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.selection = None;
     app.hover_index = None;
     app.session_title = None;
+    app.session_goal = None;
+    app.session_checkpoint_due = None;
     // Fresh session: reset token/cost accumulators (persisted separately per snapshot).
     app.usage_state.session_input_tokens = 0;
     app.usage_state.session_output_tokens = 0;

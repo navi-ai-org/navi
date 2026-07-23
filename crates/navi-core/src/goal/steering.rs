@@ -110,6 +110,22 @@ Do not call `update_goal` unless the goal is actually complete.
     )
 }
 
+/// User-turn text hosts should send after [`crate::runtime::AgentRuntime::set_goal`]
+/// (or the SDK/NAPI equivalent) so the **model** sees the objective on the first turn.
+///
+/// `set_goal` alone only stores the goal for auto-continue / `get_goal`. Without a
+/// following user turn (this framing or an equivalent message), the agent will not
+/// know what was set. The TUI Set Goal modal uses this string as the model-facing
+/// prompt while showing the raw objective as a Goal-labeled chat bubble.
+pub fn build_host_set_goal_user_prompt(objective: &str) -> String {
+    let objective = objective.trim();
+    format!(
+        "# Goal\n\n{objective}\n\n\
+This is the active thread goal for this session. Pursue it until complete or blocked. \
+Use get_goal / update_goal for status. Prefer plan() for multi-step design work before large edits."
+    )
+}
+
 /// Builds a steering prompt when the user edits the active objective.
 pub fn build_objective_updated_prompt(goal: &SessionGoal) -> String {
     let objective = escape_xml_text(&goal.objective);

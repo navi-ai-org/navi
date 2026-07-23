@@ -289,12 +289,15 @@ pub struct ManifestModelEntry {
 pub enum TranscriptionProviderKind {
     /// OpenAI-compatible `POST /audio/transcriptions` (multipart).
     OpenaiAudioTranscriptions,
+    /// Wispr Flow speech-to-text REST API (registry catalog entry).
+    WisprFlow,
 }
 
 impl TranscriptionProviderKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::OpenaiAudioTranscriptions => "openai-audio-transcriptions",
+            Self::WisprFlow => "wispr-flow",
         }
     }
 
@@ -303,6 +306,7 @@ impl TranscriptionProviderKind {
             "openai-audio-transcriptions" | "openai_audio_transcriptions" => {
                 Some(Self::OpenaiAudioTranscriptions)
             }
+            "wispr-flow" | "wispr_flow" => Some(Self::WisprFlow),
             _ => None,
         }
     }
@@ -371,6 +375,7 @@ impl RegistryTranscriptionProvider {
         }
         match self.kind_enum() {
             Some(TranscriptionProviderKind::OpenaiAudioTranscriptions) => "/audio/transcriptions",
+            Some(TranscriptionProviderKind::WisprFlow) => "/api",
             None => "/audio/transcriptions",
         }
     }
