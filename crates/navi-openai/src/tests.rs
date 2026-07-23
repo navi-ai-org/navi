@@ -2879,6 +2879,107 @@ fn usage_from_value_falls_back_to_total_tokens() {
 }
 
 #[test]
+fn provider_debug_is_stable() {
+    let provider = OpenAiProvider::new("sk-xxx".to_string());
+    let s = format!("{:?}", provider);
+    assert!(s.starts_with("OpenAiProvider {"));
+    assert!(s.contains("provider_id"));
+    assert!(s.contains("base_url"));
+}
+
+#[test]
+fn from_env_errors_when_key_missing() {
+    // Ensure OPENAI_API_KEY is unset for this test.
+    unsafe { std::env::remove_var("OPENAI_API_KEY") };
+    assert!(OpenAiProvider::from_env().is_err());
+}
+
+#[test]
+fn from_env_succeeds_when_key_present() {
+    unsafe { std::env::set_var("OPENAI_API_KEY", "sk-test") };
+    let provider = OpenAiProvider::from_env().unwrap();
+    assert_eq!(provider.api_key, "sk-test");
+    unsafe { std::env::remove_var("OPENAI_API_KEY") };
+}
+
+#[test]
+fn from_provider_config_reads_key_from_env() {
+    unsafe { std::env::set_var("TEST_KEY", "sk-from-env") };
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        api_key_env: "TEST_KEY".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::from_provider_config(&config).unwrap();
+    assert_eq!(provider.api_key, "sk-from-env");
+    unsafe { std::env::remove_var("TEST_KEY") };
+}
+
+#[test]
+fn from_provider_config_errors_when_key_missing() {
+    unsafe { std::env::remove_var("MISSING_KEY") };
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        api_key_env: "MISSING_KEY".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
+    assert!(OpenAiProvider::from_provider_config(&config).is_err());
+}
+
+#[test]
+fn from_provider_config_with_key_uses_default_base_url() {
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: None,
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider =
+        OpenAiProvider::from_provider_config_with_key(&config, "sk-test".to_string()).unwrap();
+    assert!(provider.base_url.starts_with("https://"));
+    assert!(matches!(
+        provider.api_kind,
+        crate::types::OpenAiApiKind::ChatCompletions
+    ));
+}
+
+#[test]
+fn from_provider_config_with_key_errors_without_base_url() {
+    let config = navi_core::ProviderConfig {
+        id: "custom".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: None,
+        ..navi_core::ProviderConfig::default()
+    };
+    assert!(OpenAiProvider::from_provider_config_with_key(&config, "sk-test".to_string()).is_err());
+}
+
+#[tokio::test]
+async fn list_models_returns_configured_models_without_network() {
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        models: vec![
+            serde_json::from_value::<navi_core::ProviderModelConfig>(json!({"name": "gpt-4"}))
+                .unwrap(),
+            serde_json::from_value::<navi_core::ProviderModelConfig>(
+                json!({"name": "gpt-3.5-turbo"}),
+            )
+            .unwrap(),
+        ],
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::new("sk-test".to_string())
+        .with_base_url("http://localhost:0".to_string())
+        .with_provider_id("opencode")
+        .with_config(config);
+    let models = provider.list_models().await.unwrap();
+    assert_eq!(models, vec!["gpt-4", "gpt-3.5-turbo"]);
+}
+
+#[test]
 fn reasoning_text_coerces_variants() {
     assert_eq!(reasoning_text(&json!(null)), "");
     assert_eq!(reasoning_text(&json!("plain text")), "plain text");
