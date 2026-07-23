@@ -318,6 +318,22 @@ pub async fn sync_registry(
     if !force {
         if let Some(stored_version) = store.manifest_version()? {
             if stored_version >= manifest.version && !store.is_empty()? {
+                // Same (or newer) version can still leave orphan rows when a
+                // provider was deleted from the remote catalog but the cache
+                // already advanced its manifest metadata via embedded merge
+                // without pruning. Always drop providers not in the remote set.
+                let keep_ids: std::collections::HashSet<&str> =
+                    manifest.providers.keys().map(|s| s.as_str()).collect();
+                let tx_keep: std::collections::HashSet<&str> = manifest
+                    .transcription_providers
+                    .keys()
+                    .map(|s| s.as_str())
+                    .collect();
+                let model_keep: std::collections::HashSet<&str> =
+                    manifest.models.keys().map(|s| s.as_str()).collect();
+                store.delete_providers_not_in(&keep_ids)?;
+                store.delete_transcription_providers_not_in(&tx_keep)?;
+                store.delete_canonical_models_not_in(&model_keep)?;
                 tracing::debug!(
                     stored = stored_version,
                     remote = manifest.version,
