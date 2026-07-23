@@ -1,6 +1,7 @@
 use crate::cancel::CancelToken;
 use crate::compact::CompactState;
 use crate::context::ContextPacket;
+use crate::diagnose::{FailureKind, RepairAction};
 use crate::event::{AgentEvent, RepetitionWarningKind};
 use crate::harness::{
     AgentRunState, HarnessPolicy, HarnessStop, HarnessStopReason, ToolLoopDecision,
@@ -173,10 +174,8 @@ pub async fn run_turn(
         maintain_context_budget(ctx, messages).await;
         ensure_not_cancelled(ctx)?;
 
-        let request = build_model_request(ctx, messages);
-        emit_request_trace(ctx, &request, policy);
-
-        let output = collect_model_output(ctx, request).await?;
+        let output =
+            collect_model_output_with_self_repair(ctx, messages, policy, &run_state).await?;
         ensure_not_cancelled(ctx)?;
 
         if let Some(stop) = output.harness_stop.clone() {
@@ -199,6 +198,87 @@ pub async fn run_turn(
 
     let _ = sync_messages_to_history(ctx, messages).await;
     Ok(final_text)
+}
+
+/// Collects model output, applying lightweight self-repair for empty responses.
+///
+/// When the provider returns no content, no tool calls, and no harness stop,
+/// the turn may be retried with thinking disabled (up to `policy.self_repair_max_attempts`
+/// times). This is a local, privacy-preserving recovery path for models that emit
+/// empty assistant streams.
+async fn collect_model_output_with_self_repair(
+    ctx: &TurnContext,
+    messages: &[ModelMessage],
+    policy: HarnessPolicy,
+    run_state: &AgentRunState,
+) -> Result<ModelTurnOutput> {
+    let mut repair_attempts: u32 = 0;
+    let mut thinking_override: Option<ThinkingConfig> = None;
+    loop {
+        let request = build_model_request(ctx, messages, thinking_override);
+        emit_request_trace(ctx, &request, policy);
+
+        let output = collect_model_output(ctx, request).await?;
+        ensure_not_cancelled(ctx)?;
+
+        let empty = output.text.trim().is_empty()
+            && output.thinking.trim().is_empty()
+            && output.tool_calls.is_empty()
+            && output.harness_stop.is_none();
+
+        if empty
+            && policy.self_repair
+            && repair_attempts < policy.self_repair_max_attempts
+            && run_state.total_tool_calls == 0
+        {
+            let current_thinking = thinking_override.unwrap_or_else(|| {
+                ThinkingConfig::from_config_str(&ctx.active_config().tui.thinking_level)
+            });
+            if current_thinking != ThinkingConfig::Off {
+                repair_attempts += 1;
+                tracing::warn!(
+                    attempt = repair_attempts,
+                    model = %ctx.active_model_name(),
+                    "self-repair: empty response, retrying with thinking disabled"
+                );
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::HarnessTrace(json!({
+                        "kind": "repair_attempt",
+                        "attempt": repair_attempts,
+                        "action": serde_json::to_value(RepairAction::RetryWithoutThinking).unwrap_or(Value::Null),
+                        "reason": "empty response"
+                    })));
+                }
+                thinking_override = Some(ThinkingConfig::Off);
+                continue;
+            }
+        }
+
+        if empty {
+            let failure_kind = FailureKind::EmptyResponse;
+            let action = if repair_attempts < policy.self_repair_max_attempts {
+                RepairAction::RetryWithoutThinking
+            } else {
+                RepairAction::ReportToUser {
+                    message: "Model returned empty content and self-repair was exhausted."
+                        .to_string(),
+                }
+            };
+            if let Some(ref tx) = ctx.event_tx {
+                let _ = tx.send(AgentEvent::HarnessTrace(json!({
+                    "kind": "diagnosis",
+                    "failure_kind": serde_json::to_value(failure_kind).unwrap_or(Value::Null),
+                    "repair_action": serde_json::to_value(action).unwrap_or(Value::Null),
+                    "summary": format!(
+                        "empty response from {} after {repair_attempts} self-repair attempt(s)",
+                        ctx.active_model_name()
+                    )
+                })));
+            }
+        }
+
+        return Ok(output);
+    }
 }
 
 fn ensure_not_cancelled(ctx: &TurnContext) -> Result<()> {
@@ -406,11 +486,18 @@ async fn maintain_context_budget(ctx: &TurnContext, messages: &mut Vec<ModelMess
     let _ = evaluate_memory_triggers(ctx, messages).await;
 }
 
-fn build_model_request(ctx: &TurnContext, messages: &[ModelMessage]) -> ModelRequest {
+fn build_model_request(
+    ctx: &TurnContext,
+    messages: &[ModelMessage],
+    thinking_override: Option<ThinkingConfig>,
+) -> ModelRequest {
     let config = ctx.active_config();
     // Fixed effort from config/session preference — never re-scored mid-turn so
     // provider prefix/KV cache stays stable across tool-loop iterations.
-    let mut thinking = ThinkingConfig::from_config_str(&config.tui.thinking_level);
+    // A per-attempt override is used for self-repair without mutating the
+    // original config.
+    let mut thinking = thinking_override
+        .unwrap_or_else(|| ThinkingConfig::from_config_str(&config.tui.thinking_level));
 
     // Clamp to registry reasoning_levels for the active model when available.
     // Models without reasoning support are forced to Off automatically.

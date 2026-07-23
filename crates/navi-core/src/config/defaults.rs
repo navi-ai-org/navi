@@ -43,6 +43,8 @@ impl Default for HarnessConfig {
             autocompact_max_output_tokens: MAX_OUTPUT_TOKENS_FOR_SUMMARY,
             autocompact_max_consecutive_failures: MAX_CONSECUTIVE_FAILURES,
             autocompact_keep_ratio: 0.25,
+            self_repair: true,
+            self_repair_max_attempts: 1,
         }
     }
 }

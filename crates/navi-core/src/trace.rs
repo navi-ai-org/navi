@@ -1,4 +1,5 @@
 use crate::capability::CapabilityLedgerEntry;
+use crate::diagnose::FailureKind;
 use crate::event::{AgentEvent, ApprovalDecision};
 use crate::security::redact_secrets;
 use crate::tool::{ToolInvocation, ToolResult};
@@ -73,6 +74,22 @@ pub struct TurnTrace {
     /// Human-readable final message.
     #[serde(default)]
     pub final_message: String,
+
+    /// Machine-readable failure classification, if the turn did not fully succeed.
+    #[serde(default)]
+    pub failure_kind: Option<crate::diagnose::FailureKind>,
+
+    /// Number of self-repair attempts applied during this turn.
+    #[serde(default)]
+    pub recovery_attempts: u32,
+
+    /// Human-readable diagnosis/suggested recovery action.
+    #[serde(default)]
+    pub diagnosis: Option<String>,
+
+    /// Concise one-line summary of the turn for AI consumption and quick scanning.
+    #[serde(default)]
+    pub turn_summary: String,
 }
 
 /// Trace data for a single tool call.
@@ -179,6 +196,8 @@ pub enum TurnOutcome {
     Stopped(String),
     /// Turn failed with an unrecoverable error.
     Failed(String),
+    /// Provider stream succeeded but produced no assistant content.
+    EmptyResponse,
 }
 
 impl TurnTrace {
@@ -212,6 +231,10 @@ impl TurnTrace {
             metrics: TurnMetrics::default(),
             outcome: TurnOutcome::Success,
             final_message: String::new(),
+            failure_kind: None,
+            recovery_attempts: 0,
+            diagnosis: None,
+            turn_summary: String::new(),
         }
     }
 
@@ -296,6 +319,8 @@ impl TurnTrace {
         let mut trace = self.clone();
         trace.task = redact_secrets(&trace.task);
         trace.final_message = redact_secrets(&trace.final_message);
+        trace.diagnosis = trace.diagnosis.as_ref().map(|s| redact_secrets(s));
+        trace.turn_summary = redact_secrets(&trace.turn_summary);
         for call in &mut trace.tool_calls {
             call.invocation.input = redact_json_value(&call.invocation.input);
             call.result.output = redact_json_value(&call.result.output);
@@ -307,6 +332,37 @@ impl TurnTrace {
             capability.justification = redact_secrets(&capability.justification);
         }
         trace
+    }
+
+    /// Builds a concise, AI-friendly one-line summary of this turn.
+    pub fn summarize(&self) -> String {
+        let outcome_label = match self.outcome {
+            TurnOutcome::Success => "success",
+            TurnOutcome::PartialSuccess => "partial_success",
+            TurnOutcome::Stopped(_) => "stopped",
+            TurnOutcome::Failed(_) => "failed",
+            TurnOutcome::EmptyResponse => "empty_response",
+        };
+        let mut summary = format!(
+            "{outcome_label} turn with {}/{} in {}ms; {} tool calls ({} failed); in={} out={} tokens",
+            self.model_provider,
+            self.model_name,
+            self.metrics.wall_time_ms,
+            self.metrics.tool_call_count,
+            self.metrics.failed_tool_calls,
+            self.metrics.input_tokens,
+            self.metrics.output_tokens
+        );
+        if self.recovery_attempts > 0 {
+            summary.push_str(&format!(
+                "; {} self-repair attempt(s)",
+                self.recovery_attempts
+            ));
+        }
+        if let Some(ref diagnosis) = self.diagnosis {
+            summary.push_str(&format!("; diagnosis: {diagnosis}"));
+        }
+        summary
     }
 }
 
@@ -439,6 +495,9 @@ pub fn turn_traces_from_events(
                                     .to_string(),
                                 input: serde_json::json!({}),
                             });
+                    if !result.ok && trace.failure_kind.is_none() {
+                        trace.failure_kind = Some(FailureKind::ToolFailure);
+                    }
                     trace.record_tool_call(&invocation, result, 0);
                     if invocation.tool_name == "verifier" {
                         if let Some(verifier_trace) = verifier_trace_from_tool(&invocation, result)
@@ -508,11 +567,18 @@ pub fn turn_traces_from_events(
             AgentEvent::Error { message } => {
                 if let Some(trace) = current.as_mut() {
                     trace.outcome = TurnOutcome::Failed(message.clone());
+                    trace.failure_kind = trace.failure_kind.or(Some(FailureKind::ProviderError));
                 }
             }
             AgentEvent::HarnessStopped { reason, .. } => {
                 if let Some(trace) = current.as_mut() {
                     trace.outcome = TurnOutcome::Stopped(reason.clone());
+                    trace.failure_kind = trace.failure_kind.or(Some(FailureKind::HarnessStopped));
+                }
+            }
+            AgentEvent::HarnessTrace(value) => {
+                if let Some(trace) = current.as_mut() {
+                    handle_harness_trace(trace, value);
                 }
             }
             _ => {}
@@ -521,13 +587,63 @@ pub fn turn_traces_from_events(
 
     if let Some(mut trace) = current {
         trace.finalize();
-        if trace.metrics.failed_tool_calls > 0 && trace.outcome == TurnOutcome::Success {
-            trace.outcome = TurnOutcome::PartialSuccess;
+        if trace.outcome == TurnOutcome::Success {
+            if trace.final_message.trim().is_empty() {
+                trace.outcome = TurnOutcome::EmptyResponse;
+                trace.failure_kind = trace.failure_kind.or(Some(FailureKind::EmptyResponse));
+            } else if trace.metrics.failed_tool_calls > 0 {
+                trace.outcome = TurnOutcome::PartialSuccess;
+                trace.failure_kind = trace.failure_kind.or(Some(FailureKind::ToolFailure));
+            }
+        } else {
+            trace.failure_kind = trace.failure_kind.or(match trace.outcome {
+                TurnOutcome::Failed(_) => Some(FailureKind::ProviderError),
+                TurnOutcome::Stopped(_) => Some(FailureKind::HarnessStopped),
+                TurnOutcome::PartialSuccess => Some(FailureKind::ToolFailure),
+                TurnOutcome::EmptyResponse => Some(FailureKind::EmptyResponse),
+                TurnOutcome::Success => None,
+            });
         }
+        trace.turn_summary = trace.summarize();
         traces.push(trace);
     }
 
     traces
+}
+
+fn handle_harness_trace(trace: &mut TurnTrace, value: &serde_json::Value) {
+    let Some(kind) = value.get("kind").and_then(serde_json::Value::as_str) else {
+        // Legacy request summary (no `kind`). Use visible tool count if present.
+        if let Some(tools) = value.get("tools").and_then(serde_json::Value::as_u64) {
+            trace.visible_tool_count = tools as usize;
+        }
+        return;
+    };
+
+    match kind {
+        "request" => {
+            if let Some(tools) = value.get("tools").and_then(serde_json::Value::as_u64) {
+                trace.visible_tool_count = tools as usize;
+            }
+        }
+        "repair_attempt" => {
+            trace.recovery_attempts += 1;
+        }
+        "diagnosis" => {
+            if let Some(summary) = value.get("summary").and_then(serde_json::Value::as_str) {
+                trace.diagnosis = Some(summary.to_string());
+            }
+            if trace.failure_kind.is_none() {
+                if let Some(fk) = value
+                    .get("failure_kind")
+                    .and_then(|v| serde_json::from_value::<FailureKind>(v.clone()).ok())
+                {
+                    trace.failure_kind = Some(fk);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn verifier_trace_from_tool(
@@ -824,5 +940,33 @@ mod tests {
         assert_eq!(traces[0].verifier_results.len(), 1);
         assert_eq!(traces[0].capabilities.len(), 1);
         assert_eq!(traces[0].metrics.input_tokens, 100);
+    }
+
+    #[test]
+    fn empty_model_output_classified_as_empty_response() {
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "hello".to_string(),
+                content_parts: Vec::new(),
+                submitted_at: None,
+            },
+            AgentEvent::UsageReported {
+                input_tokens: 50,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+            },
+            AgentEvent::ModelOutput {
+                text: "".to_string(),
+                thinking: None,
+            },
+        ];
+
+        let traces = turn_traces_from_events("s", "p", "m", &events);
+
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].outcome, TurnOutcome::EmptyResponse);
+        assert_eq!(traces[0].failure_kind, Some(FailureKind::EmptyResponse));
+        assert!(traces[0].turn_summary.contains("empty_response"));
     }
 }
