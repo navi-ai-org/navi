@@ -105,6 +105,11 @@ pub use navi_core::{
     resolve_provider_config, resolve_provider_credential_status, save_global_config,
     set_registry_store, usd_to_provider_credits,
 };
+// Skill / harness essentials (builtin ids + soft-apply helpers)
+pub use navi_core::{
+    CREATE_SKILL_ID, HARNESS_AUTHOR_ID, SKILL_POOLS_ID, apply_harness_for_skills,
+    materialize_after_save, materialize_from_skill,
+};
 // Registry
 pub use navi_core::registry::{RegistryFetcher, RegistryStore, load_registry};
 pub use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};

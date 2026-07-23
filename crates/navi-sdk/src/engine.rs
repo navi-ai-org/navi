@@ -2617,6 +2617,8 @@ fn skill_info_from_manifest(
         scope,
         allow_tools: skill.allow_tools,
         deny_tools: skill.deny_tools,
+        harness: skill.harness,
+        pool: skill.pool,
         source: Some(format!("{:?}", skill.source).to_lowercase()),
     }
 }
