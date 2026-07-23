@@ -214,6 +214,7 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::QueuedMessageEdit => {
             self::modals::handle_queued_message_edit_key(app, code, modifiers)
         }
+        Mode::SetGoal => self::modals::handle_set_goal_key(app, code, modifiers),
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
         Mode::ConfirmMcpMerge => handle_confirm_mcp_merge_key(app, code),

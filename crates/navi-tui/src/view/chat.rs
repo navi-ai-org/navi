@@ -23,6 +23,12 @@ use super::welcome::welcome_text;
 /// Jump chat to the live end — Shift+G / Ctrl+Down.
 pub(crate) fn jump_to_latest(app: &mut TuiApp) {
     app.scroll_offset = 0;
+    // Drop the absolute viewport lock so the next frame follows the live end.
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.locked_viewport_top = None;
+        cache.locked_scroll_offset = 0;
+    }
     // Clear block selection so composer focus returns to the live end.
     crate::chat_blocks::clear_selected_block(app);
     app.selection = None;
@@ -54,30 +60,19 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
     let chat_width = inner.width as usize;
     ensure_chat_cache(app, chat_width);
     let visible_height = inner.height as usize;
-    {
+    let start = resolve_chat_viewport_start(app, visible_height);
+    let (mut visible_lines, visible_sources) = {
         let cache = app.chat_render_cache.borrow();
-        let max_scroll = cache.lines.len().saturating_sub(visible_height);
-        app.scroll_offset = app.scroll_offset.min(max_scroll);
-    }
-    let (start, mut visible_lines, visible_sources) = {
-        let cache = app.chat_render_cache.borrow();
-        let rendered_lines = &cache.lines;
-        let total_lines = rendered_lines.len();
-        let max_scroll = total_lines.saturating_sub(visible_height);
-        let effective_scroll = app.scroll_offset.min(max_scroll);
-        let start = total_lines
-            .saturating_sub(visible_height)
-            .saturating_sub(effective_scroll);
+        let total_lines = cache.lines.len();
         let end = (start + visible_height).min(total_lines);
         let source_end = end.min(cache.line_sources.len());
         (
-            start,
-            rendered_lines[start..end].to_vec(),
+            cache.lines[start..end].to_vec(),
             cache.line_sources[start.min(source_end)..source_end].to_vec(),
         )
     };
 
-    style_interactive_lines(
+    let rails = style_interactive_lines(
         &mut visible_lines,
         &visible_sources,
         app,
@@ -141,6 +136,10 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
             .wrap(Wrap { trim: false }),
         inner,
     );
+
+    // Paint hover/selection rails in the left margin — never inside the line
+    // text, so markers like `◆ Run` do not shift when the pointer enters.
+    paint_block_rails(frame, inner, &rails);
 
     // Floating “↓ Latest” when scrolled away from the live end.
     render_jump_to_latest_button(frame, app, inner);
@@ -442,13 +441,17 @@ fn truncate_display(value: &str, max_width: usize) -> String {
     out
 }
 
+/// Apply hover/selection line chrome (bg cleanup only) and return rails to
+/// paint in the left margin. Rails are never inserted into the line text —
+/// that used to shift `◆ Run` / `› prompt` one column on every hover.
 fn style_interactive_lines(
     lines: &mut [Line<'static>],
     sources: &[ChatLineSource],
     app: &TuiApp,
     _width: usize,
-) {
-    for (line, source) in lines.iter_mut().zip(sources.iter()) {
+) -> Vec<(usize, BlockRailTone)> {
+    let mut rails = Vec::new();
+    for (offset, (line, source)) in lines.iter_mut().zip(sources.iter()).enumerate() {
         let Some((hovered, block_selected, _action_selected, _soft_card)) =
             interactive_state(app, source)
         else {
@@ -458,11 +461,14 @@ fn style_interactive_lines(
         // Recap-style left rail only — no solid fill / selection_bg wash.
         // Selected wins over hover so the active block stays accent-bright.
         if block_selected {
-            apply_block_rail(line, BlockRailTone::Selected);
+            prepare_block_line_chrome(line);
+            rails.push((offset, BlockRailTone::Selected));
         } else if hovered {
-            apply_block_rail(line, BlockRailTone::Hovered);
+            prepare_block_line_chrome(line);
+            rails.push((offset, BlockRailTone::Hovered));
         }
     }
+    rails
 }
 
 /// Visual weight for the chat block rail (selection vs pointer hover).
@@ -513,26 +519,23 @@ fn interactive_state(app: &TuiApp, source: &ChatLineSource) -> Option<(bool, boo
     Some((hovered, block_selected, action_selected, soft_card))
 }
 
-/// Recap-style vertical rail on the left of a hovered/selected block.
-/// Keeps original text colors; no full-width selection_bg fill.
-fn apply_block_rail(line: &mut Line<'static>, tone: BlockRailTone) {
-    // Thin continuous bar (Recap). `│` is one cell wide everywhere.
-    const RAIL: &str = "│";
+fn block_rail_style(tone: BlockRailTone) -> Style {
     // Selected uses accent so click feedback is obvious; hover stays muted so
     // it reads as affordance without competing with the active selection.
-    let mut rail_style = match tone {
+    let mut style = match tone {
         BlockRailTone::Selected => Style::default().fg(accent()).bg(bg()),
         BlockRailTone::Hovered => Style::default().fg(muted()).bg(bg()),
     };
     if matches!(tone, BlockRailTone::Selected) {
-        rail_style = rail_style.add_modifier(Modifier::BOLD);
+        style = style.add_modifier(Modifier::BOLD);
     }
-    let chat_bg = bg();
+    style
+}
 
-    // Drop solid panel/selection fills so the rail is the only selection
-    // chrome (text sits on the chat bg). Keep intentional code-block bg.
-    // Use explicit theme bg (not Color::Reset) so terminals never flash a
-    // light default behind selected lines.
+/// Drop solid panel/selection fills so the external rail is the only chrome.
+/// Does **not** insert glyphs — that would reflow markers like `◆ Run`.
+fn prepare_block_line_chrome(line: &mut Line<'static>) {
+    let chat_bg = bg();
     for span in line.spans.iter_mut() {
         if crate::render::markdown::is_image_tag(&span.content) {
             span.style = Style::default().bg(code_const()).fg(Color::Black);
@@ -543,23 +546,28 @@ fn apply_block_rail(line: &mut Line<'static>, tone: BlockRailTone) {
         }
         span.style = span.style.bg(chat_bg);
     }
+}
 
-    // Recap (and similar) already start with a rail — restyle, don't double.
-    if let Some(first) = line.spans.first_mut() {
-        let content = first.content.as_ref();
-        if content == RAIL || content.starts_with('│') {
-            first.style = rail_style;
-            return;
-        }
-        // Eat one leading space from the gutter so content stays column-aligned
-        // (CONTENT_GUTTER / continuation indent). Do not eat markers like `›`.
-        if let Some(stripped) = content.strip_prefix(' ') {
-            first.content = stripped.to_string().into();
-        }
+/// Paint Recap-style `│` rails in the left margin of the chat pane.
+///
+/// `content` is the text rect (`area.inner` with horizontal margin ≥ 1). The
+/// rail sits one cell to the left of the text so hover never shifts content.
+fn paint_block_rails(frame: &mut Frame<'_>, content: Rect, rails: &[(usize, BlockRailTone)]) {
+    if rails.is_empty() || content.x == 0 {
+        return;
     }
-    line.spans.retain(|span| !span.content.is_empty());
-    line.spans
-        .insert(0, Span::styled(RAIL.to_string(), rail_style));
+    let rail_x = content.x - 1;
+    let buf = frame.buffer_mut();
+    let area = buf.area;
+    for &(row_offset, tone) in rails {
+        let y = content.y.saturating_add(row_offset as u16);
+        if y >= content.bottom() || y >= area.bottom() || rail_x >= area.right() {
+            continue;
+        }
+        let cell = &mut buf[(rail_x, y)];
+        cell.set_symbol("│");
+        cell.set_style(block_rail_style(tone));
+    }
 }
 
 /// Extend any intentional line background (diff add/remove, etc.) to the full
@@ -671,14 +679,18 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
 
     let (previous_line_count, can_preserve_manual_scroll, width_changed) = {
         let cache = app.chat_render_cache.borrow();
+        // Preserve bottom-relative offset across rebuilds whenever we already
+        // have lines at the same width. Do not gate on `signature_hash != 0`:
+        // several paths zero the hash to force a rebuild, and that used to
+        // disable anchoring so streaming text yanked the viewport upward.
         (
             cache.lines.len(),
-            cache.signature_hash != 0
+            !cache.lines.is_empty()
                 && cache.width == chat_width
                 && cache.full_tool_view == app.full_tool_view
                 && cache.show_thinking == app.show_thinking
                 && cache.compact_tool_visible_limit == app.compact_tool_visible_limit,
-            cache.width != chat_width && cache.signature_hash != 0,
+            cache.width != chat_width && !cache.lines.is_empty(),
         )
     };
     if width_changed {
@@ -688,6 +700,8 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
         cache.history_line_sources.clear();
         cache.history_message_count = 0;
         cache.history_signature = 0;
+        // Line indices are meaningless after a reflow — re-derive from offset.
+        cache.locked_viewport_top = None;
     }
 
     // Incremental path: reuse finalized history markdown while streaming tail updates.
@@ -810,6 +824,56 @@ fn anchored_scroll_offset(
     } else {
         scroll_offset.saturating_sub(previous_line_count - next_line_count)
     }
+}
+
+/// Absolute top line currently shown in the chat pane (read-only).
+///
+/// Prefers the render lock when it still matches `scroll_offset` so mouse hit
+/// tests align with what was painted. Falls back to bottom-relative math.
+pub(crate) fn chat_viewport_start(app: &TuiApp, visible_height: usize) -> usize {
+    let cache = app.chat_render_cache.borrow();
+    let total_lines = cache.lines.len();
+    let max_start = total_lines.saturating_sub(visible_height);
+    if app.scroll_offset == 0 {
+        return max_start;
+    }
+    if let Some(top) = cache.locked_viewport_top
+        && cache.locked_scroll_offset == app.scroll_offset
+    {
+        return top.min(max_start);
+    }
+    let effective_scroll = app.scroll_offset.min(max_start);
+    max_start.saturating_sub(effective_scroll)
+}
+
+/// Resolve the absolute top line of the chat viewport for the next paint.
+///
+/// `scroll_offset` is distance from the live end (0 = stick to bottom). While
+/// the user is scrolled up we lock the absolute top line across frames so
+/// streaming appends and composer height changes do not shove the text they
+/// are reading/copying.
+fn resolve_chat_viewport_start(app: &mut TuiApp, visible_height: usize) -> usize {
+    let total_lines = app.chat_render_cache.borrow().lines.len();
+    let max_start = total_lines.saturating_sub(visible_height);
+
+    if app.scroll_offset == 0 {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.locked_viewport_top = None;
+        cache.locked_scroll_offset = 0;
+        return max_start;
+    }
+
+    let start = chat_viewport_start(app, visible_height);
+
+    // Keep scroll_offset in sync with the locked top so jump-to-latest, keys,
+    // and the "↓ Latest" affordance stay correct after content/height changes.
+    app.scroll_offset = max_start.saturating_sub(start);
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.locked_viewport_top = Some(start);
+        cache.locked_scroll_offset = app.scroll_offset;
+    }
+    start
 }
 
 fn chat_render_signature(app: &TuiApp) -> u64 {
@@ -946,7 +1010,7 @@ fn build_chat_render(
 mod tests {
     use crate::state::{ChatMessage, ChatRole};
 
-    use super::{anchored_scroll_offset, ensure_chat_cache};
+    use super::{anchored_scroll_offset, ensure_chat_cache, resolve_chat_viewport_start};
 
     fn line_text(line: &ratatui::prelude::Line<'_>) -> String {
         line.spans
@@ -970,16 +1034,129 @@ mod tests {
         use crate::state::ChatLineSource;
         let mut app = crate::tests::test_app("");
         app.scroll_offset = 42;
+        app.chat_render_cache.borrow_mut().locked_viewport_top = Some(10);
+        app.chat_render_cache.borrow_mut().locked_scroll_offset = 42;
         app.selected_chat_source = Some(ChatLineSource::Message(0));
         super::jump_to_latest(&mut app);
         assert_eq!(app.scroll_offset, 0);
         assert!(app.selected_chat_source.is_none());
         assert!(app.selection.is_none());
+        assert!(app.chat_render_cache.borrow().locked_viewport_top.is_none());
     }
 
     #[test]
     fn anchored_scroll_keeps_tail_at_zero() {
         assert_eq!(anchored_scroll_offset(0, 100, 120), 0);
+    }
+
+    #[test]
+    fn viewport_stays_put_while_streaming_when_scrolled_up() {
+        use crate::state::{ChatMessage, ChatRole};
+
+        let mut app = crate::tests::test_app("");
+        for i in 0..40 {
+            app.messages.push(ChatMessage::new(
+                ChatRole::User,
+                format!("history line {i} — padding text so wrap makes several rows"),
+            ));
+        }
+        app.is_loading = true;
+        app.loading_start = Some(std::time::Instant::now());
+        app.messages.push(ChatMessage {
+            status: Some("receiving".to_string()),
+            ..ChatMessage::new(ChatRole::Assistant, "start".to_string())
+        });
+
+        ensure_chat_cache(&mut app, 40);
+        let total_before = app.chat_render_cache.borrow().lines.len();
+        assert!(
+            total_before > 20,
+            "expected tall transcript, got {total_before}"
+        );
+
+        app.scroll_offset = 12;
+        let visible = 10usize;
+        let start_before = resolve_chat_viewport_start(&mut app, visible);
+        assert!(start_before > 0);
+        assert_eq!(app.scroll_offset, 12);
+
+        let top_text = {
+            let cache = app.chat_render_cache.borrow();
+            line_text(&cache.lines[start_before])
+        };
+
+        if let Some(last) = app.messages.last_mut() {
+            last.content.push_str(&format!(
+                "\n\n{}",
+                "streaming paragraph that wraps into many lines. ".repeat(80)
+            ));
+        }
+        ensure_chat_cache(&mut app, 40);
+        let total_after = app.chat_render_cache.borrow().lines.len();
+        assert!(
+            total_after > total_before + 10,
+            "expected streaming to grow transcript ({total_before} → {total_after})"
+        );
+
+        let start_after = resolve_chat_viewport_start(&mut app, visible);
+        assert_eq!(
+            start_after, start_before,
+            "viewport top must stay locked while the model streams below"
+        );
+        let top_text_after = {
+            let cache = app.chat_render_cache.borrow();
+            line_text(&cache.lines[start_after])
+        };
+        assert_eq!(
+            top_text_after, top_text,
+            "same content must remain under the top of the viewport"
+        );
+        assert!(
+            app.scroll_offset >= 12,
+            "scroll_offset should grow with appended lines, got {}",
+            app.scroll_offset
+        );
+    }
+
+    #[test]
+    fn viewport_stays_put_when_visible_height_changes() {
+        use crate::state::{ChatMessage, ChatRole};
+
+        let mut app = crate::tests::test_app("");
+        for i in 0..30 {
+            app.messages.push(ChatMessage::new(
+                ChatRole::Assistant,
+                format!("block {i} with enough text to occupy a full line of the transcript"),
+            ));
+        }
+        ensure_chat_cache(&mut app, 48);
+        app.scroll_offset = 8;
+        let start = resolve_chat_viewport_start(&mut app, 12);
+        let start_taller = resolve_chat_viewport_start(&mut app, 16);
+        assert_eq!(
+            start_taller, start,
+            "composer height change must not shove scrolled history"
+        );
+    }
+
+    #[test]
+    fn follow_tail_when_scroll_offset_is_zero() {
+        use crate::state::{ChatMessage, ChatRole};
+
+        let mut app = crate::tests::test_app("");
+        for i in 0..20 {
+            app.messages.push(ChatMessage::new(
+                ChatRole::Assistant,
+                format!("tail follow {i}"),
+            ));
+        }
+        ensure_chat_cache(&mut app, 40);
+        app.scroll_offset = 0;
+        let visible = 8usize;
+        let total = app.chat_render_cache.borrow().lines.len();
+        let start = resolve_chat_viewport_start(&mut app, visible);
+        assert_eq!(start, total.saturating_sub(visible));
+        assert!(app.chat_render_cache.borrow().locked_viewport_top.is_none());
     }
 
     #[test]
@@ -1045,29 +1222,35 @@ mod tests {
             ));
             app.selected_chat_source = Some(ChatLineSource::Message(0));
 
+            let original = "  hello selected";
             let mut lines = vec![ratatui::prelude::Line::from(vec![
                 ratatui::prelude::Span::styled(
-                    "  hello selected",
+                    original,
                     ratatui::style::Style::default().fg(crate::theme::text()),
                 ),
             ])];
             let sources = vec![ChatLineSource::Message(0)];
-            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+            let rails = super::style_interactive_lines(&mut lines, &sources, &app, 40);
 
-            let line = &lines[0];
-            let rail = line.spans.first().expect("rail span");
-            assert_eq!(rail.content.as_ref(), "│", "expected left rail");
+            // Rail is scheduled for margin paint — not inserted into the line.
+            assert_eq!(rails, vec![(0, super::BlockRailTone::Selected)]);
             assert_eq!(
-                rail.style.fg,
+                lines[0].spans.first().map(|s| s.content.as_ref()),
+                Some(original),
+                "selection must not reflow line text"
+            );
+            let style = super::block_rail_style(super::BlockRailTone::Selected);
+            assert_eq!(
+                style.fg,
                 Some(accent()),
                 "selected rail should use accent for clear click feedback"
             );
             assert!(
-                rail.style.add_modifier.contains(Modifier::BOLD),
+                style.add_modifier.contains(Modifier::BOLD),
                 "selected rail should be bold"
             );
             let bad = selection_bg();
-            for span in &line.spans {
+            for span in &lines[0].spans {
                 assert_ne!(
                     span.style.bg,
                     Some(bad),
@@ -1101,29 +1284,34 @@ mod tests {
             ));
             app.hovered_chat_source = Some(ChatLineSource::Message(0));
 
+            let original = "  hello hover";
             let mut lines = vec![ratatui::prelude::Line::from(vec![
                 ratatui::prelude::Span::styled(
-                    "  hello hover",
+                    original,
                     ratatui::style::Style::default().fg(crate::theme::text()),
                 ),
             ])];
             let sources = vec![ChatLineSource::Message(0)];
-            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+            let rails = super::style_interactive_lines(&mut lines, &sources, &app, 40);
 
-            let line = &lines[0];
-            let rail = line.spans.first().expect("rail span");
-            assert_eq!(rail.content.as_ref(), "│", "expected hover rail");
+            assert_eq!(rails, vec![(0, super::BlockRailTone::Hovered)]);
             assert_eq!(
-                rail.style.fg,
+                lines[0].spans.first().map(|s| s.content.as_ref()),
+                Some(original),
+                "hover must not reflow line text"
+            );
+            let style = super::block_rail_style(super::BlockRailTone::Hovered);
+            assert_eq!(
+                style.fg,
                 Some(muted()),
                 "hover rail should stay muted so it does not compete with selection"
             );
             assert!(
-                !rail.style.add_modifier.contains(Modifier::BOLD),
+                !style.add_modifier.contains(Modifier::BOLD),
                 "hover rail should not be bold"
             );
             let bad = selection_bg();
-            for span in &line.spans {
+            for span in &lines[0].spans {
                 assert_ne!(
                     span.style.bg,
                     Some(bad),
@@ -1137,7 +1325,7 @@ mod tests {
     #[test]
     fn selected_rail_wins_over_hover_on_same_block() {
         use crate::state::ChatLineSource;
-        use crate::theme::{ThemeId, accent, with_palette};
+        use crate::theme::{ThemeId, with_palette};
 
         with_palette(&ThemeId::Lain.palette(), || {
             let mut app = crate::tests::test_app("");
@@ -1146,20 +1334,68 @@ mod tests {
             app.selected_chat_source = Some(ChatLineSource::Message(0));
             app.hovered_chat_source = Some(ChatLineSource::Message(0));
 
+            let original = "  both states";
             let mut lines = vec![ratatui::prelude::Line::from(vec![
                 ratatui::prelude::Span::styled(
-                    "  both states",
+                    original,
                     ratatui::style::Style::default().fg(crate::theme::text()),
                 ),
             ])];
             let sources = vec![ChatLineSource::Message(0)];
-            super::style_interactive_lines(&mut lines, &sources, &app, 40);
+            let rails = super::style_interactive_lines(&mut lines, &sources, &app, 40);
 
-            let rail = lines[0].spans.first().expect("rail span");
             assert_eq!(
-                rail.style.fg,
-                Some(accent()),
+                rails,
+                vec![(0, super::BlockRailTone::Selected)],
                 "selection must win over hover"
+            );
+            assert_eq!(
+                lines[0].spans.first().map(|s| s.content.as_ref()),
+                Some(original),
+                "combined hover+select must not reflow text"
+            );
+        });
+    }
+
+    #[test]
+    fn hover_rail_does_not_shift_tool_marker_lines() {
+        use crate::state::ChatLineSource;
+        use crate::theme::{ThemeId, with_palette};
+
+        with_palette(&ThemeId::Lain.palette(), || {
+            let mut app = crate::tests::test_app("");
+            app.hovered_chat_source = Some(ChatLineSource::ToolResult("t1".into()));
+
+            // Tool lines start with `◆ ` — the old in-line rail inserted `│`
+            // and shoved "Run" one column to the right.
+            let original_prefix = "◆ ";
+            let original_action = "Run";
+            let mut lines = vec![ratatui::prelude::Line::from(vec![
+                ratatui::prelude::Span::styled(
+                    original_prefix,
+                    ratatui::style::Style::default().fg(crate::theme::accent()),
+                ),
+                ratatui::prelude::Span::styled(
+                    original_action,
+                    ratatui::style::Style::default().fg(crate::theme::text()),
+                ),
+            ])];
+            let sources = vec![ChatLineSource::ToolResult("t1".into())];
+            let rails = super::style_interactive_lines(&mut lines, &sources, &app, 40);
+
+            assert_eq!(rails, vec![(0, super::BlockRailTone::Hovered)]);
+            assert_eq!(lines[0].spans.len(), 2);
+            assert_eq!(lines[0].spans[0].content.as_ref(), original_prefix);
+            assert_eq!(lines[0].spans[1].content.as_ref(), original_action);
+            let joined: String = lines[0]
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert_eq!(joined, "◆ Run");
+            assert!(
+                !joined.contains('│'),
+                "rail must not be embedded in tool text: {joined}"
             );
         });
     }

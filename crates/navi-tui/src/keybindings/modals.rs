@@ -1211,6 +1211,49 @@ fn save_queued_message_edit(app: &mut TuiApp) {
     super::close_active_modal(app);
 }
 
+pub(crate) fn handle_set_goal_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) -> bool {
+    match code {
+        KeyCode::Esc => {
+            app.goal_draft_text.clear();
+            app.goal_draft_cursor = 0;
+            super::close_active_modal(app);
+        }
+        // Enter submits the goal as a chat message + set_goal.
+        KeyCode::Enter if !modifiers.contains(KeyModifiers::SHIFT) => {
+            let objective = std::mem::take(&mut app.goal_draft_text);
+            app.goal_draft_cursor = 0;
+            // Clear composer seed so it is not double-sent.
+            if !objective.trim().is_empty() && app.input.trim() == objective.trim() {
+                app.input.clear();
+                app.input_cursor = 0;
+            }
+            super::close_active_modal(app);
+            crate::chat::submit_goal_objective(app, objective);
+        }
+        KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
+            let _ = handle_text_input_key(
+                crate::input::goal_draft_input_ref(app),
+                code,
+                KeyModifiers::NONE,
+                true,
+            );
+        }
+        _ => {
+            let _ = handle_text_input_key(
+                crate::input::goal_draft_input_ref(app),
+                code,
+                modifiers,
+                true,
+            );
+        }
+    }
+    false
+}
+
 pub(crate) fn handle_sudo_password_key(
     app: &mut TuiApp,
     code: KeyCode,

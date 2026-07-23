@@ -272,44 +272,12 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             ));
         }
         CommandAction::SetGoal => {
-            let objective = app.input.trim().to_string();
-            if objective.is_empty() {
-                show_notification(
-                    app,
-                    "Goal",
-                    "Type an objective in the composer, then run Set Goal.",
-                );
-                super::close_all_modals(app);
-            } else {
-                let session_id = app.session_id.as_str().to_string();
-                let engine = app.engine();
-                let obj = objective.clone();
-                // Optimistic UI so the chip appears immediately.
-                app.goal_state = Some(crate::state::GoalUiState {
-                    objective: objective.clone(),
-                    short_description: Some(objective.chars().take(40).collect::<String>()),
-                    tokens_used: 0,
-                    token_budget: None,
-                });
-                crate::runtime::spawn_runtime_task(async move {
-                    // Ensure the session exists so set_goal has a live runtime.
-                    let _ = engine
-                        .start_session(navi_sdk::NaviSessionRequest {
-                            session_id: Some(session_id.clone()),
-                            project_dir: None,
-                            ..Default::default()
-                        })
-                        .await;
-                    match engine.set_goal(&session_id, obj, None).await {
-                        Ok(_) => {}
-                        Err(err) => tracing::warn!(error = %err, "set_goal failed"),
-                    }
-                });
-                app.input.clear();
-                app.input_cursor = 0;
-                super::close_all_modals(app);
-                show_notification(app, "Goal", "Goal set — auto-continue while active.");
-            }
+            // Open a dedicated text area — do not silently steal composer text.
+            // Pre-fill from composer if the user already typed an objective there.
+            let seed = app.input.trim().to_string();
+            app.goal_draft_text = seed;
+            app.goal_draft_cursor = app.goal_draft_text.len();
+            super::replace_modal(app, ModalKind::SetGoal);
         }
         CommandAction::PauseGoal => {
             let session_id = app.session_id.as_str().to_string();

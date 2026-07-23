@@ -91,6 +91,8 @@ pub struct TuiApp {
 
     // orchestration
     pub(crate) running_tools: HashMap<String, ToolInvocation>,
+    /// Tool calls whose arguments are still being streamed by the model.
+    pub(crate) streaming_tool_calls: Vec<crate::state::StreamingToolCall>,
     pub(crate) subagent_activity: HashMap<String, String>,
     pub(crate) subagent_transcripts: HashMap<String, SubagentTranscript>,
     pub(crate) subagent_order: Vec<String>,
@@ -110,9 +112,11 @@ pub struct TuiApp {
     pub(crate) compact_state: CompactState,
     pub(crate) dreaming: bool,
 
-    // clipboard images
+    // clipboard images / large pastes
     /// Images captured from the clipboard, waiting to be attached to the next message.
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
+    /// Large text pastes shown as `[Pasted text #N +L lines]` chips in the draft.
+    pub(crate) pending_pastes: Vec<crate::state::PendingPaste>,
     /// Floating image preview shown while hovering an `[Image N]` tag.
     pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
     /// Kitty/Sixel/iTerm2 stateful protocol for the lightbox hover (None = text-only).
@@ -283,6 +287,9 @@ pub struct TuiApp {
 
     // goals
     pub(crate) goal_state: Option<crate::state::GoalUiState>,
+    /// Draft text while the Set Goal modal is open.
+    pub(crate) goal_draft_text: String,
+    pub(crate) goal_draft_cursor: usize,
     /// Active plan checklist (progress strip above the composer).
     pub(crate) active_plan: Option<crate::state::ActivePlanUiState>,
 }
@@ -407,6 +414,7 @@ impl TuiApp {
             skip_next_model_done: false,
             model_retry_attempts: 0,
             running_tools: HashMap::new(),
+            streaming_tool_calls: Vec::new(),
             subagent_activity: HashMap::new(),
             subagent_transcripts: HashMap::new(),
             subagent_order: Vec::new(),
@@ -422,6 +430,7 @@ impl TuiApp {
             compact_state: CompactState::new(context_window),
             dreaming: false,
             pending_images: Vec::new(),
+            pending_pastes: Vec::new(),
             image_hover: None,
             image_hover_protocol: None,
             image_hover_modal_rect: None,
@@ -433,6 +442,8 @@ impl TuiApp {
             queued_edit_text: String::new(),
             queued_edit_cursor: 0,
             goal_state: None,
+            goal_draft_text: String::new(),
+            goal_draft_cursor: 0,
             active_plan: None,
             session_store,
             events: Vec::new(),

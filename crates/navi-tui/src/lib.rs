@@ -16,6 +16,7 @@ mod mcp_status;
 mod mouse;
 mod notifications;
 pub(crate) mod panels;
+mod paste_compact;
 mod path_mentions;
 mod persistence;
 mod plan_progress;

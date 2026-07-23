@@ -304,9 +304,9 @@ pub(crate) fn composer_height(app: &TuiApp, input_width: usize) -> u16 {
     2 + content_lines + META_ROW
 }
 
-pub(crate) fn composer_hint_height(app: &TuiApp) -> u16 {
-    // Goal line only — plan progress lives in the topbar above chat.
-    if app.goal_state.is_some() { 1 } else { 0 }
+pub(crate) fn composer_hint_height(_app: &TuiApp) -> u16 {
+    // Goals appear as chat messages (Goal-labeled user bubble), not under the composer.
+    0
 }
 
 pub(crate) fn composer_activity_height(app: &TuiApp) -> u16 {
@@ -342,40 +342,12 @@ pub(crate) fn render_input_activity(frame: &mut Frame<'_>, app: &TuiApp, area: R
     );
 }
 
-pub(crate) fn render_input_hint(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+pub(crate) fn render_input_hint(frame: &mut Frame<'_>, _app: &TuiApp, area: Rect) {
     if area.height == 0 {
         return;
     }
-
-    // Permanent shortcut hints were removed — they cluttered every frame.
-    // Shortcuts live in Help (`?` / ctrl+.). Plan progress is the topbar.
-    // Goal line (if any) still sits above the composer.
-    if let Some(goal_line) = composer_goal_line(app, area.width as usize) {
-        let goal_area = Rect::new(area.x, area.y, area.width, 1);
-        frame.render_widget(
-            Paragraph::new(goal_line).style(Style::default().bg(bg())),
-            goal_area,
-        );
-    }
-}
-
-fn composer_goal_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
-    let goal = app.goal_state.as_ref()?;
-    let label = goal
-        .short_description
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&goal.objective);
-    let mut text_value = format!("goal {}", label.trim());
-    if let Some(budget) = goal.token_budget {
-        let percent = (goal.tokens_used as f64 / budget as f64 * 100.0).round() as i32;
-        text_value.push_str(&format!(" ({percent}%)"));
-    }
-    let available = width.saturating_sub(4).max(1);
-    Some(Line::from(vec![Span::styled(
-        format!("  {}", fit_display_width(&text_value, available)),
-        Style::default().fg(text()).bg(bg()),
-    )]))
+    // Goals are shown as chat messages (Goal-labeled), not under the composer.
+    let _ = frame;
 }
 
 fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
@@ -464,8 +436,16 @@ fn activity_detail_hints(app: &TuiApp, elapsed_ms: u64) -> String {
     if !app.pending_approvals.is_empty()
         || !app.pending_questions.is_empty()
         || !app.running_tools.is_empty()
+        || !app.streaming_tool_calls.is_empty()
         || background_subagent_status(app).is_some()
     {
+        // While tool args stream, show how much has arrived.
+        if app.streaming_tool_calls.len() == 1
+            && let Some(call) = app.streaming_tool_calls.first()
+            && call.arguments_chars > 0
+        {
+            return format!("{} args", format_activity_arg_chars(call.arguments_chars));
+        }
         return String::new();
     }
 
@@ -492,7 +472,20 @@ fn is_long_model_wait(app: &TuiApp, elapsed_ms: u64) -> bool {
         && app.pending_approvals.is_empty()
         && app.pending_questions.is_empty()
         && app.running_tools.is_empty()
+        && app.streaming_tool_calls.is_empty()
         && background_subagent_status(app).is_none()
+}
+
+fn format_activity_arg_chars(chars: usize) -> String {
+    if chars >= 1_000_000 {
+        format!("{:.1}M", chars as f64 / 1_000_000.0)
+    } else if chars >= 10_000 {
+        format!("{}k", chars / 1_000)
+    } else if chars >= 1_000 {
+        format!("{:.1}k", chars as f64 / 1_000.0)
+    } else {
+        chars.to_string()
+    }
 }
 
 fn format_activity_rate(rate: f64) -> String {
@@ -516,7 +509,7 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
             let id = &app.pending_approvals[0].id;
             app.tool_invocations
                 .get(id)
-                .map(|invocation| tool_status_label(&invocation.tool_name))
+                .map(|invocation| tool_activity_label(&invocation.tool_name, ToolActivityPhase::Running))
                 .unwrap_or_else(|| "tool".to_string())
         } else {
             format!("{} tools", app.pending_approvals.len())
@@ -532,6 +525,10 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
         return (running_tools_status(app), code_operator());
     }
 
+    if !app.streaming_tool_calls.is_empty() {
+        return (streaming_tools_status(app), code_operator());
+    }
+
     if let Some(status) = background_subagent_status(app) {
         return (status, code_operator());
     }
@@ -541,13 +538,20 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
     match status {
         Some("receiving") => ("Streaming response".to_string(), accent()),
         Some("retrying") => ("Retrying".to_string(), code_operator()),
+        Some(label) if label.starts_with("streaming_tool:") => {
+            let tool = label.trim_start_matches("streaming_tool:").trim();
+            (
+                tool_activity_label(tool, ToolActivityPhase::Streaming),
+                code_operator(),
+            )
+        }
         Some(label) if label.starts_with("tool:") => {
             let tool = label.trim_start_matches("tool:").trim();
             if tool.is_empty() {
                 ("Running tool".to_string(), code_operator())
             } else {
                 (
-                    format!("Running {}", tool_status_label(tool)),
+                    tool_activity_label(tool, ToolActivityPhase::Running),
                     code_operator(),
                 )
             }
@@ -560,12 +564,19 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
         }
         _ => {
             // Prefer observed stream evidence over a generic spinner label.
+            // Note: status "thinking" is the default while loading without tools —
+            // only show "Thinking" when we have real thinking content or stream
+            // evidence (empty status-only thinking still sets stream_started_at).
             if active.is_some_and(|message| !message.thinking_content.is_empty()) {
                 ("Thinking".to_string(), code_operator())
             } else if active.is_some_and(|message| !message.content.trim().is_empty()) {
                 ("Streaming response".to_string(), accent())
             } else if app.usage_state.stream_started_at.is_some() {
-                ("Streaming response".to_string(), accent())
+                if active.is_some_and(|m| m.status.as_deref() == Some("thinking")) {
+                    ("Thinking".to_string(), code_operator())
+                } else {
+                    ("Streaming response".to_string(), accent())
+                }
             } else if elapsed_ms >= 60_000 {
                 // Multi-minute idle wait — escalate so it doesn't look healthy.
                 ("Still waiting for model".to_string(), code_const())
@@ -587,10 +598,79 @@ fn running_tools_status(app: &TuiApp) -> String {
                 return format!("Subagent: {detail}");
             }
         }
-        return format!("Running {}", tool_status_label(&invocation.tool_name));
+        // Prefer path/command-aware running labels from the tool catalog.
+        return crate::render::tool::tool_running_text(invocation);
     }
 
     format!("Running {} tools", app.running_tools.len())
+}
+
+fn streaming_tools_status(app: &TuiApp) -> String {
+    if app.streaming_tool_calls.len() == 1
+        && let Some(call) = app.streaming_tool_calls.first()
+    {
+        return tool_activity_label(&call.tool_name, ToolActivityPhase::Streaming);
+    }
+    format!("Calling {} tools…", app.streaming_tool_calls.len())
+}
+
+#[derive(Clone, Copy)]
+enum ToolActivityPhase {
+    /// Model is still generating the tool-call payload.
+    Streaming,
+    /// Tool is executing (or waiting for approval).
+    Running,
+}
+
+/// Catalog of progressive activity phrases for each tool family.
+///
+/// Streaming phase answers "what is the model writing?" before ToolRequested;
+/// running phase is a short verb when we lack a full [`tool_running_text`] path.
+fn tool_activity_label(tool_name: &str, phase: ToolActivityPhase) -> String {
+    let name = tool_name.trim();
+    if name.is_empty() || name == "tool" {
+        return match phase {
+            ToolActivityPhase::Streaming => "Calling tool…".to_string(),
+            ToolActivityPhase::Running => "Running tool".to_string(),
+        };
+    }
+
+    let (streaming, running) = match name {
+        "write" | "write_file" => ("Writing file…", "Writing file"),
+        "edit" | "multiedit" => ("Preparing edit…", "Editing file"),
+        "apply_patch" => ("Preparing patch…", "Applying patch"),
+        "read" | "read_file" | "view_file" => ("Preparing read…", "Reading file"),
+        "bash" => ("Preparing command…", "Running command"),
+        "grep" => ("Preparing grep…", "Searching"),
+        "search" | "glob" | "ast_search" => ("Preparing search…", "Searching"),
+        "list_dir" | "fs_browser" => ("Preparing browse…", "Browsing"),
+        "plan" => ("Preparing plan…", "Planning"),
+        "subagent" => ("Preparing subagent…", "Running subagent"),
+        "workflow" => ("Preparing workflow…", "Running workflow"),
+        "question" | "request_user_input" => ("Preparing question…", "Asking"),
+        "memory" | "append_note" => ("Preparing memory…", "Updating memory"),
+        "tool_search" => ("Finding tools…", "Searching tools"),
+        "code" | "code_edit" | "code_exec" => ("Preparing code tool…", "Running code tool"),
+        "symbol_goto" | "symbol_references" => ("Preparing symbols…", "Looking up symbols"),
+        "repo_explore" => ("Preparing explore…", "Exploring repo"),
+        "view_image" | "inspect_image" => ("Preparing image…", "Inspecting image"),
+        "set_session_title" => ("Setting title…", "Setting title"),
+        "set_goal" => ("Setting goal…", "Setting goal"),
+        "sleep" | "wait" => ("Preparing wait…", "Waiting"),
+        "web_search" | "web_fetch" | "browser" => ("Preparing web…", "Using web"),
+        other => {
+            let human = tool_status_label(other);
+            return match phase {
+                ToolActivityPhase::Streaming => format!("Calling {human}…"),
+                ToolActivityPhase::Running => format!("Running {human}"),
+            };
+        }
+    };
+
+    match phase {
+        ToolActivityPhase::Streaming => streaming.to_string(),
+        ToolActivityPhase::Running => running.to_string(),
+    }
 }
 
 fn background_subagent_status(app: &TuiApp) -> Option<String> {
@@ -649,6 +729,9 @@ fn format_activity_elapsed(ms: u64) -> String {
 fn tool_status_label(tool_name: &str) -> String {
     tool_name.replace('_', " ")
 }
+
+// tool_activity_label is the catalog used by the activity line; tool_status_label
+// remains the fallback humanization for unknown tools.
 
 fn visible_input_lines(
     lines: Vec<Line<'static>>,
@@ -733,6 +816,35 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
                         }
                     }
                     spans.push(Span::styled(tag_text.to_string(), style));
+                    current_idx = tag_end;
+                    continue;
+                }
+            }
+
+            // Compact paste chip: [Pasted text #N +L lines]
+            if rest.starts_with("[Pasted text #") {
+                if let Some(close) = rest.find(']') {
+                    let tag_end = current_idx + close + 1;
+                    let tag_text = &line_text[current_idx..tag_end];
+                    let mut style = Style::default()
+                        .bg(code_operator())
+                        .fg(ratatui::style::Color::Black)
+                        .add_modifier(Modifier::BOLD);
+                    if let Some((sel_start, sel_end)) = selected {
+                        let tag_start_byte = start + current_idx;
+                        let tag_end_byte = start + tag_end;
+                        if tag_start_byte >= sel_start && tag_end_byte <= sel_end {
+                            style = Style::default().fg(selection_fg()).bg(selection_bg());
+                        }
+                    }
+                    spans.push(Span::styled(tag_text.to_string(), style));
+                    // Soft expand hint after the chip (composer-only chrome).
+                    if line_index == 0 && tag_end == line_text.len() && ranges.len() == 1 {
+                        spans.push(Span::styled(
+                            " (press enter to expand)".to_string(),
+                            Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+                        ));
+                    }
                     current_idx = tag_end;
                     continue;
                 }
@@ -845,7 +957,8 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
         && app.usage_state.stream_started_at.is_none()
         && app.pending_approvals.is_empty()
         && app.pending_questions.is_empty()
-        && app.running_tools.is_empty();
+        && app.running_tools.is_empty()
+        && app.streaming_tool_calls.is_empty();
     let context = if suppress_context_meter {
         String::new()
     } else if app.hover_context_usage {
@@ -1253,19 +1366,15 @@ mod tests {
     }
 
     #[test]
-    fn composer_goal_line_uses_short_description() {
+    fn composer_hint_height_zero_even_with_active_goal() {
         let mut app = crate::tests::test_app("");
         app.goal_state = Some(crate::state::GoalUiState {
             objective: "Implement a very long detailed objective".to_string(),
             short_description: Some("Fix modal layout".to_string()),
             ..Default::default()
         });
-
-        let line = composer_goal_line(&app, 80).expect("goal line");
-        let text = line_text(&line);
-
-        assert!(text.contains("goal Fix modal layout"));
-        assert!(!text.contains("very long detailed"));
+        // Goals live in chat, not under the composer.
+        assert_eq!(composer_hint_height(&app), 0);
     }
 
     #[test]
@@ -1532,12 +1641,74 @@ mod tests {
             navi_sdk::ToolInvocation {
                 id: "call-1".to_string(),
                 tool_name: "read_file".to_string(),
-                input: serde_json::json!({}),
+                input: serde_json::json!({"path": "main.rs"}),
             },
         );
 
         let line = composer_activity_line(&app, 80).expect("activity line");
-        assert!(line_text(&line).contains("Running read file"));
+        let text = line_text(&line);
+        assert!(
+            text.contains("Read main.rs") || text.contains("Reading"),
+            "expected cataloged running label, got {text}"
+        );
+        assert!(!text.contains("Still waiting"));
+    }
+
+    #[test]
+    fn composer_activity_line_uses_streaming_tool_catalog() {
+        let mut app = crate::tests::test_app("");
+        app.is_loading = true;
+        // Even after a long wall clock, streaming tool args must not look idle.
+        app.loading_start = Some(Instant::now() - Duration::from_secs(95));
+        app.streaming_tool_calls
+            .push(crate::state::StreamingToolCall {
+                id: Some("call-1".into()),
+                tool_name: "write_file".into(),
+                arguments_chars: 12_000,
+            });
+        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_secs(30));
+
+        let line = composer_activity_line(&app, 140).expect("activity line");
+        let text = line_text(&line);
+        assert!(
+            text.contains("Writing"),
+            "expected write-specific streaming label, got {text}"
+        );
+        assert!(
+            !text.contains("Still waiting for model"),
+            "must not escalate idle wait while tool args stream: {text}"
+        );
+        assert!(
+            text.contains("12k args") || text.contains("args"),
+            "expected arg progress hint, got {text}"
+        );
+    }
+
+    // Paste compaction tests live in paste_compact::tests.
+
+    #[test]
+    fn composer_activity_line_catalogs_edit_and_bash_streaming() {
+        for (tool, needle) in [
+            ("edit", "edit"),
+            ("bash", "command"),
+            ("grep", "grep"),
+            ("read_file", "read"),
+        ] {
+            let mut app = crate::tests::test_app("");
+            app.is_loading = true;
+            app.loading_start = Some(Instant::now());
+            app.streaming_tool_calls
+                .push(crate::state::StreamingToolCall {
+                    id: None,
+                    tool_name: tool.into(),
+                    arguments_chars: 40,
+                });
+            let text = line_text(&composer_activity_line(&app, 100).expect("line"));
+            assert!(
+                text.to_ascii_lowercase().contains(needle),
+                "tool {tool}: expected '{needle}' in activity, got {text}"
+            );
+        }
     }
 
     #[test]

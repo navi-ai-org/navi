@@ -19,6 +19,9 @@ struct ChatPrefix {
 }
 
 pub(crate) fn submit_message(app: &mut TuiApp) {
+    // Expand paste chips into full text before send / queue.
+    crate::paste_compact::expand_composer_pastes(app);
+
     let has_images = !app.pending_images.is_empty();
     if app.input.trim().is_empty() && !has_images {
         return;
@@ -32,9 +35,88 @@ pub(crate) fn submit_message(app: &mut TuiApp) {
     submit_current_message_now(app);
 }
 
+/// Set a thread goal from the Set Goal modal: store on the runtime, show a
+/// Goal-labeled user bubble in chat, and start a turn so the model sees it.
+pub(crate) fn submit_goal_objective(app: &mut TuiApp, objective: String) {
+    let objective = objective.trim().to_string();
+    if objective.is_empty() {
+        return;
+    }
+
+    let short: String = objective.chars().take(40).collect();
+    app.goal_state = Some(crate::state::GoalUiState {
+        objective: objective.clone(),
+        short_description: Some(short.clone()),
+        tokens_used: 0,
+        token_budget: None,
+    });
+
+    let session_id = app.session_id.as_str().to_string();
+    let engine = app.engine();
+    let obj = objective.clone();
+    crate::runtime::spawn_runtime_task(async move {
+        let _ = engine
+            .start_session(navi_sdk::NaviSessionRequest {
+                session_id: Some(session_id.clone()),
+                project_dir: None,
+                ..Default::default()
+            })
+            .await;
+        if let Err(err) = engine.set_goal(&session_id, obj, None).await {
+            tracing::warn!(error = %err, "set_goal failed");
+        }
+    });
+
+    // Chat bubble: human-readable objective (Goal badge in render).
+    let mut chat_msg = ChatMessage::new(ChatRole::User, objective.clone()).stamp_now();
+    chat_msg.is_goal = true;
+    app.messages.push(chat_msg);
+
+    // Model-visible framing so the agent knows this defines the thread goal.
+    let model_text = format!(
+        "# Goal\n\n{objective}\n\n\
+This is the active thread goal for this session. Pursue it until complete or blocked. \
+Use get_goal / update_goal for status. Prefer plan() for multi-step design work before large edits."
+    );
+    app.compact_state.add_unsent_bytes(model_text.len());
+    app.conversation_history
+        .push(ModelMessage::user(model_text.clone()));
+
+    let submitted_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .ok();
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: model_text,
+        content_parts: Vec::new(),
+        submitted_at,
+    });
+
+    app.input.clear();
+    app.input_cursor = 0;
+    app.input_selection = None;
+    app.scroll_offset = 0;
+    app.reset_run_state();
+    app.model_retry_attempts = 0;
+
+    if app.is_loading {
+        // Rare: a turn started between modal open and submit — queue instead.
+        // Goal is already set on the runtime; queue a short reminder turn.
+        app.queued_user_messages.push_back(QueuedUserMessage {
+            text: format!("Continue the active goal: {objective}"),
+            images: Vec::new(),
+        });
+        return;
+    }
+
+    start_streaming_request(app);
+}
+
 fn queue_current_message(app: &mut TuiApp) {
+    // Caller already expanded pastes via submit_message.
     let text = std::mem::take(&mut app.input);
     let images = std::mem::take(&mut app.pending_images);
+    app.pending_pastes.clear();
     app.queued_user_messages
         .push_back(QueuedUserMessage { text, images });
     app.input_cursor = 0;
@@ -222,6 +304,7 @@ fn submit_current_message_now(app: &mut TuiApp) {
     app.input.clear();
     app.input_cursor = 0;
     app.input_selection = None;
+    app.pending_pastes.clear();
     app.scroll_offset = 0;
     app.reset_run_state();
     app.model_retry_attempts = 0;
@@ -344,6 +427,20 @@ pub(crate) fn update_active_assistant_status(app: &mut TuiApp) {
                 .map(|inv| inv.tool_name.as_str())
                 .collect();
             Some(format!("tool: {}", names.join(", ")))
+        }
+    } else if !app.streaming_tool_calls.is_empty() {
+        if app.streaming_tool_calls.len() == 1 {
+            let name = app
+                .streaming_tool_calls
+                .first()
+                .map(|c| c.tool_name.as_str())
+                .unwrap_or("tool");
+            Some(format!("streaming_tool:{name}"))
+        } else {
+            Some(format!(
+                "streaming_tool:{} tools",
+                app.streaming_tool_calls.len()
+            ))
         }
     } else if app.is_loading {
         Some("thinking".to_string())
@@ -619,12 +716,14 @@ pub(crate) fn start_new_session(app: &mut TuiApp) {
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();
+    app.streaming_tool_calls.clear();
     app.subagent_activity.clear();
     app.subagent_transcripts.clear();
     app.subagent_order.clear();
     app.chat_view = crate::state::ChatView::Parent;
     app.tool_invocations.clear();
     app.background_commands.clear();
+    app.pending_pastes.clear();
     app.message_action_target = None;
     // Keep selected_message_action — last Message Actions choice is a preference.
     app.expanded_tool_results.clear();
@@ -737,6 +836,7 @@ fn apply_prefix(app: &mut TuiApp, prefix: ChatPrefix) {
     app.pending_approvals.clear();
     app.pending_questions.clear();
     app.running_tools.clear();
+    app.streaming_tool_calls.clear();
     app.subagent_activity.clear();
     app.subagent_transcripts.clear();
     app.subagent_order.clear();

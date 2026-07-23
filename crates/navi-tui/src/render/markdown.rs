@@ -89,22 +89,57 @@ pub(crate) fn build_chat_render_for_messages(
 
         match msg.role {
             ChatRole::User => {
-                // sticky prompt: `› text…` left, clock right-aligned.
-                let lines = render_user_message_lines(&msg.content, chat_width, msg.sent_at);
-                for line in lines {
-                    rendered_lines.push(line);
-                    line_sources.push(ChatLineSource::Message(index));
-                }
-                // Only append chips when the stored text has no tags (legacy sessions).
-                if !msg.content.contains("[Image ") && !user_image_labels(msg).is_empty() {
-                    for (image_index, label) in user_image_labels(msg).iter().enumerate() {
-                        let tag = if label.starts_with("[Image ") {
-                            label.clone()
-                        } else {
-                            format!("[Image {}]", image_index + 1)
-                        };
-                        rendered_lines.push(user_image_tag_line(&tag, chat_width));
+                if msg.is_goal {
+                    // Goal-defining user message: bold Goal label + objective body.
+                    let label = "Goal ";
+                    let label_w = display_width(label);
+                    let body_width = chat_width.saturating_sub(label_w).max(16);
+                    let wraps = wrap_text(msg.content.trim(), body_width);
+                    if wraps.is_empty() {
+                        rendered_lines.push(Line::from(vec![Span::styled(
+                            label.to_string(),
+                            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
+                        )]));
                         line_sources.push(ChatLineSource::Message(index));
+                    } else {
+                        for (line_i, line) in wraps.into_iter().enumerate() {
+                            if line_i == 0 {
+                                rendered_lines.push(Line::from(vec![
+                                    Span::styled(
+                                        label.to_string(),
+                                        Style::default()
+                                            .fg(signal())
+                                            .add_modifier(Modifier::BOLD),
+                                    ),
+                                    Span::styled(line, Style::default().fg(text())),
+                                ]));
+                            } else {
+                                rendered_lines.push(Line::from(vec![
+                                    Span::raw(" ".repeat(label_w)),
+                                    Span::styled(line, Style::default().fg(text())),
+                                ]));
+                            }
+                            line_sources.push(ChatLineSource::Message(index));
+                        }
+                    }
+                } else {
+                    // sticky prompt: `› text…` left, clock right-aligned.
+                    let lines = render_user_message_lines(&msg.content, chat_width, msg.sent_at);
+                    for line in lines {
+                        rendered_lines.push(line);
+                        line_sources.push(ChatLineSource::Message(index));
+                    }
+                    // Only append chips when the stored text has no tags (legacy sessions).
+                    if !msg.content.contains("[Image ") && !user_image_labels(msg).is_empty() {
+                        for (image_index, label) in user_image_labels(msg).iter().enumerate() {
+                            let tag = if label.starts_with("[Image ") {
+                                label.clone()
+                            } else {
+                                format!("[Image {}]", image_index + 1)
+                            };
+                            rendered_lines.push(user_image_tag_line(&tag, chat_width));
+                            line_sources.push(ChatLineSource::Message(index));
+                        }
                     }
                 }
             }
