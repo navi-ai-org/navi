@@ -312,7 +312,7 @@ pub async fn sync_registry(
     }
 
     tracing::info!("fetching remote registry manifest");
-    let manifest = fetcher.fetch_manifest().await?;
+    let manifest = std::sync::Arc::new(fetcher.fetch_manifest().await?);
 
     // Compare with stored manifest version.
     if !force {
@@ -356,7 +356,7 @@ pub async fn sync_registry(
         // metadata can land without wiping API-discovered models.
         let is_local_api_sync = cached_sha.as_deref() == Some(crate::registry::LOCAL_API_SYNC_SHA);
         if force || (!is_local_api_sync && cached_sha.as_deref() != Some(&entry.sha256)) {
-            to_fetch.push(provider_id.as_str());
+            to_fetch.push(provider_id.clone());
         }
     }
 
@@ -367,7 +367,7 @@ pub async fn sync_registry(
         tx_keep.insert(provider_id.as_str());
         let cached_sha = store.transcription_provider_sha256(provider_id)?;
         if force || cached_sha.as_deref() != Some(&entry.sha256) {
-            tx_to_fetch.push(provider_id.as_str());
+            tx_to_fetch.push(provider_id.clone());
         }
     }
 
@@ -378,7 +378,7 @@ pub async fn sync_registry(
         model_keep.insert(model_id.as_str());
         let cached_sha = store.canonical_model_sha256(model_id)?;
         if force || cached_sha.as_deref() != Some(&entry.sha256) {
-            model_to_fetch.push(model_id.as_str());
+            model_to_fetch.push(model_id.clone());
         }
     }
 
@@ -400,13 +400,26 @@ pub async fn sync_registry(
         "fetching changed provider/model definitions"
     );
 
-    // Sync canonical models first so provider ref resolution sees the latest catalog.
+    // Sync canonical models first (parallel) so provider ref resolution sees the latest catalog.
     let mut models_updated = 0;
-    for model_id in &model_to_fetch {
-        let model = fetcher.fetch_canonical_model(model_id, &manifest).await?;
-        let sha = &manifest.models[*model_id].sha256;
-        store.upsert_canonical_model(model_id, &model, Some(sha))?;
-        models_updated += 1;
+    if !model_to_fetch.is_empty() {
+        let model_futs: Vec<_> = model_to_fetch
+            .iter()
+            .map(|model_id| {
+                let mid = model_id.clone();
+                let m = std::sync::Arc::clone(&manifest);
+                async move {
+                    let model = fetcher.fetch_canonical_model(&mid, &m).await?;
+                    Ok::<_, anyhow::Error>((mid, model))
+                }
+            })
+            .collect();
+        let results = futures_util::future::try_join_all(model_futs).await?;
+        for (model_id, model) in results {
+            let sha = &manifest.models[&model_id].sha256;
+            store.upsert_canonical_model(&model_id, &model, Some(sha))?;
+            models_updated += 1;
+        }
     }
     store.delete_canonical_models_not_in(&model_keep)?;
 
@@ -416,32 +429,59 @@ pub async fn sync_registry(
         catalog = super::embedded::embedded_model_catalog().unwrap_or_default();
     }
 
+    // Parallel fetch provider JSON, then apply sequentially (SQLite writer).
     let mut updated = 0;
-    for provider_id in &to_fetch {
-        let mut provider = fetcher.fetch_provider(provider_id, &manifest).await?;
-        super::resolve::resolve_provider_refs(&mut provider, &catalog);
-        let sha = &manifest.providers[*provider_id].sha256;
-        // Union-merge so remote catalog refresh cannot wipe API-synced models.
-        store.upsert_provider_union_models(&provider, Some(sha))?;
-        updated += 1;
+    if !to_fetch.is_empty() {
+        let provider_futs: Vec<_> = to_fetch
+            .iter()
+            .map(|provider_id| {
+                let pid = provider_id.clone();
+                let m = std::sync::Arc::clone(&manifest);
+                async move {
+                    let provider = fetcher.fetch_provider(&pid, &m).await?;
+                    Ok::<_, anyhow::Error>((pid, provider))
+                }
+            })
+            .collect();
+        let fetched = futures_util::future::try_join_all(provider_futs).await?;
+        for (provider_id, mut provider) in fetched {
+            super::resolve::resolve_provider_refs(&mut provider, &catalog);
+            let sha = &manifest.providers[&provider_id].sha256;
+            // Union-merge so remote catalog refresh cannot wipe API-synced models.
+            store.upsert_provider_union_models(&provider, Some(sha))?;
+            updated += 1;
+        }
     }
 
     // Remove providers that were deleted from the remote registry.
     store.delete_providers_not_in(&keep_ids)?;
 
-    // Sync remote transcription / dictation providers (diff by sha256).
+    // Sync remote transcription / dictation providers (parallel fetch).
     let mut tx_updated = 0;
-    for provider_id in &tx_to_fetch {
-        let entry = &manifest.transcription_providers[*provider_id];
-        let provider = fetcher
-            .fetch_transcription_provider(provider_id, &manifest)
-            .await?;
-        store.upsert_transcription_provider(&provider, Some(&entry.sha256))?;
-        tx_updated += 1;
+    if !tx_to_fetch.is_empty() {
+        let tx_futs: Vec<_> = tx_to_fetch
+            .iter()
+            .map(|provider_id| {
+                let pid = provider_id.clone();
+                let m = std::sync::Arc::clone(&manifest);
+                async move {
+                    let provider = fetcher.fetch_transcription_provider(&pid, &m).await?;
+                    Ok::<_, anyhow::Error>((pid, provider))
+                }
+            })
+            .collect();
+        let fetched = futures_util::future::try_join_all(tx_futs).await?;
+        for (provider_id, provider) in fetched {
+            let entry = &manifest.transcription_providers[&provider_id];
+            store.upsert_transcription_provider(&provider, Some(&entry.sha256))?;
+            tx_updated += 1;
+        }
     }
     store.delete_transcription_providers_not_in(&tx_keep)?;
 
     store.save_manifest_meta(&manifest)?;
+    // Catalog contents changed — drop in-memory base catalog used by TUI/modals.
+    crate::config::providers::invalidate_registry_catalog_cache();
     // Persist the full manifest JSON so load_cached_registry and
     // check_registry_manifest see the correct version and hashes.
     super::update::save_registry_metadata(

@@ -71,6 +71,9 @@ impl RegistryFetcherTrait for super::RegistryFetcher {
 const META_LAST_CHECK: &str = "last_registry_check";
 const META_LAST_SUCCESS: &str = "last_registry_success";
 const META_MANIFEST_JSON: &str = "registry_manifest_json";
+/// Fingerprint of the last successful full rehydrate against the canonical model catalog.
+/// Avoids re-running hundreds of UPDATEs on every `load_registry` / catalog read.
+const META_REHYDRATE_FP: &str = "canonical_models_rehydrate_fp";
 
 /// Result of loading the registry for immediate use.
 #[derive(Debug, Clone)]
@@ -103,24 +106,25 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
     if let Some(loaded) = load_cached_registry(store) {
         // Merge in any providers from the embedded snapshot that are newer
         // (different SHA-256) than what's in the cache.
-        merge_embedded_provider_updates(store);
+        let merged = merge_embedded_provider_updates(store);
 
-        // Correct stale context/effort rows left by API-sync sibling inheritance
-        // using the canonical model catalog (models/<id>.json).
-        if let Err(err) = store.rehydrate_provider_models_from_catalog() {
-            tracing::warn!(error = %err, "failed to rehydrate models from canonical catalog");
-        }
+        // Correct stale context/effort rows left by API-sync sibling inheritance.
+        // Skip when the catalog fingerprint is unchanged — rehydrate is O(models)
+        // and used to run on every provider_catalog() call.
+        maybe_rehydrate_from_catalog(store, merged);
 
-        // Reload after merging so the returned registry reflects updates.
-        if let Some(reloaded) = load_cached_registry(store) {
-            tracing::info!(
-                version = reloaded.manifest.version,
-                providers = reloaded.providers.len(),
-                "loaded registry from local cache (after embedded merge)"
-            );
-            return reloaded;
+        // Reload only when the store may have changed.
+        if merged {
+            if let Some(reloaded) = load_cached_registry(store) {
+                tracing::info!(
+                    version = reloaded.manifest.version,
+                    providers = reloaded.providers.len(),
+                    "loaded registry from local cache (after embedded merge)"
+                );
+                return reloaded;
+            }
         }
-        tracing::info!(
+        tracing::debug!(
             version = loaded.manifest.version,
             providers = loaded.providers.len(),
             "loaded registry from local cache"
@@ -167,14 +171,16 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
 /// when the cache already has the same manifest version as the snapshot —
 /// remote sync early-returns on version match and never runs
 /// `delete_providers_not_in`.
-fn merge_embedded_provider_updates(store: &RegistryStore) {
+///
+/// Returns `true` when the store was mutated (caller should reload / rehydrate).
+fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
     let embedded_manifest = match embedded_manifest() {
         Ok(m) => m,
-        Err(_) => return,
+        Err(_) => return false,
     };
     let embedded_providers = match embedded_providers() {
         Ok(p) => p,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut updated = 0;
@@ -293,7 +299,45 @@ fn merge_embedded_provider_updates(store: &RegistryStore) {
         // Update manifest metadata to reflect merged state.
         let _ = store.save_manifest_meta(&embedded_manifest);
         let _ = save_registry_metadata(store, &embedded_manifest, None, None);
+        return true;
     }
+    false
+}
+
+/// Full model rehydrate is expensive; run only when the catalog fingerprint changes
+/// or when the store just mutated (`force`).
+fn maybe_rehydrate_from_catalog(store: &RegistryStore, force: bool) {
+    let fingerprint = catalog_rehydrate_fingerprint(store);
+    if !force {
+        if let Ok(Some(prev)) = store.meta_get(META_REHYDRATE_FP) {
+            if prev == fingerprint {
+                return;
+            }
+        }
+    }
+    match store.rehydrate_provider_models_from_catalog() {
+        Ok(_) => {
+            let _ = store.meta_set(META_REHYDRATE_FP, &fingerprint);
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to rehydrate models from canonical catalog");
+        }
+    }
+}
+
+fn catalog_rehydrate_fingerprint(store: &RegistryStore) -> String {
+    // Prefer stored manifest version + model count; fall back to embedded.
+    let version = store
+        .manifest_version()
+        .ok()
+        .flatten()
+        .or_else(|| embedded_manifest().ok().map(|m| m.version))
+        .unwrap_or(0);
+    let models = store
+        .load_canonical_model_catalog()
+        .map(|c| c.len())
+        .unwrap_or(0);
+    format!("v{version}:m{models}")
 }
 
 /// Loads the registry from the local SQLite cache if it is non-empty.
@@ -482,13 +526,26 @@ pub async fn download_registry_updates(
     let schema = embedded_provider_schema();
     let mut providers = Vec::with_capacity(to_fetch.len());
 
-    for provider_id in &to_fetch {
-        let provider = fetch_provider_with_retry(fetcher, provider_id, manifest, config).await?;
-
-        // Validate the downloaded provider against the embedded JSON schema.
-        validate_registry_schema(&provider, schema)?;
-
-        providers.push(provider);
+    // Parallel download of changed providers (was sequential and dominated sync time).
+    // Cap concurrency so we don't open dozens of HTTPS streams at once.
+    const MAX_PARALLEL: usize = 8;
+    for chunk in to_fetch.chunks(MAX_PARALLEL) {
+        let fetch_futs: Vec<_> = chunk
+            .iter()
+            .map(|provider_id| {
+                let pid = (*provider_id).to_string();
+                async move {
+                    let provider =
+                        fetch_provider_with_retry(fetcher, pid.as_str(), manifest, config).await?;
+                    Ok::<_, anyhow::Error>(provider)
+                }
+            })
+            .collect();
+        let fetched = futures_util::future::try_join_all(fetch_futs).await?;
+        for provider in fetched {
+            validate_registry_schema(&provider, schema)?;
+            providers.push(provider);
+        }
     }
 
     validate_registry_hashes(&providers, manifest)?;
@@ -593,6 +650,9 @@ pub fn apply_registry_update_atomically_with_transcription(
     store.delete_transcription_providers_not_in(&tx_keep)?;
 
     store.save_manifest_meta(manifest)?;
+    // Clear rehydrate fingerprint so the next load reapplies catalog metadata.
+    let _ = store.meta_set(META_REHYDRATE_FP, "");
+    crate::config::providers::invalidate_registry_catalog_cache();
 
     Ok(())
 }
