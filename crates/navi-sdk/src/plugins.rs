@@ -1027,8 +1027,7 @@ mod tests {
         let result = engine.plugin_install_path(&pkg, true).expect("install");
         assert_eq!(result.kind, "skill");
         assert!(
-            result.kind_hint.contains("Imported skill")
-                || result.kind_hint.contains("skills/"),
+            result.kind_hint.contains("Imported skill") || result.kind_hint.contains("skills/"),
             "hint={}",
             result.kind_hint
         );

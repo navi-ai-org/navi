@@ -2,7 +2,7 @@ use crate::NaviConfig;
 use crate::context::{ContextPacket, render_context_packets};
 use crate::harness::{build_system_prompt_with_manifest_text, tool_prompt_manifest};
 use crate::model::ModelMessage;
-use crate::skills::{SkillManifest, SkillPool, render_catalog_entries, CatalogEntries};
+use crate::skills::{CatalogEntries, SkillManifest, SkillPool, render_catalog_entries};
 use crate::tool::ToolDefinition;
 use anyhow::{Context, Result};
 use std::collections::HashMap;

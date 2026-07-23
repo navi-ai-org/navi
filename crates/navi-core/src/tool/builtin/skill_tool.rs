@@ -38,10 +38,16 @@ impl Tool for SkillTool {
             ToolKind::Read,
             helpers::json_schema(
                 &[
-                    ("id", "Skill id from the catalog or a pool listing (or `pool/id`)."),
+                    (
+                        "id",
+                        "Skill id from the catalog or a pool listing (or `pool/id`).",
+                    ),
                     ("name", "Skill name."),
                     ("skill", "Skill id or name."),
-                    ("pool", "Optional pool id when the skill is inside a folder."),
+                    (
+                        "pool",
+                        "Optional pool id when the skill is inside a folder.",
+                    ),
                 ],
                 &[],
             ),
@@ -75,12 +81,7 @@ impl Tool for SkillTool {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let skill = load_skill_by_id(
-            &config.skills,
-            &self.project_dir,
-            &self.data_dir,
-            &lookup,
-        )?;
+        let skill = load_skill_by_id(&config.skills, &self.project_dir, &self.data_dir, &lookup)?;
 
         Ok(helpers::ok(
             invocation.id,

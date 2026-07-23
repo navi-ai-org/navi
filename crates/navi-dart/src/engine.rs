@@ -598,10 +598,7 @@ pub unsafe extern "C" fn navi_engine_set_goal_for_host_turn(
     let short = unsafe { cstr_to_str(short_description) }.map(|s| s.to_string());
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
-        match inner
-            .set_goal_for_host_turn(&sid, obj, short, budget)
-            .await
-        {
+        match inner.set_goal_for_host_turn(&sid, obj, short, budget).await {
             Ok((goal, start_prompt)) => ctx.success(&serde_json::json!({
                 "goal": goal,
                 "start_prompt": start_prompt,

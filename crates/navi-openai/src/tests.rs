@@ -817,15 +817,34 @@ fn accumulates_chat_completion_tool_call_arguments() {
         &mut state,
     );
 
-    assert!(first.is_empty());
-    assert_eq!(
-        second.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
-        vec![ModelStreamEvent::ToolCall(ToolInvocation {
-            id: "call_1".to_string(),
-            tool_name: "read_file".to_string(),
-            input: json!({ "path": "Cargo.toml" }),
-        }),]
+    // Partial first chunk may announce the tool via ToolCallProgress.
+    let first: Vec<_> = first.into_iter().map(Result::unwrap).collect();
+    assert!(
+        first
+            .iter()
+            .all(|e| matches!(e, ModelStreamEvent::ToolCallProgress { .. })),
+        "first chunk should only be progress (or empty), got {first:?}"
     );
+    let second: Vec<_> = second.into_iter().map(Result::unwrap).collect();
+    assert!(
+        second.iter().any(|e| matches!(
+            e,
+            ModelStreamEvent::ToolCall(ToolInvocation {
+                id,
+                tool_name,
+                ..
+            }) if id == "call_1" && tool_name == "read_file"
+        )),
+        "second chunk must emit the completed ToolCall, got {second:?}"
+    );
+    let call = second
+        .iter()
+        .find_map(|e| match e {
+            ModelStreamEvent::ToolCall(inv) => Some(inv),
+            _ => None,
+        })
+        .expect("tool call");
+    assert_eq!(call.input, json!({ "path": "Cargo.toml" }));
 }
 
 #[test]
@@ -2058,19 +2077,34 @@ fn anthropic_sse_tool_use_lifecycle() {
         crate::providers::anthropic::parse_anthropic_sse_with_state(data, state)
     };
 
-    // content_block_start with tool_use
+    // content_block_start with tool_use — may emit ToolCallProgress when name is known.
     let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-123","name":"read_file","input":{}}}"#;
     let events = parse(start, &mut state);
-    assert!(events.is_empty(), "start should not emit events");
+    assert!(
+        events
+            .iter()
+            .all(|e| matches!(e, Ok(ModelStreamEvent::ToolCallProgress { .. }))),
+        "start should only emit progress (or nothing), got {events:?}"
+    );
 
-    // input_json_delta (partial JSON)
+    // input_json_delta (partial JSON) — progress only, not a completed ToolCall.
     let delta1 = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}"#;
     let events = parse(delta1, &mut state);
-    assert!(events.is_empty(), "partial json should not emit events");
+    assert!(
+        events
+            .iter()
+            .all(|e| matches!(e, Ok(ModelStreamEvent::ToolCallProgress { .. }))),
+        "partial json should only emit progress, got {events:?}"
+    );
 
     let delta2 = r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"test.rs\"}"}}"#;
     let events = parse(delta2, &mut state);
-    assert!(events.is_empty(), "partial json should not emit events");
+    assert!(
+        events
+            .iter()
+            .all(|e| matches!(e, Ok(ModelStreamEvent::ToolCallProgress { .. }))),
+        "partial json should only emit progress, got {events:?}"
+    );
 
     // content_block_stop -> emits ToolCall
     let stop = r#"{"type":"content_block_stop","index":1}"#;

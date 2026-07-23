@@ -875,9 +875,7 @@ fn production_bridge_executor(policy: SecurityPolicy) -> Arc<crate::tool::ToolEx
         let mut executor = ToolExecutor::empty(policy.clone());
         let subagent = SubagentTool::new(
             weak.clone(),
-            Arc::new(RwLock::new(
-                Arc::new(NoopProvider) as Arc<dyn ModelProvider>
-            )),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
             project.clone(),
             data.clone(),
             Arc::new(RwLock::new("test".into())),
@@ -1019,10 +1017,7 @@ async fn production_bridge_agent_write_scope_options_not_schema_error() {
         agent["create_files"], true,
         "effective create_files should surface on bridge result: {agent:?}"
     );
-    let wa = agent["write_allow"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let wa = agent["write_allow"].as_array().cloned().unwrap_or_default();
     assert!(
         wa.iter().any(|v| v.as_str() == Some("scratch/x.txt")),
         "write_allow must pass through bridge payload: {agent:?}"

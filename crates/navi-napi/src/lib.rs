@@ -764,12 +764,7 @@ impl NaviNapiEngine {
     ) -> Result<JsonValue> {
         let (goal, start_prompt) = self
             .inner
-            .set_goal_for_host_turn(
-                &session_id,
-                objective,
-                short_description,
-                token_budget,
-            )
+            .set_goal_for_host_turn(&session_id, objective, short_description, token_budget)
             .await
             .map_err(to_napi_error)?;
         let goal_json = serde_json::to_value(goal).map_err(to_napi_error)?;

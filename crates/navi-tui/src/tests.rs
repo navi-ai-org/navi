@@ -1108,11 +1108,10 @@ fn checkpoint_session_now_persists_user_prompt_before_turn() {
         content_parts: vec![],
         submitted_at: Some(1),
     });
-    app.messages
-        .push(crate::state::ChatMessage::new(
-            crate::state::ChatRole::User,
-            "persist me before tools run".to_string(),
-        ));
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::User,
+        "persist me before tools run".to_string(),
+    ));
 
     crate::persistence::checkpoint_session_now(&mut app);
     assert!(app.session_checkpoint_due.is_none());
@@ -1154,10 +1153,14 @@ fn schedule_session_checkpoint_flushes_when_due() {
     );
 
     // Force due and flush.
-    app.session_checkpoint_due = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    app.session_checkpoint_due =
+        Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
     crate::persistence::flush_session_checkpoint_if_due(&mut app);
     assert!(app.session_checkpoint_due.is_none());
-    let loaded = app.session_store.load(sid.as_str()).expect("due flush writes");
+    let loaded = app
+        .session_store
+        .load(sid.as_str())
+        .expect("due flush writes");
     assert_eq!(loaded.events.len(), 1);
 }
 
@@ -4792,7 +4795,6 @@ fn background_commands_down_arrow_moves_selection() {
     assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(app.bg_command_selected, 2);
 }
-
 
 #[test]
 fn set_goal_command_opens_modal() {

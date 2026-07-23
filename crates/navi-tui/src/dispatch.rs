@@ -961,18 +961,22 @@ fn upsert_streaming_tool_call(
         tool_name
     };
 
-    let existing_idx = app.streaming_tool_calls.iter().position(|c| match (&id, &c.id) {
-        (Some(a), Some(b)) => a == b,
-        _ => false,
-    }).or_else(|| {
-        if id.is_none() {
-            app.streaming_tool_calls.iter().rposition(|c| {
-                c.id.is_none() && (c.tool_name == name || c.tool_name == "tool")
-            })
-        } else {
-            None
-        }
-    });
+    let existing_idx = app
+        .streaming_tool_calls
+        .iter()
+        .position(|c| match (&id, &c.id) {
+            (Some(a), Some(b)) => a == b,
+            _ => false,
+        })
+        .or_else(|| {
+            if id.is_none() {
+                app.streaming_tool_calls
+                    .iter()
+                    .rposition(|c| c.id.is_none() && (c.tool_name == name || c.tool_name == "tool"))
+            } else {
+                None
+            }
+        });
 
     if let Some(idx) = existing_idx {
         let prev = app.streaming_tool_calls[idx].arguments_chars;

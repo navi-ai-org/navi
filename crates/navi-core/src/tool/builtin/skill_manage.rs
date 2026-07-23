@@ -173,11 +173,7 @@ impl Tool for SkillListTool {
         }
 
         // Top-level catalog: root skills + pools (not nested members).
-        let catalog = discover_catalog_entries(
-            &config.skills,
-            &self.project_dir,
-            &self.data_dir,
-        )?;
+        let catalog = discover_catalog_entries(&config.skills, &self.project_dir, &self.data_dir)?;
         let skills: Vec<_> = catalog.root_skills.iter().map(skill_meta_json).collect();
         let pools: Vec<_> = catalog.pools.iter().map(pool_meta_json).collect();
         let count = skills.len() + pools.len();
@@ -502,11 +498,7 @@ mod tests {
         config.skills.enabled = true;
         let project = temp.to_path_buf();
         let data = temp.to_path_buf();
-        let list = SkillListTool::new(
-            project.clone(),
-            data.clone(),
-            Arc::new(RwLock::new(config)),
-        );
+        let list = SkillListTool::new(project.clone(), data.clone(), Arc::new(RwLock::new(config)));
         let save = SkillSaveTool::new(project, data.clone());
         (list, save, data)
     }

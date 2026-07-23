@@ -509,7 +509,9 @@ fn composer_activity_status(app: &TuiApp, elapsed_ms: u64) -> (String, ratatui::
             let id = &app.pending_approvals[0].id;
             app.tool_invocations
                 .get(id)
-                .map(|invocation| tool_activity_label(&invocation.tool_name, ToolActivityPhase::Running))
+                .map(|invocation| {
+                    tool_activity_label(&invocation.tool_name, ToolActivityPhase::Running)
+                })
                 .unwrap_or_else(|| "tool".to_string())
         } else {
             format!("{} tools", app.pending_approvals.len())
@@ -1630,8 +1632,7 @@ mod tests {
         assert_eq!(app.usage_state.stream_avg_tokens_per_sec(), None);
 
         // Simulate a long idle gap (tools / latency) then more bytes — gap is capped.
-        app.usage_state.stream_last_byte_at =
-            Some(Instant::now() - Duration::from_secs(30));
+        app.usage_state.stream_last_byte_at = Some(Instant::now() - Duration::from_secs(30));
         app.usage_state.note_streamed_bytes(400);
         // Active time is only the capped inter-chunk gap (≤2.5s), not 30s.
         assert!(
@@ -1651,8 +1652,7 @@ mod tests {
     fn pause_stream_throughput_stops_active_clock() {
         let mut app = crate::tests::test_app("");
         app.usage_state.note_streamed_bytes(100);
-        app.usage_state.stream_last_byte_at =
-            Some(Instant::now() - Duration::from_millis(200));
+        app.usage_state.stream_last_byte_at = Some(Instant::now() - Duration::from_millis(200));
         app.usage_state.note_streamed_bytes(100);
         let active_before = app.usage_state.stream_active_ms;
         assert!(active_before > 0);
@@ -1661,8 +1661,7 @@ mod tests {
         assert!(app.usage_state.stream_last_byte_at.is_none());
 
         // Time spent "running tools" must not accumulate.
-        app.usage_state.stream_last_byte_at =
-            Some(Instant::now() - Duration::from_secs(10)); // would be wrong if not paused
+        app.usage_state.stream_last_byte_at = Some(Instant::now() - Duration::from_secs(10)); // would be wrong if not paused
         // After pause, last_byte_at is None; if someone only sleeps, active stays.
         app.usage_state.pause_stream_throughput();
         assert_eq!(app.usage_state.stream_active_ms, active_before);
@@ -1685,8 +1684,7 @@ mod tests {
     fn tool_arg_bytes_count_toward_throughput() {
         let mut app = crate::tests::test_app("");
         app.usage_state.note_streamed_bytes(800); // first
-        app.usage_state.stream_last_byte_at =
-            Some(Instant::now() - Duration::from_millis(500));
+        app.usage_state.stream_last_byte_at = Some(Instant::now() - Duration::from_millis(500));
         app.usage_state.note_streamed_bytes(800); // second "tool args" chunk
         assert!(app.usage_state.stream_output_bytes >= 1600);
         assert!(app.usage_state.stream_active_ms >= 400);

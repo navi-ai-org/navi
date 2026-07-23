@@ -78,7 +78,12 @@ impl SkillStore {
             .map(|p| p.join(".navi").join("skills"))
     }
 
-    fn skill_file_path(&self, id: &str, pool: Option<&str>, scope: SkillWriteScope) -> Result<PathBuf> {
+    fn skill_file_path(
+        &self,
+        id: &str,
+        pool: Option<&str>,
+        scope: SkillWriteScope,
+    ) -> Result<PathBuf> {
         let root = match scope {
             SkillWriteScope::User => self.user_root(),
             SkillWriteScope::Project => self.project_root().ok_or_else(|| {
@@ -95,13 +100,13 @@ impl SkillStore {
     pub fn list_all(&self) -> Result<Vec<SkillManifest>> {
         let mut out = list_skills_recursive(&self.user_root(), SkillWriteScope::User, None)?;
         if let Some(root) = self.project_root() {
-            out.extend(list_skills_recursive(&root, SkillWriteScope::Project, None)?);
+            out.extend(list_skills_recursive(
+                &root,
+                SkillWriteScope::Project,
+                None,
+            )?);
         }
-        out.sort_by(|a, b| {
-            a.pool
-                .cmp(&b.pool)
-                .then_with(|| a.id.cmp(&b.id))
-        });
+        out.sort_by(|a, b| a.pool.cmp(&b.pool).then_with(|| a.id.cmp(&b.id)));
         out.dedup_by(|a, b| a.id == b.id && a.pool == b.pool);
         Ok(out)
     }
@@ -143,7 +148,11 @@ impl SkillStore {
         if let Some(root) = self.project_root() {
             let p = root.join(&pool);
             if p.is_dir() {
-                out.extend(list_skills_in_pool_dir(&p, &pool, SkillWriteScope::Project)?);
+                out.extend(list_skills_in_pool_dir(
+                    &p,
+                    &pool,
+                    SkillWriteScope::Project,
+                )?);
             }
         }
         out.sort_by(|a, b| a.id.cmp(&b.id));
@@ -482,7 +491,10 @@ fn read_pool_meta(path: &Path, fallback_id: &str) -> (String, Option<String>) {
             return (name, parsed.description);
         }
     }
-    (fallback_id.to_string(), Some(format!("Skill pool `{fallback_id}`")))
+    (
+        fallback_id.to_string(),
+        Some(format!("Skill pool `{fallback_id}`")),
+    )
 }
 
 fn list_skills_in_pool_dir(
@@ -563,17 +575,10 @@ fn find_skill_in_pools(
     Ok(None)
 }
 
-fn load_skill_md(
-    path: &Path,
-    scope: SkillWriteScope,
-    pool: Option<&str>,
-) -> Result<SkillManifest> {
+fn load_skill_md(path: &Path, scope: SkillWriteScope, pool: Option<&str>) -> Result<SkillManifest> {
     let raw = fs::read_to_string(path)
         .with_context(|| format!("failed to read skill file {}", path.display()))?;
-    let fallback = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("skill");
+    let fallback = path.file_stem().and_then(|s| s.to_str()).unwrap_or("skill");
     let fallback = if fallback.eq_ignore_ascii_case("skill") {
         path.parent()
             .and_then(|p| p.file_name())

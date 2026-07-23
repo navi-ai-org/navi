@@ -560,7 +560,10 @@ pub(crate) fn render_set_goal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("enter", Style::default().fg(text()).bg(modal_bg())),
-            Span::styled(" send goal  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled(
+                " send goal  ·  ",
+                Style::default().fg(muted()).bg(modal_bg()),
+            ),
             Span::styled("shift+enter", Style::default().fg(text()).bg(modal_bg())),
             Span::styled(" newline  ·  ", Style::default().fg(muted()).bg(modal_bg())),
             Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),

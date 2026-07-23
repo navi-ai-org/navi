@@ -1387,11 +1387,7 @@ mod tests {
             assert_eq!(lines[0].spans.len(), 2);
             assert_eq!(lines[0].spans[0].content.as_ref(), original_prefix);
             assert_eq!(lines[0].spans[1].content.as_ref(), original_action);
-            let joined: String = lines[0]
-                .spans
-                .iter()
-                .map(|s| s.content.as_ref())
-                .collect();
+            let joined: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
             assert_eq!(joined, "◆ Run");
             assert!(
                 !joined.contains('│'),

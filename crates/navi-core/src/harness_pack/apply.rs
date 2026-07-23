@@ -63,8 +63,11 @@ pub fn apply_harness_for_skills(
     let mut card_sections: Vec<String> = Vec::new();
 
     for skill in active_skills {
-        // Skill-level allow_tools still apply
-        if !skill.allow_tools.is_empty() {
+        // Catalog metadata must not lock the session tool set. Only skills that
+        // opt into harness mode (or a materialize pack graph) may contribute an
+        // allowlist — otherwise builtins like `navi-create-skill` with their
+        // authoring tool list would block unrelated tools (lite missions, etc.).
+        if skill.harness && !skill.allow_tools.is_empty() {
             allow_lists.push(skill.allow_tools.clone());
         }
         let Ok(Some(pack)) = load_pack(data_dir, &skill.id) else {
@@ -147,7 +150,7 @@ mod tests {
             deny_tools: vec![],
             harness: false,
             pool: None,
-        path: PathBuf::from("x"),
+            path: PathBuf::from("x"),
             instructions: "do the thing".into(),
             source: SkillSource::Store,
             scope: SkillWriteScope::User,

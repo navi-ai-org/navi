@@ -81,11 +81,7 @@ pub fn discover_configured_skills(
         }
     }
 
-    skills.sort_by(|a, b| {
-        a.pool
-            .cmp(&b.pool)
-            .then_with(|| a.id.cmp(&b.id))
-    });
+    skills.sort_by(|a, b| a.pool.cmp(&b.pool).then_with(|| a.id.cmp(&b.id)));
     skills.dedup_by(|a, b| a.id == b.id && a.pool == b.pool);
     Ok(skills)
 }
@@ -149,10 +145,7 @@ pub fn discover_catalog_entries(
     pools.sort_by(|a, b| a.id.cmp(&b.id));
     pools.dedup_by(|a, b| a.id == b.id);
 
-    Ok(CatalogEntries {
-        root_skills,
-        pools,
-    })
+    Ok(CatalogEntries { root_skills, pools })
 }
 
 /// Top-level catalog: root skills + pool folders (no nested skill bodies).
@@ -534,7 +527,7 @@ pub fn parse_skill_md(raw: &str, fallback_name: &str) -> ParsedSkillFile {
             let mut parsed = ParsedSkillFile {
                 instructions: body,
                 harness: false,
-        pool: None,
+                pool: None,
                 ..Default::default()
             };
             for line in front.lines() {
@@ -812,7 +805,7 @@ mod tests {
                 allow_tools: vec!["read_file".into()],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "Do the thing carefully.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -844,7 +837,7 @@ mod tests {
                 allow_tools: vec!["read_file".into(), "bash".into()],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "Review thoroughly.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -873,7 +866,7 @@ mod tests {
             deny_tools: vec![],
             harness: false,
             pool: None,
-        path: PathBuf::from("a"),
+            path: PathBuf::from("a"),
             instructions: "a".into(),
             source: SkillSource::Store,
             scope: SkillWriteScope::User,
@@ -890,7 +883,7 @@ mod tests {
             deny_tools: vec![],
             harness: false,
             pool: None,
-        path: PathBuf::from("b"),
+            path: PathBuf::from("b"),
             instructions: "b".into(),
             source: SkillSource::Store,
             scope: SkillWriteScope::User,
@@ -920,7 +913,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },
@@ -952,7 +945,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "Ask one question first.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -987,7 +980,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "Ask one question first.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -1007,7 +1000,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "Other body.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -1093,7 +1086,7 @@ instructions = "Help carefully."
                 allow_tools: parsed.allow_tools.clone(),
                 deny_tools: parsed.deny_tools.clone(),
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: parsed.instructions.clone(),
                 scope: SkillWriteScope::User,
             },
@@ -1124,7 +1117,7 @@ instructions = "Help carefully."
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
-        pool: None,
+                pool: None,
                 instructions: "body".into(),
                 scope: SkillWriteScope::User,
             },
