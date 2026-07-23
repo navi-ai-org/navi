@@ -178,13 +178,15 @@ async fn l3_require_and_io_sandbox() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn l4_infinite_loop_hits_limit() {
     let (_dir, policy) = temp_policy();
-    let tool = tool_with_mock(policy, MockAgentBackend::default());
+    let mut cfg = WorkflowConfig::default();
+    cfg.run_timeout_ms = 10_000;
+    let tool = WorkflowTool::with_mock(policy, cfg, MockAgentBackend::default());
     let started = std::time::Instant::now();
     let r = tokio::time::timeout(
         Duration::from_secs(15),
         run(
             &tool,
-            json!({"script": "function workflow() while true do end end", "timeout_ms": 10000}),
+            json!({"script": "function workflow() while true do end end"}),
         ),
     )
     .await
@@ -936,7 +938,6 @@ async fn production_bridge_agent_without_label_not_schema_error() {
                 tool_name: "workflow".into(),
                 input: json!({
                     "script": r#"function workflow() return agent("ping") end"#,
-                    "timeout_ms": 30_000,
                 }),
             },
             ToolInvocationContext::default(),
@@ -992,7 +993,6 @@ async fn production_bridge_agent_write_scope_options_not_schema_error() {
                             })
                         end
                     "#,
-                    "timeout_ms": 30_000,
                 }),
             },
             ToolInvocationContext::default(),
@@ -1114,11 +1114,15 @@ async fn r4_timeout_status() {
     let (_dir, policy) = temp_policy();
     let inflight = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
-    let tool = tool_with_probe_delay(policy, 500, inflight, peak);
+    let mut cfg = WorkflowConfig::default();
+    cfg.run_timeout_ms = 50;
+    let probe = WorkerProbeBackend::new(policy.clone())
+        .with_delay(500)
+        .with_inflight(inflight, peak);
+    let tool = WorkflowTool::with_probe(policy, cfg, probe);
     let r = run(
         &tool,
         json!({
-            "timeout_ms": 50,
             "script": r#"
                 function workflow()
                     return agent("slow")

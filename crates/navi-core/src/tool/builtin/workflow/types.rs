@@ -12,8 +12,6 @@ pub const DEFAULT_MAX_PARALLEL: usize = 16;
 pub const DEFAULT_MAX_AGENTS: usize = 1000;
 /// Default max Lua script size (64 KiB).
 pub const DEFAULT_MAX_SCRIPT_BYTES: usize = 64 * 1024;
-/// Default wall-clock run timeout (30 min).
-pub const DEFAULT_RUN_TIMEOUT_MS: u64 = 1_800_000;
 /// Truncate agent payloads before injecting into Lua (spec NF4).
 pub const AGENT_RESULT_MAX_BYTES: usize = 256 * 1024;
 
