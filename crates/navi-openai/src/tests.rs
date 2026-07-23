@@ -33,8 +33,9 @@ fn extract_chat_completion_text(value: &serde_json::Value) -> String {
 
 use crate::errors::ProviderError;
 use crate::mapping::{
-    apply_thinking_to_body, message_to_json, responses_input_item_to_json,
-    thinking_request_for_api, unique_sorted_model_ids,
+    apply_thinking_to_body, chat_tool_to_json, message_to_json, reasoning_text,
+    responses_input_item_to_json, responses_tool_to_json, thinking_request_for_api,
+    unique_sorted_model_ids, usage_from_value,
 };
 use crate::provider::OpenAiProvider;
 use crate::providers::anthropic::parse_anthropic_sse;
@@ -292,7 +293,7 @@ fn applies_openrouter_reasoning_effort() {
 
     assert_eq!(
         body["reasoning"],
-        json!({ "effort": "xhigh", "exclude": true })
+        json!({ "effort": "max", "exclude": true })
     );
 }
 
@@ -2540,4 +2541,330 @@ fn gemini_contents_serializes_audio_video_and_documents_inline() {
     assert_eq!(parts[2]["inlineData"]["data"], "video-base64");
     assert_eq!(parts[3]["inlineData"]["mimeType"], "application/pdf");
     assert_eq!(parts[3]["inlineData"]["data"], "pdf-base64");
+}
+
+#[test]
+fn parses_openai_responses_incomplete_as_done() {
+    let events = parse_openai_responses_sse(
+        r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_tokens"}}}"#,
+    );
+
+    assert_eq!(
+        events.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+        vec![ModelStreamEvent::Done]
+    );
+}
+
+#[tokio::test]
+async fn chat_completions_includes_provider_request_options() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_json(json!({
+            "model": "gpt-5",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "temperature": 0.3,
+            "top_p": 0.8,
+            "max_completion_tokens": 512,
+            "response_format": {"type": "json_object"},
+            "metadata": {"run": "test"},
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        request_options: Some(navi_core::ProviderRequestOptions {
+            temperature: Some(0.3),
+            top_p: Some(0.8),
+            max_tokens: Some(512),
+            response_format: Some(json!({"type": "json_object"})),
+            extra_body: Some(json!({"metadata": {"run": "test"}})),
+            ..Default::default()
+        }),
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn responses_api_includes_provider_request_options() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .and(body_json(json!({
+            "model": "gpt-5",
+            "input": [{"type":"message","role":"user","content":"Hi"}],
+            "temperature": 0.4,
+            "top_p": 0.7,
+            "max_tokens": 64,
+            "text": {"format": {"type": "json_object"}},
+            "store": true,
+            "stream": true,
+            "stream_options": {"include_usage": true}
+        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\"}\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiResponses,
+        base_url: Some(mock_server.uri()),
+        request_options: Some(navi_core::ProviderRequestOptions {
+            temperature: Some(0.4),
+            top_p: Some(0.7),
+            max_tokens: Some(64),
+            response_format: Some(json!({"type": "json_object"})),
+            extra_body: Some(json!({"store": true})),
+            ..Default::default()
+        }),
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[test]
+fn chat_messages_serialize_content_parts_for_image() {
+    let msg = ModelMessage::user_multimodal(
+        "describe",
+        vec![ContentPart::Image {
+            media_type: "image/png".into(),
+            data: "abc".into(),
+        }],
+    );
+    let json = message_to_json(&msg);
+    let content = json["content"].as_array().expect("content array");
+    assert_eq!(content[0]["type"], "image_url");
+    assert!(
+        content[0]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,abc")
+    );
+}
+
+#[test]
+fn chat_messages_serialize_content_parts_for_unsupported_media() {
+    let msg = ModelMessage::user_multimodal(
+        "analyze",
+        vec![
+            ContentPart::Audio {
+                media_type: "audio/mpeg".into(),
+                data: "audio".into(),
+                name: Some("clip.mp3".into()),
+            },
+            ContentPart::Video {
+                media_type: "video/mp4".into(),
+                data: "video".into(),
+                name: Some("clip.mp4".into()),
+            },
+            ContentPart::Document {
+                media_type: "application/pdf".into(),
+                data: "pdf".into(),
+                name: Some("paper.pdf".into()),
+            },
+        ],
+    );
+    let json = message_to_json(&msg);
+    let content = json["content"].as_array().expect("content array");
+    assert_eq!(content[0]["type"], "text");
+    assert!(content[0]["text"].as_str().unwrap().contains("clip.mp3"));
+    assert!(content[1]["text"].as_str().unwrap().contains("clip.mp4"));
+    assert!(content[2]["text"].as_str().unwrap().contains("paper.pdf"));
+}
+
+#[test]
+fn responses_input_items_include_type_for_plain_messages() {
+    let user = ModelMessage::user("hi");
+    let items = responses_input_item_to_json(&user);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "message");
+    assert_eq!(items[0]["role"], "user");
+    assert_eq!(items[0]["content"], "hi");
+
+    let assistant = ModelMessage::assistant("ok");
+    let items = responses_input_item_to_json(&assistant);
+    assert_eq!(items[0]["type"], "message");
+    assert_eq!(items[0]["role"], "assistant");
+}
+
+#[test]
+fn responses_input_items_serialize_unsupported_media_parts() {
+    let msg = ModelMessage::user_multimodal(
+        "analyze",
+        vec![
+            ContentPart::Audio {
+                media_type: "audio/mpeg".into(),
+                data: "audio".into(),
+                name: Some("clip.mp3".into()),
+            },
+            ContentPart::Video {
+                media_type: "video/mp4".into(),
+                data: "video".into(),
+                name: Some("clip.mp4".into()),
+            },
+            ContentPart::Document {
+                media_type: "application/pdf".into(),
+                data: "pdf".into(),
+                name: Some("paper.pdf".into()),
+            },
+        ],
+    );
+    let items = responses_input_item_to_json(&msg);
+    let content = items[0]["content"].as_array().expect("content array");
+    assert_eq!(content[0]["type"], "input_text");
+    assert!(content[0]["text"].as_str().unwrap().contains("clip.mp3"));
+    assert!(content[1]["text"].as_str().unwrap().contains("clip.mp4"));
+    assert!(content[2]["text"].as_str().unwrap().contains("paper.pdf"));
+}
+
+#[test]
+fn responses_tool_definition_shape_matches_openai_schema() {
+    let tool = navi_core::ToolDefinition {
+        name: "read_file".into(),
+        description: "Read a file".into(),
+        kind: navi_core::ToolKind::Read,
+        input_schema: json!({"type": "object"}),
+        metadata: navi_core::ToolMetadata::default(),
+    };
+    let json = responses_tool_to_json(&tool);
+    assert_eq!(json["type"], "function");
+    assert_eq!(json["name"], "read_file");
+    assert_eq!(json["parameters"], json!({"type": "object"}));
+    assert!(
+        json.get("function").is_none(),
+        "Responses API parameters are top-level"
+    );
+}
+
+#[test]
+fn chat_tool_definition_shape_matches_openai_schema() {
+    let tool = navi_core::ToolDefinition {
+        name: "read_file".into(),
+        description: "Read a file".into(),
+        kind: navi_core::ToolKind::Read,
+        input_schema: json!({"type": "object"}),
+        metadata: navi_core::ToolMetadata::default(),
+    };
+    let json = chat_tool_to_json(&tool);
+    assert_eq!(json["type"], "function");
+    assert_eq!(json["function"]["name"], "read_file");
+    assert_eq!(json["function"]["parameters"], json!({"type": "object"}));
+}
+
+#[test]
+fn apply_thinking_to_body_for_opencode_uses_chat_template_kwargs() {
+    let mut body = json!({"model": "opencode/glm-5.2", "messages": []});
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::ChatCompletions,
+            "opencode",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode",
+    );
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(
+        body["extra_body"]["chat_template_kwargs"]["reasoning_effort"],
+        "high"
+    );
+}
+
+#[test]
+fn usage_from_value_falls_back_to_total_tokens() {
+    let events = usage_from_value(Some(&json!({"total_tokens": 100, "completion_tokens": 30})));
+    assert_eq!(events.len(), 1);
+    let event = events[0].as_ref().unwrap();
+    assert!(matches!(
+        event,
+        ModelStreamEvent::Usage {
+            input_tokens: Some(70),
+            output_tokens: Some(30),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn reasoning_text_coerces_variants() {
+    assert_eq!(reasoning_text(&json!(null)), "");
+    assert_eq!(reasoning_text(&json!("plain text")), "plain text");
+    assert_eq!(reasoning_text(&json!(["a", "b"])), "a\nb");
+    assert_eq!(reasoning_text(&json!({"text": "nested"})), "nested");
+    assert_eq!(reasoning_text(&json!({"summary": "s"})), "s");
+    assert_eq!(reasoning_text(&json!({"unknown": true})), "");
+}
+
+#[test]
+fn responses_input_item_assistant_tool_calls_become_function_call_items() {
+    let invocation = ToolInvocation {
+        id: "call-1".into(),
+        tool_name: "read_file".into(),
+        input: json!({"path": "main.rs"}),
+    };
+    let msg = ModelMessage::assistant_tool_call(invocation);
+    let items = responses_input_item_to_json(&msg);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["type"], "function_call");
+    assert_eq!(items[0]["call_id"], "call-1");
+    assert_eq!(items[0]["name"], "read_file");
+    assert_eq!(items[0]["arguments"], "{\"path\":\"main.rs\"}");
 }
