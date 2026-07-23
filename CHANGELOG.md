@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-07-23
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.6...v0.3.7
+
+OpenCode Zen free model routing fixes, comprehensive free model test coverage, and TUI test regression fix.
+
+### Bug Fixes
+
+- **Wrong free model id** — `opencode_zen_model_id` mapped `nemotron-3-super-free` (nonexistent) instead of `nemotron-3-ultra-free` (the actual registry ref)
+- **Missing free models** — `hy3-free`, `mimo-v2.5-free`, and `north-mini-code-free` were absent from the canonical id mapping; users typing these aliases got the raw string sent to the API instead of the canonical model id
+- **Dead code in model mapping** — paid model aliases (qwen3.6-plus, glm-5.1, kimi-k2.6, etc.) were unreachable match arms since the function is only called when `is_free_model_name` returns true; removed
+- **`is_free_model_name` underscore blindness** — models named with `_free` suffix (e.g. `DeepSeek_V4_Flash_Free`) were not detected as free because only `-free` and ` free` were checked; now normalizes `_` → `-` before matching
+- **TUI model picker test regression** — `model_picker_clips_long_rows_inside_modal_border` failed after the perf commit because `open_model_picker` calls `refresh_authenticated_providers` which overwrites the synthetic provider set; test now registers the provider in config so it survives the refresh
+
+### New Features
+
+- **20 new OpenCode Zen free model tests** covering: free model detection (suffix, substring, case-insensitivity, underscore), canonical id mapping for all 6 registered free models, `opencode/` prefix stripping, separator normalization, empty segment collapsing, whitespace trimming, unrecognized model fallback, public access eligibility, and request model name pass-through for paid/non-opencode providers
+- **3 new `canonical_provider_id` tests** covering alias mapping, known provider pass-through, and unknown provider pass-through
+
+### Bindings / SDK
+
+- Workspace crates and npm packages (`@navi-agent/navi`, `@navi-agent/napi`) bumped to **0.3.7**
+
 ## [0.3.6] - 2026-07-23
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.5...v0.3.6
