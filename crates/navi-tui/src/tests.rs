@@ -1514,6 +1514,37 @@ fn model_picker_clips_long_rows_inside_modal_border() {
     let mut config = navi_sdk::NaviConfig::default();
     config.updates.check_enabled = false;
     config.registry.update_enabled = false;
+    // Register the synthetic provider in the config so
+    // `refresh_authenticated_providers` (called by `open_model_picker`)
+    // can find it in the catalog and keep it authenticated.
+    config.providers.push(navi_sdk::ProviderConfig {
+        id: "verbose-provider".to_string(),
+        label: "Extremely Verbose Provider Label That Should Never Spill Past The Modal Border"
+            .to_string(),
+        description: "provider used for clipping tests".to_string(),
+        kind: navi_sdk::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "VERBOSE_PROVIDER_API_KEY".to_string(),
+        base_url: Some("https://example.com/v1".to_string()),
+        models: vec![navi_sdk::ProviderModelConfig {
+            name: "provider-family/this-is-an-intentionally-overlong-model-name-with-many-segments"
+                .to_string(),
+            task_size: Some(navi_sdk::ModelTaskSize::Large),
+            context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        }],
+        ..Default::default()
+    });
     let mut app = TuiApp::new_with_engine(
         LoadedConfig {
             config,
@@ -4203,8 +4234,8 @@ fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
         "deepseek-v4-flash-free"
     );
     assert_eq!(
-        navi_sdk::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Super Free"),
-        "nemotron-3-super-free"
+        navi_sdk::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Ultra Free"),
+        "nemotron-3-ultra-free"
     );
     assert_eq!(
         navi_sdk::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),

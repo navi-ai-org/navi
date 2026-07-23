@@ -1181,4 +1181,28 @@ mod tests {
             "override should inherit registry metadata for matching models"
         );
     }
+
+    // ── canonical_provider_id ────────────────────────────────────────────
+
+    #[test]
+    fn canonical_provider_id_maps_zen_alias() {
+        assert_eq!(super::canonical_provider_id("opencode-zen"), "opencode");
+    }
+
+    #[test]
+    fn canonical_provider_id_passes_through_known() {
+        assert_eq!(super::canonical_provider_id("opencode"), "opencode");
+        assert_eq!(super::canonical_provider_id("opencode-go"), "opencode-go");
+        assert_eq!(super::canonical_provider_id("openai"), "openai");
+        assert_eq!(super::canonical_provider_id("anthropic"), "anthropic");
+    }
+
+    #[test]
+    fn canonical_provider_id_passes_through_unknown() {
+        assert_eq!(
+            super::canonical_provider_id("custom-provider"),
+            "custom-provider"
+        );
+        assert_eq!(super::canonical_provider_id(""), "");
+    }
 }
