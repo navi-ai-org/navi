@@ -1,9 +1,9 @@
 use std::time::Instant;
 
 use navi_sdk::{
-    ModelOption, NaviConfigSaveTarget, NaviModelSelectionRequest, NaviProviderCredentialStatus,
-    ProviderConfig, canonical_provider_id, is_free_model_name, model_can_run_publicly,
-    resolve_provider_config, start_provider_device_oauth,
+    ModelOption, NaviConfigSaveTarget, NaviModelSelectionRequest, ProviderConfig,
+    canonical_provider_id, is_free_model_name, model_can_run_publicly, resolve_provider_config,
+    start_provider_device_oauth,
 };
 
 use crate::chat::refresh_system_context;
@@ -370,21 +370,19 @@ pub(crate) fn provider_auth_status(
     app: &TuiApp,
     provider_config: &ProviderConfig,
 ) -> ProviderAuthStatus {
-    let status = app
-        .engine()
-        .credential_status(&provider_config.id)
-        .unwrap_or(NaviProviderCredentialStatus {
-            provider_id: provider_config.id.clone(),
+    // List paint must not call `credential_status` per row/frame (env + store IO).
+    // `refresh_authenticated_providers` (modal open / credential change) owns that scan.
+    let canonical = canonical_provider_id(&provider_config.id);
+    if app.authenticated_providers.contains(canonical) {
+        ProviderAuthStatus {
+            configured: true,
+            label: "configured".to_string(),
+        }
+    } else {
+        ProviderAuthStatus {
             configured: false,
-            source: None,
             label: "not configured".to_string(),
-            detail: None,
-            env_var: provider_config.api_key_env.clone(),
-            credential_store_path: app.credential_store().path().to_path_buf(),
-        });
-    ProviderAuthStatus {
-        configured: status.configured,
-        label: status.label,
+        }
     }
 }
 

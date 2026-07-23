@@ -21,12 +21,29 @@ pub use registry::default_request_options_for;
 
 static REGISTRY_STORE: RwLock<Option<Arc<RegistryStore>>> = RwLock::new(None);
 
+/// In-memory base catalog (registry providers before user overrides).
+///
+/// Without this, every `provider_catalog()` call re-ran `load_registry()` —
+/// SQLite load + embedded merge + full model rehydrate — which made the
+/// Providers modal and model lists lag hard.
+static BASE_CATALOG_CACHE: RwLock<Option<Arc<Vec<ProviderConfig>>>> = RwLock::new(None);
+
 /// Sets the process-global registry store used by [`provider_catalog`].
 /// Typically called once during engine initialization.
 pub fn set_registry_store(store: Arc<RegistryStore>) {
     match REGISTRY_STORE.write() {
         Ok(mut guard) => *guard = Some(store),
         Err(poisoned) => *poisoned.into_inner() = Some(store),
+    }
+    invalidate_registry_catalog_cache();
+}
+
+/// Drop the in-memory base catalog so the next [`provider_catalog`] reloads
+/// from SQLite. Call after remote registry sync / model API sync mutates the store.
+pub fn invalidate_registry_catalog_cache() {
+    match BASE_CATALOG_CACHE.write() {
+        Ok(mut guard) => *guard = None,
+        Err(poisoned) => *poisoned.into_inner() = None,
     }
 }
 
@@ -52,11 +69,15 @@ pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
 }
 
 pub(crate) fn base_provider_catalog() -> Vec<ProviderConfig> {
+    if let Some(cached) = read_base_catalog_cache() {
+        return (*cached).clone();
+    }
+
     let store = match REGISTRY_STORE.read() {
         Ok(guard) => guard.clone(),
         Err(poisoned) => poisoned.into_inner().clone(),
     };
-    match store {
+    let providers = match store {
         Some(store) => match crate::registry::load_registry(&store) {
             loaded if !loaded.providers.is_empty() => loaded.providers,
             _ => {
@@ -68,6 +89,23 @@ pub(crate) fn base_provider_catalog() -> Vec<ProviderConfig> {
             tracing::debug!("registry store not set, falling back to embedded snapshot");
             load_embedded_or_minimal_fallback()
         }
+    };
+    write_base_catalog_cache(providers.clone());
+    providers
+}
+
+fn read_base_catalog_cache() -> Option<Arc<Vec<ProviderConfig>>> {
+    match BASE_CATALOG_CACHE.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+fn write_base_catalog_cache(providers: Vec<ProviderConfig>) {
+    let arc = Arc::new(providers);
+    match BASE_CATALOG_CACHE.write() {
+        Ok(mut guard) => *guard = Some(arc),
+        Err(poisoned) => *poisoned.into_inner() = Some(arc),
     }
 }
 
@@ -953,6 +991,36 @@ mod tests {
             Some(true),
             "sync must seed xAI vision default onto new SKUs"
         );
+    }
+
+    #[test]
+    fn base_catalog_cache_avoids_repeated_reload() {
+        use std::sync::Arc;
+
+        use crate::config::providers::{
+            base_provider_catalog, invalidate_registry_catalog_cache, set_registry_store,
+        };
+        use crate::registry::RegistryStore;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = RegistryStore::open(dir.path()).expect("open store");
+        // Seed from embedded so cache has content.
+        let _ = crate::registry::load_registry(&store);
+        set_registry_store(Arc::new(store));
+        invalidate_registry_catalog_cache();
+
+        let first = base_provider_catalog();
+        assert!(!first.is_empty(), "expected seeded catalog");
+        let second = base_provider_catalog();
+        assert_eq!(
+            first.len(),
+            second.len(),
+            "cached catalog should return same provider count"
+        );
+        // Invalidate forces a fresh path without panicking.
+        invalidate_registry_catalog_cache();
+        let third = base_provider_catalog();
+        assert_eq!(first.len(), third.len());
     }
 
     #[test]

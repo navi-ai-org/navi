@@ -309,6 +309,7 @@ pub async fn sync_aggregator_models(
 
     store
         .upsert_provider_with_sha256(&registry_provider, Some(super::store::LOCAL_API_SYNC_SHA))?;
+    crate::config::providers::invalidate_registry_catalog_cache();
 
     tracing::info!(
         provider = %provider_config.id,

@@ -822,21 +822,20 @@ impl TuiApp {
     }
 
     /// Rebuild the cached set of authenticated provider IDs.
-    /// Call this when opening the model picker or after credential changes.
+    /// Call this when opening the model picker / providers modal or after credential changes.
+    ///
+    /// Scans the full catalog once — not per paint frame.
     pub(crate) fn refresh_authenticated_providers(&mut self) {
         let engine = self.engine.clone();
-        let unique_providers: HashSet<String> = self
-            .models
-            .iter()
-            .map(|m| canonical_provider_id(&m.provider_id).to_string())
-            .collect();
-        self.authenticated_providers = unique_providers
+        let catalog = provider_catalog(&self.loaded_config.config);
+        self.authenticated_providers = catalog
             .into_iter()
-            .filter(|pid| {
-                engine
-                    .credential_status(pid)
-                    .map(|s| s.configured)
-                    .unwrap_or(false)
+            .filter_map(|p| {
+                let pid = canonical_provider_id(&p.id).to_string();
+                match engine.credential_status(&pid) {
+                    Ok(s) if s.configured => Some(pid),
+                    _ => None,
+                }
             })
             .collect();
     }
@@ -971,7 +970,8 @@ impl TuiApp {
             .iter()
             .enumerate()
             .filter_map(|(index, p)| {
-                if !self.authenticated_providers.contains(p.id.as_str()) {
+                let id = canonical_provider_id(&p.id);
+                if !self.authenticated_providers.contains(id) {
                     return None;
                 }
                 if emitted[index] {

@@ -47,6 +47,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         },
     );
 
+    // One catalog + filter build per paint (not per row). Catalog is process-cached
+    // after the first load_registry; auth status uses authenticated_providers only.
     let list_rows = app.filtered_providers();
     let catalog = provider_catalog(&app.loaded_config.config);
     let height = rows[1].height as usize;
