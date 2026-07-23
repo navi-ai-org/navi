@@ -511,6 +511,11 @@ pub unsafe extern "C" fn navi_engine_get_goal(
 ///
 /// While the goal is Active, subsequent turns auto-continue until complete,
 /// blocked, budget-limited, paused, or cleared.
+///
+/// **Does not start a model turn.** After this returns, call
+/// `navi_engine_send_turn` with a prompt from
+/// `navi_build_host_set_goal_user_prompt` (or `navi_engine_set_goal_for_host_turn`)
+/// so the agent sees the objective.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_set_goal(
     engine: *mut NaviDartEngine,
@@ -553,6 +558,75 @@ pub unsafe extern "C" fn navi_engine_set_goal(
             Err(e) => ctx.error(&e.to_string()),
         }
     });
+}
+
+/// Set the goal and return `{ goal, start_prompt }` for the first model turn.
+///
+/// Hosts should send `start_prompt` via `navi_engine_send_turn` so the model
+/// sees the objective (same framing as the TUI Set Goal modal).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn navi_engine_set_goal_for_host_turn(
+    engine: *mut NaviDartEngine,
+    session_id: *const c_char,
+    objective: *const c_char,
+    token_budget: i64,
+    short_description: *const c_char,
+    callback: NaviAsyncCallback,
+    user_data: *mut c_void,
+) {
+    let engine = unsafe { &*engine };
+    let ctx = CallbackCtx::new(callback, user_data);
+    let sid = match unsafe { cstr_to_str(session_id) } {
+        Some(s) => s.to_string(),
+        None => {
+            ctx.error("session_id is null or invalid UTF-8");
+            return;
+        }
+    };
+    let obj = match unsafe { cstr_to_str(objective) } {
+        Some(s) => s.to_string(),
+        None => {
+            ctx.error("objective is null or invalid UTF-8");
+            return;
+        }
+    };
+    let budget = if token_budget < 0 {
+        None
+    } else {
+        Some(token_budget)
+    };
+    let short = unsafe { cstr_to_str(short_description) }.map(|s| s.to_string());
+    let inner = engine.inner.clone();
+    engine.runtime.spawn(async move {
+        match inner
+            .set_goal_for_host_turn(&sid, obj, short, budget)
+            .await
+        {
+            Ok((goal, start_prompt)) => ctx.success(&serde_json::json!({
+                "goal": goal,
+                "start_prompt": start_prompt,
+            })),
+            Err(e) => ctx.error(&e.to_string()),
+        }
+    });
+}
+
+/// Synchronous helper: model-facing first-turn text after a host set_goal.
+///
+/// Returns a newly allocated C string the caller must free with
+/// `navi_string_free` (or the project’s usual free for engine strings).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn navi_build_host_set_goal_user_prompt(
+    objective: *const c_char,
+) -> *mut c_char {
+    let Some(obj) = (unsafe { cstr_to_str(objective) }) else {
+        return std::ptr::null_mut();
+    };
+    let prompt = navi_sdk::build_host_set_goal_user_prompt(obj);
+    match std::ffi::CString::new(prompt) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
 }
 
 /// Clears the goal for a session.

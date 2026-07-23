@@ -76,7 +76,7 @@ pub use navi_core::{
     PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
     QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
     SessionSnapshotInfo, SessionUsageSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
-    SudoPasswordRequest, SudoPasswordResponse, TaskStatus,
+    SudoPasswordRequest, SudoPasswordResponse, TaskStatus, build_host_set_goal_user_prompt,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;

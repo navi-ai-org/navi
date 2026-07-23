@@ -370,7 +370,20 @@ impl SessionStore {
             snapshot.clone()
         };
         let data = serde_json::to_vec_pretty(&snapshot)?;
-        fs::write(&path, data).with_context(|| format!("failed to write {}", path.display()))?;
+        // Atomic replace: write temp then rename so a crash mid-save cannot leave
+        // a truncated/corrupt session JSON (readers only see the previous file
+        // or the complete new one).
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, &data).with_context(|| format!("failed to write {}", tmp.display()))?;
+        crate::fs_util::set_private_file_permissions(&tmp)?;
+        fs::rename(&tmp, &path).with_context(|| {
+            format!(
+                "failed to replace {} with {}",
+                path.display(),
+                tmp.display()
+            )
+        })?;
+        // Re-assert final path perms (rename may inherit dir default ACLs).
         crate::fs_util::set_private_file_permissions(&path)?;
 
         Ok(path)
@@ -851,6 +864,44 @@ mod tests {
         let path = store.save(&snapshot).expect("save session");
         assert!(path.exists());
         assert_eq!(path.file_name().unwrap(), "test-session.json");
+        // Temp file must not linger after a successful atomic replace.
+        assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn save_replaces_existing_snapshot_atomically() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let store = SessionStore::with_redaction(tempdir.path().to_path_buf(), false);
+        let id = SessionId::new("atomic-session".to_string());
+        let mut snapshot = SessionSnapshot {
+            version: SessionSnapshot::CURRENT_VERSION,
+            id: id.clone(),
+            title: Some("v1".to_string()),
+            project: PathBuf::from("/tmp/project"),
+            created_at: 1,
+            updated_at: 2,
+            events: vec![AgentEvent::UserTaskSubmitted {
+                text: "first".to_string(),
+                content_parts: vec![],
+                submitted_at: Some(1),
+            }],
+            memory: None,
+            goal: None,
+            usage: None,
+        };
+        store.save(&snapshot).expect("save v1");
+        snapshot.title = Some("v2".to_string());
+        snapshot.updated_at = 3;
+        snapshot.events.push(AgentEvent::ModelOutput {
+            text: "reply".to_string(),
+            thinking: None,
+        });
+        store.save(&snapshot).expect("save v2");
+
+        let loaded = store.load("atomic-session").expect("load");
+        assert_eq!(loaded.title.as_deref(), Some("v2"));
+        assert_eq!(loaded.events.len(), 2);
+        assert!(!store.root().join("atomic-session.json.tmp").exists());
     }
 
     #[cfg(unix)]
@@ -1021,6 +1072,7 @@ mod tests {
             include_tool_prompt_manifest: false,
             context_packets: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             available_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            skill_pools: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             active_skills: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: std::sync::Arc::new(crate::prompt::PromptCache::new()),
             instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),

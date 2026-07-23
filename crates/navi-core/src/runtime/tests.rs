@@ -187,6 +187,13 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
             harness: HarnessConfig::default(),
             approvals: ApprovalConfig::default(),
             security: SecurityConfig::default(),
+            // Keep a goal on the session for snapshot checks, but do not run the
+            // full auto-continue storm (default max is 50) — that floods the
+            // runtime event bus and makes this test lag before it can drain.
+            goals: crate::config::GoalsConfig {
+                enabled: true,
+                max_auto_continue_turns: 1,
+            },
             ..NaviConfig::default()
         },
         global_config_path: None,
@@ -243,11 +250,13 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
 
     let mut saw_turn_started = false;
     let mut saw_turn_completed = false;
-    for _ in 0..8 {
-        let event = timeout(Duration::from_secs(1), events.recv())
-            .await
-            .expect("turn event timeout")
-            .expect("turn event");
+    for _ in 0..64 {
+        let event = match timeout(Duration::from_secs(1), events.recv()).await {
+            Ok(Ok(event)) => event,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(err)) => panic!("turn event: {err}"),
+            Err(_) => panic!("turn event timeout"),
+        };
         match event.kind {
             RuntimeEventKind::TurnStarted { .. } => saw_turn_started = true,
             RuntimeEventKind::TurnCompleted { ref text, .. } => {
@@ -280,7 +289,8 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
     assert!(snapshot_path.exists());
     let traces = crate::TraceStore::new(&tempdir.path().join("data"))
         .load_session_traces(snapshot.id.as_str());
-    assert_eq!(traces.len(), 1);
+    // User turn + one auto-continue turn (max_auto_continue_turns: 1).
+    assert_eq!(traces.len(), 2);
     assert_eq!(traces[0].task, "inspect");
 }
 

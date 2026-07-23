@@ -13,7 +13,7 @@ use navi_core::PermissionMode;
 use navi_sdk::{
     AgentEvent, AgentRunState, ApprovalRequest, BackgroundCommandSnapshot, CompactState,
     CredentialStore, EngineDriver, HarnessPolicy, LoadedConfig, ModelMessage, ModelOption,
-    NaviSkillInfo, SessionId, SessionSnapshotInfo, SessionStore, ToolInvocation,
+    NaviSkillInfo, SessionGoal, SessionId, SessionSnapshotInfo, SessionStore, ToolInvocation,
     available_model_options, build_system_prompt, canonical_provider_id, clean_session_title,
     effective_context_window, log_path, provider_catalog, select_harness_policy,
 };
@@ -266,6 +266,10 @@ pub struct TuiApp {
 
     // session naming
     pub(crate) session_title: Option<String>,
+    /// Session goal cached for frequent checkpoints (avoids reloading full JSON).
+    pub(crate) session_goal: Option<SessionGoal>,
+    /// When set, a debounced mid-turn session checkpoint is due at this instant.
+    pub(crate) session_checkpoint_due: Option<Instant>,
     /// How many background model tasks are actively running (naming, compaction, etc.)
     pub(crate) bg_models_running: usize,
 
@@ -527,6 +531,8 @@ impl TuiApp {
             bg_command_output_follow: true,
             bg_poll_task: None,
             session_title: None,
+            session_goal: None,
+            session_checkpoint_due: None,
             bg_models_running: 0,
             bg_models_selected: 0,
             bg_models_scroll: 0,

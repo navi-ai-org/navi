@@ -677,13 +677,16 @@ fn import_skill_from_package(
         allow_tools: parsed.allow_tools,
         deny_tools: parsed.deny_tools,
         harness: false,
+        pool: None,
         instructions: parsed.instructions,
         scope: navi_core::SkillWriteScope::User,
     };
     match navi_core::write_skill(&request, project_dir, data_dir) {
         Ok(result) => Some(format!(
-            "Imported skill '{}' into skills.sqlite (id={}).",
-            result.skill.name, result.skill.id
+            "Imported skill '{}' into skills/ (id={}, path={}).",
+            result.skill.name,
+            result.skill.id,
+            result.path.display()
         )),
         Err(e) => Some(format!("Skill package installed; skill import failed: {e}")),
     }
@@ -1025,7 +1028,7 @@ mod tests {
         assert_eq!(result.kind, "skill");
         assert!(
             result.kind_hint.contains("Imported skill")
-                || result.kind_hint.contains("skills.sqlite"),
+                || result.kind_hint.contains("skills/"),
             "hint={}",
             result.kind_hint
         );

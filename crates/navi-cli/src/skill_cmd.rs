@@ -63,6 +63,7 @@ fn install_skill(
         allow_tools: parsed.allow_tools,
         deny_tools: parsed.deny_tools,
         harness: parsed.harness,
+        pool: None,
         instructions: parsed.instructions,
         scope,
     };
@@ -103,7 +104,7 @@ fn list_skills(loaded_config: &LoadedConfig, cwd: &Path) -> Result<()> {
         println!("No skills found.");
         println!(
             "  store: {}",
-            loaded_config.data_dir.join("skills.sqlite").display()
+            loaded_config.data_dir.join("skills").display()
         );
         return Ok(());
     }
@@ -134,7 +135,7 @@ fn list_skills(loaded_config: &LoadedConfig, cwd: &Path) -> Result<()> {
     println!(
         "{} skill(s). store: {}",
         skills.len(),
-        loaded_config.data_dir.join("skills.sqlite").display()
+        loaded_config.data_dir.join("skills").display()
     );
     Ok(())
 }

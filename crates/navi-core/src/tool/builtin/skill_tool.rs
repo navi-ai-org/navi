@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 
 use super::helpers;
 use crate::config::NaviConfig;
-use crate::skills::{SkillManifest, discover_configured_skills};
+use crate::skills::load_skill_by_id;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 pub(crate) struct SkillTool {
@@ -27,15 +27,6 @@ impl SkillTool {
             config,
         }
     }
-
-    fn discover(&self) -> Result<Vec<SkillManifest>> {
-        let config = self
-            .config
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        discover_configured_skills(&config.skills, &self.project_dir, &self.data_dir)
-    }
 }
 
 #[async_trait]
@@ -43,16 +34,14 @@ impl Tool for SkillTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "load_skill",
-            "Load the instruction text for one available NAVI skill by id or name. Use this only after deciding the skill is relevant from the Available Skills catalog.",
+            "Load full skill instructions by id, name, or `pool/id`. Prefer after `skill_list` (catalog or pool listing). Optional `pool` scopes the lookup when the skill lives in a folder.",
             ToolKind::Read,
             helpers::json_schema(
                 &[
-                    ("id", "Skill id from the Available Skills catalog."),
-                    ("name", "Skill name from the Available Skills catalog."),
-                    (
-                        "skill",
-                        "Skill id or name from the Available Skills catalog.",
-                    ),
+                    ("id", "Skill id from the catalog or a pool listing (or `pool/id`)."),
+                    ("name", "Skill name."),
+                    ("skill", "Skill id or name."),
+                    ("pool", "Optional pool id when the skill is inside a folder."),
                 ],
                 &[],
             ),
@@ -70,18 +59,28 @@ impl Tool for SkillTool {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| anyhow::anyhow!("load_skill requires `id`, `skill`, or `name`"))?;
 
-        let skills = self.discover()?;
-        let skill = skills
-            .iter()
-            .find(|skill| skill.id == requested || skill.name == requested)
-            .ok_or_else(|| {
-                let available: Vec<&str> = skills.iter().map(|skill| skill.id.as_str()).collect();
-                anyhow::anyhow!(
-                    "skill `{}` was not found. Available skill ids: {}",
-                    requested,
-                    available.join(", ")
-                )
-            })?;
+        let pool = invocation
+            .input
+            .get("pool")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let lookup = match pool {
+            Some(p) if !requested.contains('/') => format!("{p}/{requested}"),
+            _ => requested.to_string(),
+        };
+
+        let config = self
+            .config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let skill = load_skill_by_id(
+            &config.skills,
+            &self.project_dir,
+            &self.data_dir,
+            &lookup,
+        )?;
 
         Ok(helpers::ok(
             invocation.id,
@@ -93,6 +92,7 @@ impl Tool for SkillTool {
                 "author": skill.author,
                 "tags": skill.tags,
                 "requires": skill.requires,
+                "pool": skill.pool,
                 "instructions": skill.instructions,
             }),
         ))
@@ -120,6 +120,7 @@ mod tests {
                 allow_tools: vec![],
                 deny_tools: vec![],
                 harness: false,
+                pool: None,
                 instructions: "# Reviewer\nReview carefully.".into(),
                 scope: SkillWriteScope::User,
             },
@@ -151,9 +152,59 @@ mod tests {
         assert!(result.ok);
         assert_eq!(result.output["id"], "reviewer");
         assert_eq!(result.output["name"], "Reviewer");
-        assert_eq!(
-            result.output["instructions"],
-            "# Reviewer\nReview carefully."
+        let body = result.output["instructions"].as_str().unwrap_or("");
+        assert!(
+            body.contains("Review carefully"),
+            "unexpected instructions: {body:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_skill_opens_pool_member_with_pool_arg() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_skill(
+            &SkillWriteRequest {
+                id: "create-skill".into(),
+                name: "Create Skill".into(),
+                description: Some("Author".into()),
+                version: None,
+                author: None,
+                tags: vec![],
+                requires: vec![],
+                allow_tools: vec!["skill_save".into()],
+                deny_tools: vec![],
+                harness: false,
+                pool: Some("navi".into()),
+                instructions: "# Author\nSave carefully.".into(),
+                scope: SkillWriteScope::User,
+            },
+            tempdir.path(),
+            tempdir.path(),
+        )
+        .expect("write");
+
+        let mut config = NaviConfig::default();
+        config.skills.enabled = true;
+        let tool = SkillTool::new(
+            tempdir.path().to_path_buf(),
+            tempdir.path().to_path_buf(),
+            Arc::new(RwLock::new(config)),
+        );
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "c1".into(),
+                tool_name: "load_skill".into(),
+                input: json!({ "id": "create-skill", "pool": "navi" }),
+            })
+            .await
+            .expect("invoke");
+        assert!(result.ok);
+        assert_eq!(result.output["pool"], "navi");
+        assert!(
+            result.output["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("Save carefully")
         );
     }
 }

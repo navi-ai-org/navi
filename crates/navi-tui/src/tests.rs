@@ -1099,6 +1099,69 @@ fn loading_saved_session_restores_snapshot_session_id() {
 }
 
 #[test]
+fn checkpoint_session_now_persists_user_prompt_before_turn() {
+    let mut app = test_app("");
+    let sid = SessionId::new("checkpoint-now-session".to_string());
+    app.session_id = sid.clone();
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: "persist me before tools run".to_string(),
+        content_parts: vec![],
+        submitted_at: Some(1),
+    });
+    app.messages
+        .push(crate::state::ChatMessage::new(
+            crate::state::ChatRole::User,
+            "persist me before tools run".to_string(),
+        ));
+
+    crate::persistence::checkpoint_session_now(&mut app);
+    assert!(app.session_checkpoint_due.is_none());
+
+    let loaded = app
+        .session_store
+        .load(sid.as_str())
+        .expect("checkpoint must write session file");
+    assert_eq!(loaded.events.len(), 1);
+    match &loaded.events[0] {
+        AgentEvent::UserTaskSubmitted { text, .. } => {
+            assert_eq!(text, "persist me before tools run");
+        }
+        other => panic!("expected UserTaskSubmitted, got {other:?}"),
+    }
+}
+
+#[test]
+fn schedule_session_checkpoint_flushes_when_due() {
+    let mut app = test_app("");
+    let sid = SessionId::new("checkpoint-debounce-session".to_string());
+    app.session_id = sid.clone();
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: "debounced".to_string(),
+        content_parts: vec![],
+        submitted_at: Some(1),
+    });
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::User,
+        "debounced".to_string(),
+    ));
+
+    crate::persistence::schedule_session_checkpoint(&mut app);
+    assert!(app.session_checkpoint_due.is_some());
+    // Not due yet — file should not exist (or still lack this session).
+    assert!(
+        app.session_store.load(sid.as_str()).is_err(),
+        "debounce must not write immediately"
+    );
+
+    // Force due and flush.
+    app.session_checkpoint_due = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    crate::persistence::flush_session_checkpoint_if_due(&mut app);
+    assert!(app.session_checkpoint_due.is_none());
+    let loaded = app.session_store.load(sid.as_str()).expect("due flush writes");
+    assert_eq!(loaded.events.len(), 1);
+}
+
+#[test]
 fn filtered_sessions_prioritizes_current_project_sessions() {
     fn snapshot(id: &str, title: &str, project: &str, updated_at: u64) -> SessionSnapshotInfo {
         SessionSnapshotInfo {
