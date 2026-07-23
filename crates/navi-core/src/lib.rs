@@ -112,8 +112,8 @@ pub use harness_pack::{
     HarnessPackStore, LoopSpec, MaterializeOptions, VerifierKind,
     VerifierSpec as HarnessVerifierSpec, apply_harness_for_skills, build_capability_inventory,
     capability_card, effective_allow_tools_for_pack, filter_tools_to_inventory, harness_pack_dir,
-    inventory_from_tool_names, list_harness_ids, load_pack, materialize_from_skill,
-    merge_allow_tools, write_pack,
+    inventory_from_tool_names, list_harness_ids, load_pack, materialize_after_save,
+    materialize_from_skill, merge_allow_tools, write_pack,
 };
 pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log_path};
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};
