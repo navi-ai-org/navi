@@ -75,7 +75,6 @@ The implementation is **done** when all of the following are true:
 | `max_parallel` | integer | settings / **16** | Clamped to `[1, MAX_PARALLEL_CEILING]` (ceiling **64** unless settings say lower) |
 | `max_agents` | integer | settings / **1000** | Clamped to `[1, MAX_AGENTS_CEILING]` (ceiling **5000**) |
 | `policy` | object | see §5 | Run-level default agent policy |
-| `timeout_ms` | integer | settings / e.g. **30 min** | Wall clock for entire run; abort on exceed |
 | `name` | string | — | Optional label for UI / journal |
 | `resume_from_run_id` | string | — | **v1 optional**; if unimplemented, reject with clear error |
 
@@ -235,7 +234,8 @@ enabled = true
 max_parallel = 16
 max_agents = 1000
 max_script_bytes = 65536
-run_timeout_ms = 1800000
+# Optional wall-clock timeout (ms); 0 means no timeout (run until completion or cancellation).
+run_timeout_ms = 0
 # opt-in product flags (if implemented)
 require_opt_in = false
 ```

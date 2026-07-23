@@ -97,7 +97,7 @@ impl Default for WorkflowConfig {
             max_parallel: 16,
             max_agents: 1000,
             max_script_bytes: 64 * 1024,
-            run_timeout_ms: 1_800_000,
+            run_timeout_ms: 0,
             require_opt_in: false,
         }
     }

@@ -16,8 +16,8 @@ pub use policy::{
 };
 pub use types::{
     AGENT_RESULT_MAX_BYTES, AgentBackendResult, AgentRequest, DEFAULT_MAX_AGENTS,
-    DEFAULT_MAX_PARALLEL, DEFAULT_MAX_SCRIPT_BYTES, DEFAULT_RUN_TIMEOUT_MS, NESTED_WORKFLOW_TOOLS,
-    WorkflowErrorCode, WorkflowRunStatus, WorkflowStats,
+    DEFAULT_MAX_PARALLEL, DEFAULT_MAX_SCRIPT_BYTES, NESTED_WORKFLOW_TOOLS, WorkflowErrorCode,
+    WorkflowRunStatus, WorkflowStats,
 };
 
 use std::sync::Arc;
@@ -289,10 +289,6 @@ impl Tool for WorkflowTool {
                         "type": "integer",
                         "description": "Max agents per run (default 1000, ceiling 5000)."
                     },
-                    "timeout_ms": {
-                        "type": "integer",
-                        "description": "Wall-clock timeout for the entire run in milliseconds."
-                    },
                     "name": {
                         "type": "string",
                         "description": "Optional label for UI / journal."
@@ -415,13 +411,7 @@ impl Tool for WorkflowTool {
             optional_usize(&invocation.input, "max_agents")
                 .unwrap_or(self.config.max_agents.max(1)),
         );
-        let timeout_ms = optional_u64(&invocation.input, "timeout_ms").unwrap_or(
-            if self.config.run_timeout_ms == 0 {
-                DEFAULT_RUN_TIMEOUT_MS
-            } else {
-                self.config.run_timeout_ms
-            },
-        );
+        let timeout_ms = self.config.run_timeout_ms;
         let name = helpers::optional_string(&invocation.input, "name");
         let args = invocation
             .input
@@ -569,7 +559,6 @@ impl Tool for WorkflowTool {
             }
         });
 
-        let timeout = std::time::Duration::from_millis(timeout_ms.max(1));
         enum WaitKind {
             Cancelled,
             TimedOut,
@@ -580,11 +569,20 @@ impl Tool for WorkflowTool {
                 >,
             ),
         }
-        let wait = tokio::select! {
-            biased;
-            _ = cancel_token.notified() => WaitKind::Cancelled,
-            _ = tokio::time::sleep(timeout) => WaitKind::TimedOut,
-            outcome = lua_done_rx => WaitKind::Lua(outcome),
+        let wait = if timeout_ms > 0 {
+            let timeout = std::time::Duration::from_millis(timeout_ms);
+            tokio::select! {
+                biased;
+                _ = cancel_token.notified() => WaitKind::Cancelled,
+                _ = tokio::time::sleep(timeout) => WaitKind::TimedOut,
+                outcome = lua_done_rx => WaitKind::Lua(outcome),
+            }
+        } else {
+            tokio::select! {
+                biased;
+                _ = cancel_token.notified() => WaitKind::Cancelled,
+                outcome = lua_done_rx => WaitKind::Lua(outcome),
+            }
         };
         let finish = match wait {
             WaitKind::Cancelled => {
@@ -846,12 +844,6 @@ fn optional_usize(input: &Value, key: &str) -> Option<usize> {
             .map(|n| n as usize)
             .or_else(|| v.as_i64().map(|n| n.max(0) as usize))
     })
-}
-
-fn optional_u64(input: &Value, key: &str) -> Option<u64> {
-    input
-        .get(key)
-        .and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|n| n.max(0) as u64)))
 }
 
 /// Description text for snapshot tests (§12).
