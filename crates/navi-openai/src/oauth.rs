@@ -1,4 +1,4 @@
-use navi_core::{CommandCodeCredentialMetadata, CredentialStore, XAI_GROK_CLI_OAUTH_KIND};
+use navi_core::{CredentialStore, XAI_GROK_CLI_OAUTH_KIND};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -17,9 +17,6 @@ pub struct DeviceOAuthStarted {
     pub paste_slot: Option<std::sync::Arc<std::sync::Mutex<Option<String>>>>,
 }
 
-const COMMANDCODE_DEFAULT_API_BASE: &str = "https://api.commandcode.ai";
-const COMMANDCODE_DEFAULT_STUDIO_BASE: &str = "https://commandcode.ai";
-const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
 const OPENAI_DEFAULT_ISSUER: &str = "https://auth.openai.com";
 const OPENAI_DEFAULT_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_CALLBACK_PATH: &str = "/auth/callback";
@@ -47,16 +44,6 @@ pub const XAI_GROK_CLI_CLIENT_MODE: &str = "chat";
 pub const XAI_GROK_CLI_CLIENT_SURFACE: &str = "grok-build";
 /// Early refresh buffer: refresh when fewer than this many seconds remain.
 const XAI_REFRESH_SKEW_SECS: i64 = 300;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommandCodeUsageData {
-    pub whoami: Value,
-    pub credits: Option<Value>,
-    pub subscription: Option<Value>,
-    pub usage_summary: Option<Value>,
-    pub models: Vec<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1508,216 +1495,6 @@ async fn exchange_openai_code_for_tokens(
     response.json().await.map_err(|err| err.to_string())
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CommandCodeCallback {
-    api_key: String,
-    state: String,
-    user_id: String,
-    user_name: String,
-    key_name: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommandCodeCallbackError {
-    error: String,
-    error_description: Option<String>,
-}
-
-pub async fn commandcode_browser_oauth<F>(
-    credential_store: CredentialStore,
-    provider_id: &str,
-    mut on_started: F,
-) -> std::result::Result<String, String>
-where
-    F: FnMut(DeviceOAuthStarted) + Send,
-{
-    let (port, listener) = commandcode_auth_listener()?;
-    let state = generate_commandcode_state();
-    let auth_url = commandcode_auth_url(port, &state);
-    on_started(DeviceOAuthStarted {
-        verification_uri: auth_url,
-        user_code: String::new(),
-        paste_slot: None,
-    });
-
-    let callback = tokio::task::spawn_blocking(move || {
-        wait_for_commandcode_callback(listener, &state, Duration::from_secs(120))
-    })
-    .await
-    .map_err(|err| err.to_string())??;
-
-    let client = reqwest::Client::new();
-    commandcode_get_json(&client, &callback.api_key, "/alpha/whoami")
-        .await
-        .map_err(|err| format!("Command Code credential validation failed: {err}"))?;
-
-    let account_id = credential_store
-        .set_commandcode_credential(
-            provider_id,
-            &callback.api_key,
-            CommandCodeCredentialMetadata {
-                user_id: callback.user_id.clone(),
-                user_name: callback.user_name.clone(),
-                key_name: callback.key_name.clone(),
-                authenticated_at: current_unix_timestamp().to_string(),
-            },
-        )
-        .map_err(|err| err.to_string())?;
-
-    Ok(account_id)
-}
-
-pub async fn commandcode_fetch_usage_data(
-    api_key: &str,
-) -> std::result::Result<CommandCodeUsageData, String> {
-    let client = reqwest::Client::new();
-    let whoami = commandcode_get_json(&client, api_key, "/alpha/whoami").await?;
-    let org_id = whoami
-        .get("org")
-        .and_then(|org| org.get("id"))
-        .and_then(Value::as_str);
-    let credits_endpoint = commandcode_endpoint_with_params("/alpha/billing/credits", org_id, None);
-    let subscription_endpoint =
-        commandcode_endpoint_with_params("/alpha/billing/subscriptions", org_id, None);
-
-    let credits = commandcode_get_json(&client, api_key, &credits_endpoint)
-        .await
-        .ok();
-    let subscription = commandcode_get_json(&client, api_key, &subscription_endpoint)
-        .await
-        .ok();
-    let since = subscription
-        .as_ref()
-        .and_then(|value| value.get("data"))
-        .and_then(|data| data.get("currentPeriodStart"))
-        .and_then(Value::as_str);
-    let usage_endpoint = commandcode_endpoint_with_params("/alpha/usage/summary", org_id, since);
-    let usage_summary = commandcode_get_json(&client, api_key, &usage_endpoint)
-        .await
-        .ok();
-    let models = commandcode_list_models(api_key).await.unwrap_or_default();
-
-    Ok(CommandCodeUsageData {
-        whoami,
-        credits,
-        subscription,
-        usage_summary,
-        models,
-    })
-}
-
-pub async fn commandcode_list_models(api_key: &str) -> std::result::Result<Vec<String>, String> {
-    let client = reqwest::Client::new();
-    let value = commandcode_get_json(&client, api_key, "/provider/v1/models").await?;
-    let models = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| "missing models data".to_string())?
-        .iter()
-        .filter_map(|item| item.get("id").and_then(Value::as_str))
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    Ok(models)
-}
-
-async fn commandcode_get_json(
-    client: &reqwest::Client,
-    api_key: &str,
-    endpoint: &str,
-) -> std::result::Result<Value, String> {
-    let url = format!("{}{}", commandcode_api_base_url(), endpoint);
-    let response = client
-        .get(url)
-        .headers(commandcode_headers(api_key)?)
-        .send()
-        .await
-        .map_err(|err| err.to_string())?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(format!("{status}: {body}"));
-    }
-    response.json().await.map_err(|err| err.to_string())
-}
-
-fn commandcode_headers(api_key: &str) -> std::result::Result<reqwest::header::HeaderMap, String> {
-    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {api_key}"))
-            .map_err(|err| format!("invalid commandcode auth header: {err}"))?,
-    );
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static("command-code/0.38.2 navi"),
-    );
-    headers.insert(
-        "x-command-code-version",
-        HeaderValue::from_static(COMMANDCODE_CLI_VERSION),
-    );
-    Ok(headers)
-}
-
-fn commandcode_endpoint_with_params(
-    endpoint: &str,
-    org_id: Option<&str>,
-    since: Option<&str>,
-) -> String {
-    let mut params = Vec::new();
-    if let Some(org_id) = org_id {
-        params.push(format!("orgId={}", url_encode_component(org_id)));
-    }
-    if let Some(since) = since {
-        params.push(format!("since={}", url_encode_component(since)));
-    }
-    if params.is_empty() {
-        endpoint.to_string()
-    } else {
-        format!("{}?{}", endpoint, params.join("&"))
-    }
-}
-
-fn commandcode_api_base_url() -> String {
-    std::env::var("COMMANDCODE_API_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| COMMANDCODE_DEFAULT_API_BASE.to_string())
-        .trim_end_matches('/')
-        .to_string()
-}
-
-fn commandcode_auth_listener() -> std::result::Result<(u16, TcpListener), String> {
-    for port in 5959..5969 {
-        match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(listener) => {
-                listener
-                    .set_nonblocking(true)
-                    .map_err(|err| err.to_string())?;
-                return Ok((port, listener));
-            }
-            Err(_) => continue,
-        }
-    }
-    Err("no available local callback port for Command Code OAuth".to_string())
-}
-
-fn commandcode_auth_url(port: u16, state: &str) -> String {
-    let studio_base = std::env::var("COMMANDCODE_STUDIO_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| COMMANDCODE_DEFAULT_STUDIO_BASE.to_string())
-        .trim_end_matches('/')
-        .to_string();
-    format!(
-        "{studio_base}/studio/auth/cli?callback=http%3A%2F%2Flocalhost%3A{port}%2Fcallback&state={}",
-        url_encode_component(state)
-    )
-}
-
 fn openai_issuer() -> String {
     std::env::var("NAVI_OPENAI_OAUTH_ISSUER")
         .ok()
@@ -1785,13 +1562,6 @@ fn openai_authorize_url(
     format!("{}/oauth/authorize?{query}", issuer.trim_end_matches('/'))
 }
 
-fn current_unix_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-}
-
 fn url_encode_component(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
@@ -1807,12 +1577,6 @@ fn url_encode_component(value: &str) -> String {
 
 fn generate_oauth_token() -> String {
     let mut bytes = [0u8; 64];
-    fill_random_bytes(&mut bytes);
-    base64_url_no_pad(&bytes)
-}
-
-fn generate_commandcode_state() -> String {
-    let mut bytes = [0u8; 32];
     fill_random_bytes(&mut bytes);
     base64_url_no_pad(&bytes)
 }
@@ -1856,28 +1620,6 @@ fn base64_url_no_pad(bytes: &[u8]) -> String {
         }
     }
     out
-}
-
-fn wait_for_commandcode_callback(
-    listener: TcpListener,
-    state: &str,
-    timeout: Duration,
-) -> std::result::Result<CommandCodeCallback, String> {
-    let deadline = std::time::Instant::now() + timeout;
-    while std::time::Instant::now() < deadline {
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                if let Some(callback) = handle_commandcode_callback_stream(&mut stream, state)? {
-                    return Ok(callback);
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(err) => return Err(err.to_string()),
-        }
-    }
-    Err("Command Code OAuth timed out waiting for browser callback".to_string())
 }
 
 fn wait_for_openai_callback(
@@ -1943,90 +1685,6 @@ fn handle_openai_callback_stream(
     Ok(Some(code.clone()))
 }
 
-fn handle_commandcode_callback_stream(
-    stream: &mut TcpStream,
-    state: &str,
-) -> std::result::Result<Option<CommandCodeCallback>, String> {
-    let request = read_http_request(stream)?;
-    let Some((request_line, body)) = request.split_once("\r\n") else {
-        write_json_response(
-            stream,
-            400,
-            r#"{"success":false,"error":"Invalid request"}"#,
-        )?;
-        return Ok(None);
-    };
-
-    if request_line.starts_with("OPTIONS ") {
-        write_json_response(stream, 204, "")?;
-        return Ok(None);
-    }
-    if !request_line.starts_with("POST /callback ") {
-        write_json_response(stream, 404, r#"{"success":false,"error":"Not found"}"#)?;
-        return Ok(None);
-    }
-
-    let Some((_, body)) = body.split_once("\r\n\r\n") else {
-        write_json_response(
-            stream,
-            400,
-            r#"{"success":false,"error":"Invalid request"}"#,
-        )?;
-        return Ok(None);
-    };
-
-    let value: serde_json::Value = match serde_json::from_str(body) {
-        Ok(value) => value,
-        Err(_) => {
-            write_json_response(stream, 400, r#"{"success":false,"error":"Invalid JSON"}"#)?;
-            return Ok(None);
-        }
-    };
-
-    if value.get("error").is_some() {
-        let error: CommandCodeCallbackError =
-            serde_json::from_value(value).map_err(|err| err.to_string())?;
-        write_json_response(stream, 200, r#"{"success":true}"#)?;
-        return Err(error.error_description.unwrap_or_else(|| error.error));
-    }
-
-    let callback: CommandCodeCallback = match serde_json::from_value(value) {
-        Ok(callback) => callback,
-        Err(_) => {
-            write_json_response(
-                stream,
-                400,
-                r#"{"success":false,"error":"Missing required fields"}"#,
-            )?;
-            return Ok(None);
-        }
-    };
-    if callback.api_key.trim().is_empty()
-        || callback.state.trim().is_empty()
-        || callback.user_id.trim().is_empty()
-        || callback.user_name.trim().is_empty()
-        || callback.key_name.trim().is_empty()
-    {
-        write_json_response(
-            stream,
-            400,
-            r#"{"success":false,"error":"Missing required fields"}"#,
-        )?;
-        return Ok(None);
-    }
-    if callback.state != state {
-        write_json_response(
-            stream,
-            403,
-            r#"{"success":false,"error":"Invalid state token"}"#,
-        )?;
-        return Ok(None);
-    }
-
-    write_json_response(stream, 200, r#"{"success":true}"#)?;
-    Ok(Some(callback))
-}
-
 fn read_http_request(stream: &mut TcpStream) -> std::result::Result<String, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -2078,28 +1736,6 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
-}
-
-fn write_json_response(
-    stream: &mut TcpStream,
-    status: u16,
-    body: &str,
-) -> std::result::Result<(), String> {
-    let reason = match status {
-        200 => "OK",
-        204 => "No Content",
-        400 => "Bad Request",
-        403 => "Forbidden",
-        404 => "Not Found",
-        _ => "OK",
-    };
-    let response = format!(
-        "HTTP/1.1 {status} {reason}\r\nAccess-Control-Allow-Origin: https://commandcode.ai\r\nAccess-Control-Allow-Methods: POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream
-        .write_all(response.as_bytes())
-        .map_err(|err| err.to_string())
 }
 
 fn parse_get_query_params(
@@ -2342,14 +1978,6 @@ mod tests {
     }
 
     #[test]
-    fn commandcode_auth_url_matches_cli_contract() {
-        assert_eq!(
-            commandcode_auth_url(5959, "state-token"),
-            "https://commandcode.ai/studio/auth/cli?callback=http%3A%2F%2Flocalhost%3A5959%2Fcallback&state=state-token"
-        );
-    }
-
-    #[test]
     fn xai_authorize_url_uses_pkce_and_loopback() {
         let pkce = PkceCodes {
             code_verifier: "verifier".to_string(),
@@ -2379,17 +2007,6 @@ mod tests {
         assert!(!is_xai_oauth_access_token("xai-platform-api-key-abc"));
         assert!(!is_xai_oauth_access_token(""));
         assert!(!is_xai_oauth_access_token("not-a-jwt"));
-    }
-
-    #[test]
-    fn commandcode_state_is_base64url_without_padding() {
-        let state = generate_commandcode_state();
-        assert_eq!(state.len(), 43);
-        assert!(
-            state
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        );
     }
 
     #[test]
@@ -2514,6 +2131,78 @@ mod tests {
         assert_eq!(
             report.limits[1].metered_feature.as_deref(),
             Some("long_context")
+        );
+    }
+
+    #[test]
+    fn usd_and_hypercredit_conversions_are_inverses() {
+        // With the default HYPERCREDIT_USD rate, 1 USD -> 10 hypercredits.
+        let usd = 5.0;
+        let credits = usd_to_hypercredits(usd);
+        let usd_back = hypercredits_to_usd(credits);
+        assert!(
+            (credits - (usd / HYPERCREDIT_USD)).abs() < 1e-9,
+            "{credits}"
+        );
+        assert!((usd_back - usd).abs() < 1e-9);
+    }
+
+    #[test]
+    fn usd_to_hypercredits_handles_zero_rate() {
+        // HYPERCREDIT_USD is a compile-time constant; guard against divide-by-zero.
+        assert!(usd_to_hypercredits(0.0).is_finite());
+    }
+
+    #[test]
+    fn url_decode_component_round_trips_and_decodes() {
+        assert_eq!(
+            url_decode_component("hello%20world").unwrap(),
+            "hello world"
+        );
+        assert_eq!(url_decode_component("%2B").unwrap(), "+");
+        assert!(url_decode_component("%ZZ").is_err());
+        assert!(url_decode_component("%").is_err());
+    }
+
+    #[test]
+    fn find_subslice_locates_needle() {
+        assert_eq!(find_subslice(b"hello world", b"world"), Some(6));
+        assert_eq!(find_subslice(b"hello", b"world"), None);
+        assert_eq!(find_subslice(b"", b"x"), None);
+    }
+
+    #[test]
+    fn parse_get_query_params_returns_empty_for_missing_query() {
+        let params = parse_get_query_params("GET /callback HTTP/1.1").unwrap();
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn openai_issuer_and_client_and_url_use_defaults() {
+        let issuer = openai_issuer();
+        assert!(issuer.starts_with("https://"));
+        let client = openai_client_id();
+        assert!(!client.is_empty());
+        let url = openai_usage_url();
+        assert!(url.starts_with("https://"));
+    }
+
+    #[test]
+    fn xai_issuer_and_client_use_defaults() {
+        let issuer = xai_issuer();
+        assert!(issuer.starts_with("https://"));
+        let client = xai_client_id();
+        assert!(!client.is_empty());
+    }
+
+    #[test]
+    fn generate_oauth_token_is_non_empty_and_url_safe() {
+        let token = generate_oauth_token();
+        assert!(!token.is_empty());
+        assert!(
+            token
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         );
     }
 }
