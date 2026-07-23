@@ -294,6 +294,41 @@ pub(crate) fn parse_openai_responses_sse(data: &str) -> Vec<Result<ModelStreamEv
                 })]
             }
         }
+        Some("response.output_item.added") => value
+            .get("item")
+            .and_then(parse_responses_tool_call_progress)
+            .map(|event| vec![Ok(event)])
+            .unwrap_or_default(),
+        Some("response.function_call_arguments.delta") => {
+            let id = value
+                .get("item_id")
+                .or_else(|| value.get("call_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let name = value
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let delta = value
+                .get("delta")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            // Without a name we still signal activity so the UI leaves idle wait.
+            if name.is_empty() && delta.is_empty() {
+                Vec::new()
+            } else {
+                vec![Ok(ModelStreamEvent::ToolCallProgress {
+                    id,
+                    tool_name: if name.is_empty() {
+                        "tool".to_string()
+                    } else {
+                        name
+                    },
+                    arguments_chars: delta.len(),
+                })]
+            }
+        }
         Some("response.output_item.done") => value
             .get("item")
             .and_then(parse_responses_tool_call)
@@ -313,6 +348,31 @@ pub(crate) fn parse_openai_responses_sse(data: &str) -> Vec<Result<ModelStreamEv
         ))],
         _ => Vec::new(),
     }
+}
+
+fn parse_responses_tool_call_progress(item: &Value) -> Option<ModelStreamEvent> {
+    if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return None;
+    }
+    let id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let tool_name = item.get("name").and_then(Value::as_str)?.to_string();
+    if tool_name.is_empty() {
+        return None;
+    }
+    let arguments_chars = item
+        .get("arguments")
+        .and_then(Value::as_str)
+        .map(str::len)
+        .unwrap_or(0);
+    Some(ModelStreamEvent::ToolCallProgress {
+        id,
+        tool_name,
+        arguments_chars,
+    })
 }
 
 fn parse_responses_tool_call(item: &Value) -> Option<ToolInvocation> {
@@ -420,7 +480,7 @@ pub(crate) fn parse_chat_completions_sse_with_state(
             events.extend(tool_calls.push_content(content));
         }
         if let Some(chunks) = delta.get("tool_calls").and_then(Value::as_array) {
-            tool_calls.push_chunks(chunks);
+            events.extend(tool_calls.push_chunks(chunks));
         }
         if let Some(reasoning) = delta
             .get("reasoning")
@@ -458,7 +518,14 @@ struct PartialChatToolCall {
     id: Option<String>,
     name: Option<String>,
     arguments: String,
+    /// Last arguments length we emitted a progress event for.
+    last_progress_args: usize,
+    /// Whether we already announced the tool name via ToolCallProgress.
+    name_emitted: bool,
 }
+
+/// Emit argument-stream progress every N chars (plus on first name / first arg).
+const TOOL_CALL_PROGRESS_ARG_STEP: usize = 256;
 
 impl ChatToolCallAccumulator {
     fn push_content(&mut self, content: &str) -> Vec<Result<ModelStreamEvent>> {
@@ -478,7 +545,8 @@ impl ChatToolCallAccumulator {
         events
     }
 
-    fn push_chunks(&mut self, chunks: &[Value]) {
+    fn push_chunks(&mut self, chunks: &[Value]) -> Vec<Result<ModelStreamEvent>> {
+        let mut events = Vec::new();
         for chunk in chunks {
             let index = chunk.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
             while self.calls.len() <= index {
@@ -498,7 +566,11 @@ impl ChatToolCallAccumulator {
                     call.arguments.push_str(arguments);
                 }
             }
+            if let Some(progress) = call.maybe_progress_event() {
+                events.push(Ok(progress));
+            }
         }
+        events
     }
 
     fn drain_complete(&mut self) -> Vec<Result<ModelStreamEvent>> {
@@ -519,6 +591,30 @@ impl ChatToolCallAccumulator {
                 })))
             })
             .collect()
+    }
+}
+
+impl PartialChatToolCall {
+    /// Emit progress when the name first appears or arguments grow enough.
+    fn maybe_progress_event(&mut self) -> Option<ModelStreamEvent> {
+        let tool_name = self.name.as_ref()?;
+        if tool_name.is_empty() {
+            return None;
+        }
+        let args_len = self.arguments.len();
+        let name_just_appeared = !self.name_emitted;
+        let args_step = args_len.saturating_sub(self.last_progress_args) >= TOOL_CALL_PROGRESS_ARG_STEP
+            || (args_len > 0 && self.last_progress_args == 0);
+        if !name_just_appeared && !args_step {
+            return None;
+        }
+        self.name_emitted = true;
+        self.last_progress_args = args_len;
+        Some(ModelStreamEvent::ToolCallProgress {
+            id: self.id.clone(),
+            tool_name: tool_name.clone(),
+            arguments_chars: args_len,
+        })
     }
 }
 
@@ -561,6 +657,10 @@ struct TextToolCallExtractor {
     in_tool_call: bool,
     next_tool_call_index: u64,
     tool_call_events: Vec<Result<ModelStreamEvent>>,
+    /// Last pending length we announced while inside a tool-call block.
+    last_progress_pending: usize,
+    /// Whether we already announced an in-progress text tool call.
+    progress_emitted: bool,
 }
 
 impl TextToolCallExtractor {
@@ -588,14 +688,21 @@ impl TextToolCallExtractor {
                     let block = self.pending[..end].to_string();
                     self.pending.drain(..end + end_len);
                     self.in_tool_call = false;
+                    self.progress_emitted = false;
+                    self.last_progress_pending = 0;
                     let calls = self.parse_tool_call_block(&block);
                     self.tool_call_events.extend(calls);
                     continue;
                 }
 
+                // Throttled progress while the tool-call body is still open.
+                self.push_text_tool_progress();
+
                 if final_chunk {
                     let block = std::mem::take(&mut self.pending);
                     self.in_tool_call = false;
+                    self.progress_emitted = false;
+                    self.last_progress_pending = 0;
                     let calls = self.parse_tool_call_block(&block);
                     self.tool_call_events.extend(calls);
                 }
@@ -623,6 +730,11 @@ impl TextToolCallExtractor {
                     }
                     self.pending.drain(..t_pos + t_len);
                     self.in_tool_call = true;
+                    self.last_progress_pending = 0;
+                    self.progress_emitted = false;
+                    // Announce immediately so the UI leaves "waiting for model"
+                    // while the tagged tool-call body streams in.
+                    self.push_text_tool_progress();
                     continue;
                 }
                 (None, Some((w_pos, w_len))) => {
@@ -651,6 +763,26 @@ impl TextToolCallExtractor {
         clean_text
     }
 
+    fn push_text_tool_progress(&mut self) {
+        let pending_len = self.pending.len();
+        let should_emit = !self.progress_emitted
+            || pending_len.saturating_sub(self.last_progress_pending)
+                >= TOOL_CALL_PROGRESS_ARG_STEP
+            || (pending_len > 0 && self.last_progress_pending == 0 && !self.progress_emitted);
+        if !should_emit {
+            return;
+        }
+        self.progress_emitted = true;
+        self.last_progress_pending = pending_len;
+        let tool_name = peek_text_tool_name(&self.pending).unwrap_or_else(|| "tool".to_string());
+        self.tool_call_events
+            .push(Ok(ModelStreamEvent::ToolCallProgress {
+                id: None,
+                tool_name,
+                arguments_chars: pending_len,
+            }));
+    }
+
     fn parse_tool_call_block(&mut self, block: &str) -> Vec<Result<ModelStreamEvent>> {
         // Prefer Tencent hy_v3 tagged form; fall back to JSON `<tool_call>{...}</tool_call>`.
         let values = if let Some(value) = parse_hy_v3_tool_call(block) {
@@ -664,7 +796,51 @@ impl TextToolCallExtractor {
             .map(|invocation| Ok(ModelStreamEvent::ToolCall(invocation)))
             .collect()
     }
+}
 
+/// Best-effort tool name while a tagged tool-call body is still streaming.
+fn peek_text_tool_name(pending: &str) -> Option<String> {
+    let trimmed = pending.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Hy form: `read_file<tool_sep…>` / `read_file<tool_sep:opensource>`
+    if let Some(sep_idx) = HY_TOOL_SEP.iter().find_map(|marker| trimmed.find(marker)) {
+        let name = trimmed[..sep_idx].trim();
+        if !name.is_empty() && !name.starts_with('{') && !name.contains('<') {
+            return Some(name.to_string());
+        }
+    }
+    // JSON form: `{"name":"write_file",...}`
+    if let Some(key_idx) = trimmed.find("\"name\"") {
+        let after_key = trimmed[key_idx + "\"name\"".len()..].trim_start();
+        if let Some(after_colon) = after_key.strip_prefix(':') {
+            let after_colon = after_colon.trim_start();
+            if let Some(rest) = after_colon.strip_prefix('"')
+                && let Some(end) = rest.find('"')
+            {
+                let name = &rest[..end];
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    // Bare leading identifier before whitespace / brace (hy without sep yet).
+    let ident: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect();
+    if ident.len() >= 2
+        && !ident.eq_ignore_ascii_case("true")
+        && !ident.eq_ignore_ascii_case("null")
+    {
+        return Some(ident);
+    }
+    None
+}
+
+impl TextToolCallExtractor {
     fn tool_invocation_from_value(&mut self, value: Value) -> Option<ToolInvocation> {
         let tool_name = value
             .get("name")

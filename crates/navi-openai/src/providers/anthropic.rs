@@ -129,7 +129,12 @@ pub(crate) struct AnthropicToolState {
     current_tool_id: Option<String>,
     current_tool_name: Option<String>,
     current_json_buf: String,
+    /// Last arguments length we emitted a progress event for.
+    last_progress_args: usize,
 }
+
+/// Emit argument-stream progress every N chars (plus on first arg byte).
+const TOOL_CALL_PROGRESS_ARG_STEP: usize = 256;
 
 // ── Anthropic SSE parsing ────────────────────────────────────────────────────
 
@@ -172,6 +177,16 @@ pub(crate) fn parse_anthropic_sse_with_state(
                     .and_then(Value::as_str)
                     .map(String::from);
                 state.current_json_buf.clear();
+                state.last_progress_args = 0;
+                if let Some(name) = state.current_tool_name.clone() {
+                    if !name.is_empty() {
+                        return vec![Ok(ModelStreamEvent::ToolCallProgress {
+                            id: state.current_tool_id.clone(),
+                            tool_name: name,
+                            arguments_chars: 0,
+                        })];
+                    }
+                }
             }
             Vec::new()
         }
@@ -210,6 +225,21 @@ pub(crate) fn parse_anthropic_sse_with_state(
                 {
                     state.current_json_buf.push_str(partial);
                 }
+                let args_len = state.current_json_buf.len();
+                let should_emit = state.current_tool_name.is_some()
+                    && (args_len.saturating_sub(state.last_progress_args)
+                        >= TOOL_CALL_PROGRESS_ARG_STEP
+                        || (args_len > 0 && state.last_progress_args == 0));
+                if should_emit {
+                    state.last_progress_args = args_len;
+                    if let Some(name) = state.current_tool_name.clone() {
+                        return vec![Ok(ModelStreamEvent::ToolCallProgress {
+                            id: state.current_tool_id.clone(),
+                            tool_name: name,
+                            arguments_chars: args_len,
+                        })];
+                    }
+                }
                 Vec::new()
             }
             Some("signature_delta") => {
@@ -226,6 +256,7 @@ pub(crate) fn parse_anthropic_sse_with_state(
                 let input: Value = serde_json::from_str(&state.current_json_buf)
                     .unwrap_or(Value::Object(serde_json::Map::new()));
                 state.current_json_buf.clear();
+                state.last_progress_args = 0;
                 vec![Ok(ModelStreamEvent::ToolCall(ToolInvocation {
                     id,
                     tool_name: name,

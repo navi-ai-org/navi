@@ -446,6 +446,18 @@ pub enum AgentEvent {
         /// Incremental thinking content.
         text: String,
     },
+    /// Live-only: the model is streaming tool-call arguments before
+    /// [`ToolRequested`]. Not persisted in the session event log.
+    ToolCallStreaming {
+        /// Provider tool-call id when known.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        /// Tool name when known.
+        tool_name: String,
+        /// Total characters of arguments streamed so far for this call.
+        #[serde(default)]
+        arguments_chars: usize,
+    },
     /// The assistant requested a tool invocation.
     ToolRequested(ToolInvocation),
     /// A tool invocation completed.

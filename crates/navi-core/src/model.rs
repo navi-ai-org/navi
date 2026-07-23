@@ -190,7 +190,8 @@ pub trait ModelProvider: Send + Sync {
                 ModelStreamEvent::Status { .. }
                 | ModelStreamEvent::Usage { .. }
                 | ModelStreamEvent::ThinkingDelta { .. }
-                | ModelStreamEvent::ToolCall(_) => {}
+                | ModelStreamEvent::ToolCall(_)
+                | ModelStreamEvent::ToolCallProgress { .. } => {}
             }
         }
 
@@ -327,6 +328,18 @@ pub enum ModelStreamEvent {
     },
     /// The model requested a tool invocation.
     ToolCall(ToolInvocation),
+    /// The model is streaming a tool call (name known; arguments may still be incomplete).
+    ///
+    /// Providers emit this while native tool-call arguments are being generated
+    /// so clients can show progress instead of a false "waiting for model" idle.
+    ToolCallProgress {
+        /// Provider tool-call id when known.
+        id: Option<String>,
+        /// Tool name when known (empty only until the first name chunk arrives).
+        tool_name: String,
+        /// Total characters of arguments streamed so far for this call.
+        arguments_chars: usize,
+    },
     /// The stream has ended.
     Done,
 }

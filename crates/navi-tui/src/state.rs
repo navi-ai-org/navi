@@ -698,17 +698,25 @@ pub(crate) struct UsageUiState {
     /// billed session totals and cost.
     pub estimated_request_input_tokens: Option<u64>,
     pub estimated_request_output_bytes: usize,
-    /// First streamed model delta for the current request (thinking or text).
-    /// Throughput uses this clock so idle wait before first token is excluded.
+    /// First streamed model byte this request (text / thinking / tool args).
+    /// Presence means "stream has started"; **not** the t/s denominator.
     pub stream_started_at: Option<Instant>,
-    /// Bytes of streamed model text (thinking + content) for the current
-    /// request. Kept independent of billed usage snapshots so avg t/s keeps
-    /// reflecting generation speed after provider usage arrives.
+    /// Bytes of streamed model output: assistant text, reasoning, tool-call args.
     pub stream_output_bytes: usize,
+    /// Accumulated **active generation** time (ms). Excludes TTFT idle and
+    /// tool/approval stalls so avg t/s is real throughput, not wall time.
+    pub stream_active_ms: u64,
+    /// Last counted stream byte. Cleared on pause so idle gaps never inflate t/s.
+    pub stream_last_byte_at: Option<Instant>,
     /// Last time an account usage request was started. This rate-limits quiet
     /// refreshes while a long-running turn is active.
     pub last_account_refresh_at: Option<Instant>,
 }
+
+/// Inter-chunk gaps longer than this are treated as a pause (tools/network).
+const STREAM_ACTIVE_GAP_CAP_MS: u64 = 2_500;
+/// Hot tail after the last byte still treated as active generation.
+const STREAM_HOT_TAIL_MS: u64 = 400;
 
 impl UsageUiState {
     pub(crate) fn begin_request_estimate(&mut self, input_tokens: u64) {
@@ -725,43 +733,76 @@ impl UsageUiState {
         self.estimated_request_output_bytes = 0;
         self.stream_started_at = None;
         self.stream_output_bytes = 0;
+        self.stream_active_ms = 0;
+        self.stream_last_byte_at = None;
+    }
+
+    /// Pause generation clock (tools running, approvals, end of model step).
+    pub(crate) fn pause_stream_throughput(&mut self) {
+        self.stream_last_byte_at = None;
     }
 
     pub(crate) fn add_estimated_output(&mut self, text: &str) {
         if text.is_empty() {
             return;
         }
-        if self.stream_started_at.is_none() {
-            self.stream_started_at = Some(Instant::now());
+        self.note_streamed_bytes(text.len());
+    }
+
+    /// Count streamed bytes (text, thinking, or tool-call argument payloads).
+    pub(crate) fn note_streamed_bytes(&mut self, bytes: usize) {
+        if bytes == 0 {
+            return;
         }
+        let now = Instant::now();
+        if let Some(last) = self.stream_last_byte_at {
+            let gap_ms = now.duration_since(last).as_millis() as u64;
+            self.stream_active_ms = self
+                .stream_active_ms
+                .saturating_add(gap_ms.min(STREAM_ACTIVE_GAP_CAP_MS));
+        }
+        // First byte after reset/pause: do not invent time for TTFT idle.
+        if self.stream_started_at.is_none() {
+            self.stream_started_at = Some(now);
+        }
+        self.stream_last_byte_at = Some(now);
         self.estimated_request_output_bytes = self
             .estimated_request_output_bytes
-            .saturating_add(text.len());
-        self.stream_output_bytes = self.stream_output_bytes.saturating_add(text.len());
+            .saturating_add(bytes);
+        self.stream_output_bytes = self.stream_output_bytes.saturating_add(bytes);
     }
 
     pub(crate) fn estimated_request_output_tokens(&self) -> u64 {
         self.estimated_request_output_bytes.saturating_add(3) as u64 / 4
     }
 
-    /// Estimated tokens delivered by the live stream (thinking + content).
+    /// Estimated tokens delivered by the live stream (thinking + content + tool args).
     pub(crate) fn stream_output_tokens(&self) -> u64 {
         self.stream_output_bytes.saturating_add(3) as u64 / 4
     }
 
-    /// Average generation rate since the first streamed delta.
+    fn stream_active_elapsed_ms(&self) -> u64 {
+        let mut ms = self.stream_active_ms;
+        if let Some(last) = self.stream_last_byte_at {
+            let since = last.elapsed().as_millis() as u64;
+            if since <= STREAM_HOT_TAIL_MS {
+                ms = ms.saturating_add(since);
+            }
+        }
+        ms
+    }
+
+    /// Average generation rate over **active** stream time only.
     ///
-    /// Uses streamed text only — not total turn wall time, and not billed
-    /// usage snapshots (which can arrive before/after generation phases).
+    /// Excludes time-to-first-token and tool/approval idle. Counts assistant
+    /// text, reasoning, and tool-call argument bytes (≈ chars/4 tokens).
     pub(crate) fn stream_avg_tokens_per_sec(&self) -> Option<f64> {
-        let start = self.stream_started_at?;
         let tokens = self.stream_output_tokens();
         if tokens == 0 {
             return None;
         }
-        let elapsed_ms = start.elapsed().as_millis() as u64;
-        // Ignore the first ~100ms so a single token does not spike the meter.
-        if elapsed_ms < 100 {
+        let elapsed_ms = self.stream_active_elapsed_ms();
+        if elapsed_ms < 80 {
             return None;
         }
         let secs = elapsed_ms as f64 / 1_000.0;

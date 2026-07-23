@@ -55,6 +55,8 @@ pub struct TurnContext {
     pub include_tool_prompt_manifest: bool,
     pub context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     pub available_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
+    /// Skill pools (folders) for the top-level catalog.
+    pub skill_pools: Arc<std::sync::Mutex<Vec<crate::skills::SkillPool>>>,
     pub active_skills: Arc<std::sync::Mutex<Vec<SkillManifest>>>,
     pub prompt_cache: Arc<PromptCache>,
     pub components: RuntimeComponents,
@@ -229,6 +231,11 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clone();
+    let skill_pools = ctx
+        .skill_pools
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
     let memory_injection = combined_memory_injection(ctx).await;
     let mut tools = ctx.tool_executor.definitions();
 
@@ -249,6 +256,7 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         context_packets,
         available_skills,
         active_skills,
+        skill_pools,
         harness_card: ctx.harness_card.clone(),
     };
     let prompt = ctx.components.prompt.clone();
@@ -664,6 +672,22 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                 }
                 output.tool_calls.push(invocation);
             }
+            ModelStreamEvent::ToolCallProgress {
+                id,
+                tool_name,
+                arguments_chars,
+            } => {
+                if tool_name.is_empty() && arguments_chars == 0 {
+                    continue;
+                }
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::ToolCallStreaming {
+                        id,
+                        tool_name,
+                        arguments_chars,
+                    });
+                }
+            }
             ModelStreamEvent::Usage {
                 input_tokens,
                 output_tokens,
@@ -708,6 +732,17 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                         let _ = tx.send(AgentEvent::StreamResuming {
                             accumulated_chars: output.text.len(),
                             attempt: 0,
+                        });
+                    }
+                } else if label == "thinking" {
+                    // Provider signalled reasoning without a text delta (e.g.
+                    // Anthropic signature_delta). Mark the stream as live so the
+                    // UI does not escalate to "Still waiting for model".
+                    if output.thinking.is_empty()
+                        && let Some(ref tx) = ctx.event_tx
+                    {
+                        let _ = tx.send(AgentEvent::ModelThinkingDelta {
+                            text: String::new(),
                         });
                     }
                 }

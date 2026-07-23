@@ -301,6 +301,11 @@ impl ModelProvider for OpenAiProvider {
                                 ModelStreamEvent::ThinkingDelta { .. } => {
                                     content_yielded = true;
                                 }
+                                ModelStreamEvent::ToolCallProgress { .. } => {
+                                    // Tool-arg streaming is still live generation —
+                                    // don't treat a mid-stream drop as a clean hang.
+                                    content_yielded = true;
+                                }
                                 ModelStreamEvent::ToolCall(_) => {
                                     content_yielded = true;
                                     attempt_yielded_tool_call = true;
