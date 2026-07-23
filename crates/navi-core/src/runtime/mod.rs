@@ -25,7 +25,7 @@ use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
 use crate::session_title::SessionTitleHandle;
-use crate::skills::{SkillManifest, active_skills, discover_configured_skills};
+use crate::skills::{SkillManifest, SkillPool, active_skills, discover_catalog_entries, discover_configured_skills};
 use crate::tool::builtin::{RepoExploreTool, SubagentTool};
 use crate::tool::{Tool, ToolExecutor};
 use crate::trace::{TraceStore, turn_traces_from_events};
@@ -347,6 +347,7 @@ pub struct AgentRuntime {
     shared_context_packets: Arc<std::sync::Mutex<Vec<ContextPacket>>>,
     active_skills: Vec<String>,
     shared_available_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
+    shared_skill_pools: Arc<std::sync::Mutex<Vec<crate::skills::SkillPool>>>,
     shared_active_skills: Arc<std::sync::Mutex<Vec<crate::skills::SkillManifest>>>,
     prompt_cache: Arc<crate::prompt::PromptCache>,
     runtime_components: RuntimeComponents,
@@ -411,6 +412,7 @@ impl AgentRuntime {
         let shared_context_packets =
             Arc::new(std::sync::Mutex::new(options.context_packets.clone()));
         let shared_available_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let shared_skill_pools = Arc::new(std::sync::Mutex::new(Vec::new()));
         let shared_active_skills = Arc::new(std::sync::Mutex::new(Vec::new()));
         let shared_model_provider = Arc::new(RwLock::new(options.model_provider.clone()));
         let shared_model_name = Arc::new(RwLock::new(provider_request_model_name(
@@ -448,6 +450,7 @@ impl AgentRuntime {
             shared_context_packets,
             active_skills: options.active_skills,
             shared_available_skills,
+            shared_skill_pools,
             shared_active_skills,
             prompt_cache,
             runtime_components,
@@ -725,18 +728,32 @@ impl AgentRuntime {
         &self.context_packets
     }
 
-    /// Sets the active skills for this session and emits a `ContextUpdated` event.
+    /// Sets the session catalog filter for skills.
+    ///
+    /// Empty `skills` means **all** discovered skills are catalog-active (default).
+    /// Non-empty restricts the Available Skills catalog to those ids/names.
+    /// Never injects skill instruction bodies into the prompt.
     ///
     /// When a skill has a harness pack under `{data_dir}/harnesses/<id>/`, applies
     /// soft graph allowlists, loop max_turns / token_budget, and harness card text.
     pub fn set_active_skills(&mut self, skills: Vec<String>) {
         self.active_skills = skills;
-        let manifests = self.load_active_skills();
+        let catalog = self.load_catalog_skills();
+        let pools = self.load_catalog_pools();
+        *self
+            .shared_available_skills
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = catalog.clone();
+        *self
+            .shared_skill_pools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = pools;
+        let harness_skills = self.discover_available_skills().unwrap_or_default();
         *self
             .shared_active_skills
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = manifests.clone();
-        self.apply_harness_packs_for_active(&manifests);
+            .unwrap_or_else(|e| e.into_inner()) = harness_skills.clone();
+        self.apply_harness_packs_for_active(&harness_skills);
         self.event_bus.publish(RuntimeEventKind::ContextUpdated);
     }
 
@@ -2028,17 +2045,24 @@ impl AgentRuntime {
                     memory.format_injection(self.loaded_config.config.memory.max_memory_entries)
                 });
 
-        // Initialize skill snapshots for prompt rendering.
+        // Catalog: root skills + pools (metadata only). Bodies via load_skill.
+        let root = self.load_catalog_skills();
+        let pools = self.load_catalog_pools();
         *self
             .shared_available_skills
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = self.load_available_skills();
-        let active_manifests = self.load_active_skills();
+            .unwrap_or_else(|e| e.into_inner()) = root.clone();
+        *self
+            .shared_skill_pools
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = pools;
+        // Harness soft-apply uses full skill discovery when packs exist.
+        let harness_skills = self.discover_available_skills().unwrap_or_default();
         *self
             .shared_active_skills
             .lock()
-            .unwrap_or_else(|e| e.into_inner()) = active_manifests.clone();
-        self.apply_harness_packs_for_active(&active_manifests);
+            .unwrap_or_else(|e| e.into_inner()) = harness_skills.clone();
+        self.apply_harness_packs_for_active(&harness_skills);
 
         let ctx = Arc::new(crate::turn::TurnContext {
             model_provider: self.shared_model_provider.clone(),
@@ -2060,7 +2084,9 @@ impl AgentRuntime {
             ),
             context_packets: self.shared_context_packets.clone(),
             available_skills: self.shared_available_skills.clone(),
-            active_skills: self.shared_active_skills.clone(),
+            skill_pools: self.shared_skill_pools.clone(),
+            // Prompt path uses available_skills + skill_pools; no instruction bodies.
+            active_skills: Arc::new(std::sync::Mutex::new(Vec::new())),
             prompt_cache: self.prompt_cache.clone(),
             instructions: std::sync::Arc::new(std::sync::RwLock::new(None)),
             prompt_prefix: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -2072,20 +2098,9 @@ impl AgentRuntime {
             agent_mode: self.agent_mode(),
             compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
-            // When active skills or harness packs declare allow_tools, lock the turn.
-            allowed_tool_names: {
-                let active = self
-                    .shared_active_skills
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                let skill_allow = crate::skills::skill_tool_allowlist(&active);
-                match (skill_allow, self.harness_allow_tools.clone()) {
-                    (Some(s), Some(h)) => crate::harness_pack::merge_allow_tools(&[s, h]),
-                    (Some(s), None) => Some(s),
-                    (None, Some(h)) => Some(h),
-                    (None, None) => None,
-                }
-            },
+            // Catalog-active skills do not lock tools. Only harness pack soft graph
+            // (if materialize applied) may contribute an allowlist.
+            allowed_tool_names: self.harness_allow_tools.clone(),
             memory_manager: self.memory_manager.clone(),
             harness_card: self.harness_card.clone(),
         });
@@ -2237,6 +2252,7 @@ impl AgentRuntime {
                 | AgentEvent::SubagentTranscript { .. }
                 | AgentEvent::ModelDelta { .. }
                 | AgentEvent::ModelThinkingDelta { .. }
+                | AgentEvent::ToolCallStreaming { .. }
                 | AgentEvent::StreamResuming { .. }
         );
         if let Some(kind) = runtime_event_kind_from_agent_event(&event) {
@@ -2265,31 +2281,49 @@ impl AgentRuntime {
             .unwrap_or_else(|e| e.into_inner()) = self.loaded_config.config.clone();
     }
 
-    fn load_active_skills(&self) -> Vec<SkillManifest> {
-        match self.discover_available_skills() {
-            Ok(skills) => active_skills(
-                &skills,
+    /// Root-level catalog skills (metadata only). Pool members are not included.
+    fn load_catalog_skills(&self) -> Vec<SkillManifest> {
+        match discover_catalog_entries(
+            &self.loaded_config.config.skills,
+            &self.project_dir,
+            &self.loaded_config.data_dir,
+        ) {
+            Ok(catalog) => active_skills(
+                &catalog.root_skills,
                 &self.loaded_config.config.skills.active,
                 &self.active_skills,
             ),
             Err(err) => {
-                tracing::warn!(error = %err, "failed to load configured skills");
+                tracing::warn!(error = %err, "failed to load catalog skills");
                 Vec::new()
             }
         }
+    }
+
+    fn load_catalog_pools(&self) -> Vec<SkillPool> {
+        match discover_catalog_entries(
+            &self.loaded_config.config.skills,
+            &self.project_dir,
+            &self.loaded_config.data_dir,
+        ) {
+            Ok(catalog) => catalog.pools,
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to load skill pools");
+                Vec::new()
+            }
+        }
+    }
+
+    fn load_active_skills(&self) -> Vec<SkillManifest> {
+        self.load_catalog_skills()
     }
 
     fn load_available_skills(&self) -> Vec<SkillManifest> {
-        match self.discover_available_skills() {
-            Ok(skills) => skills,
-            Err(err) => {
-                tracing::warn!(error = %err, "failed to discover configured skills");
-                Vec::new()
-            }
-        }
+        self.load_catalog_skills()
     }
 
     fn discover_available_skills(&self) -> Result<Vec<SkillManifest>> {
+        // Full discovery (root + pool members) for load_skill / harness.
         discover_configured_skills(
             &self.loaded_config.config.skills,
             &self.project_dir,
@@ -2429,6 +2463,8 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::SessionRecap { .. } => None,
         // Transient mid-stream resume signal; live UI only, not a runtime kind.
         AgentEvent::StreamResuming { .. } => None,
+        // Live-only tool-call argument stream; UI progress, not a runtime kind.
+        AgentEvent::ToolCallStreaming { .. } => None,
         // Host-facing UI events (not replayed as runtime kinds).
         AgentEvent::NotificationRequested { .. } | AgentEvent::UpdateAvailable { .. } => None,
     }

@@ -1479,9 +1479,10 @@ mod tests {
         let mut app = crate::tests::test_app("");
         app.is_loading = true;
         // Total turn time is long (includes idle wait), but stream rate uses
-        // stream_started_at only: 900 stream tokens over 1.5s → 600 t/s.
+        // active generation time only: 900 stream tokens over 1.5s → 600 t/s.
         app.loading_start = Some(Instant::now() - Duration::from_secs(60));
         app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.stream_active_ms = 1_500;
         app.usage_state.stream_output_bytes = 900 * 4; // ~900 tokens via bytes/4 estimate
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
@@ -1587,6 +1588,7 @@ mod tests {
         app.is_loading = true;
         app.loading_start = Some(Instant::now());
         app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        app.usage_state.stream_active_ms = 1_500;
         app.usage_state.stream_output_bytes = 900 * 4;
         app.messages.push(ChatMessage {
             status: Some("thinking".to_string()),
@@ -1603,12 +1605,15 @@ mod tests {
     }
 
     #[test]
-    fn stream_avg_tokens_per_sec_uses_stream_clock_not_turn_clock() {
+    fn stream_avg_tokens_per_sec_uses_active_time_not_idle() {
         let mut app = crate::tests::test_app("");
         // No stream yet.
         assert_eq!(app.usage_state.stream_avg_tokens_per_sec(), None);
 
-        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_millis(1_500));
+        // 900 tokens over 1.5s of *active* generation → 600 t/s, even if the
+        // turn has been open much longer (idle / tool wait excluded).
+        app.usage_state.stream_started_at = Some(Instant::now() - Duration::from_secs(60));
+        app.usage_state.stream_active_ms = 1_500;
         app.usage_state.stream_output_bytes = 900 * 4;
         assert_eq!(
             app.usage_state
@@ -1616,6 +1621,51 @@ mod tests {
                 .map(|v| (v * 10.0).round() / 10.0),
             Some(600.0)
         );
+    }
+
+    #[test]
+    fn stream_avg_ignores_idle_gaps_between_chunks() {
+        let mut app = crate::tests::test_app("");
+        app.usage_state.note_streamed_bytes(400); // first chunk: no time yet
+        assert_eq!(app.usage_state.stream_avg_tokens_per_sec(), None);
+
+        // Simulate a long idle gap (tools / latency) then more bytes — gap is capped.
+        app.usage_state.stream_last_byte_at =
+            Some(Instant::now() - Duration::from_secs(30));
+        app.usage_state.note_streamed_bytes(400);
+        // Active time is only the capped inter-chunk gap (≤2.5s), not 30s.
+        assert!(
+            app.usage_state.stream_active_ms <= 2_500,
+            "idle gap must not fully count: {}",
+            app.usage_state.stream_active_ms
+        );
+        let rate = app.usage_state.stream_avg_tokens_per_sec().expect("rate");
+        // 200 tokens / ≤2.5s ≥ 80 t/s — far above 200/30 ≈ 6.7 if idle counted.
+        assert!(
+            rate >= 70.0,
+            "throughput should exclude long idle, got {rate}"
+        );
+    }
+
+    #[test]
+    fn pause_stream_throughput_stops_active_clock() {
+        let mut app = crate::tests::test_app("");
+        app.usage_state.note_streamed_bytes(100);
+        app.usage_state.stream_last_byte_at =
+            Some(Instant::now() - Duration::from_millis(200));
+        app.usage_state.note_streamed_bytes(100);
+        let active_before = app.usage_state.stream_active_ms;
+        assert!(active_before > 0);
+
+        app.usage_state.pause_stream_throughput();
+        assert!(app.usage_state.stream_last_byte_at.is_none());
+
+        // Time spent "running tools" must not accumulate.
+        app.usage_state.stream_last_byte_at =
+            Some(Instant::now() - Duration::from_secs(10)); // would be wrong if not paused
+        // After pause, last_byte_at is None; if someone only sleeps, active stays.
+        app.usage_state.pause_stream_throughput();
+        assert_eq!(app.usage_state.stream_active_ms, active_before);
     }
 
     #[test]
@@ -1629,6 +1679,18 @@ mod tests {
         let bytes = app.usage_state.stream_output_bytes;
         app.usage_state.add_estimated_output("");
         assert_eq!(app.usage_state.stream_output_bytes, bytes);
+    }
+
+    #[test]
+    fn tool_arg_bytes_count_toward_throughput() {
+        let mut app = crate::tests::test_app("");
+        app.usage_state.note_streamed_bytes(800); // first
+        app.usage_state.stream_last_byte_at =
+            Some(Instant::now() - Duration::from_millis(500));
+        app.usage_state.note_streamed_bytes(800); // second "tool args" chunk
+        assert!(app.usage_state.stream_output_bytes >= 1600);
+        assert!(app.usage_state.stream_active_ms >= 400);
+        assert!(app.usage_state.stream_avg_tokens_per_sec().is_some());
     }
 
     #[test]

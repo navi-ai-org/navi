@@ -76,6 +76,8 @@ pub enum AsyncEvent {
         version: String,
         result: std::result::Result<(), String>,
     },
+    /// Graceful shutdown requested (signal / quit path).
+    ShutdownRequested,
     /// Chat model set/updated the session title via `set_session_title`.
     SessionTitleUpdated {
         session_id: String,
@@ -345,6 +347,9 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
         AsyncEvent::UpdateApplied { version, result } => {
             crate::update_check::handle_update_applied(app, version, result);
         }
+        AsyncEvent::ShutdownRequested => {
+            // Event-loop signal path; persistence flush is handled by the caller.
+        }
     }
 }
 
@@ -374,13 +379,37 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             update_live_usage_label(app);
         }
         AgentEvent::ModelThinkingDelta { text } => {
+            if !text.is_empty() {
+                let message = ensure_tail_model_response(app);
+                message.thinking_content.push_str(&text);
+                message.status = Some("thinking".to_string());
+                // Reasoning tokens count toward active throughput.
+                app.usage_state.add_estimated_output(&text);
+            } else {
+                // Status-only signal: mark UI as thinking without inventing
+                // generation time (t/s uses active_ms, not stream_started alone).
+                if app.usage_state.stream_started_at.is_none() {
+                    app.usage_state.stream_started_at = Some(std::time::Instant::now());
+                }
+                let message = ensure_tail_model_response(app);
+                message.status = Some("thinking".to_string());
+            }
+            update_live_usage_label(app);
+        }
+        AgentEvent::ToolCallStreaming {
+            id,
+            tool_name,
+            arguments_chars,
+        } => {
+            upsert_streaming_tool_call(app, id, tool_name.clone(), arguments_chars);
             let message = ensure_tail_model_response(app);
-            message.thinking_content.push_str(&text);
-            message.status = Some("thinking".to_string());
-            app.usage_state.add_estimated_output(&text);
+            message.status = Some(format!("streaming_tool:{tool_name}"));
             update_live_usage_label(app);
         }
         AgentEvent::ToolRequested(invocation) => {
+            // Tool runtime is not generation — pause active t/s clock.
+            app.usage_state.pause_stream_throughput();
+            clear_streaming_tool_call(app, Some(&invocation.id), Some(&invocation.tool_name));
             if invocation.tool_name == "subagent" {
                 if !app.subagent_order.iter().any(|id| id == &invocation.id) {
                     app.subagent_order.push(invocation.id.clone());
@@ -439,6 +468,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             app.events.push(AgentEvent::ToolCompleted(result));
             // The next model call after a tool has a new prompt and therefore
             // a new cumulative usage snapshot.
+            app.streaming_tool_calls.clear();
             app.usage_state
                 .begin_request_estimate(app.compact_state.total_estimated_tokens(0));
             update_active_assistant_status(app);
@@ -912,6 +942,96 @@ fn subagent_title(invocation: &navi_sdk::ToolInvocation) -> String {
         .unwrap_or_else(|| "Subagent".to_string())
 }
 
+fn upsert_streaming_tool_call(
+    app: &mut TuiApp,
+    id: Option<String>,
+    tool_name: String,
+    arguments_chars: usize,
+) {
+    // Track generation so idle-wait escalation never fires while args stream.
+    if app.usage_state.stream_started_at.is_none() {
+        app.usage_state.stream_started_at = Some(std::time::Instant::now());
+    }
+
+    let name = if tool_name.is_empty() {
+        "tool".to_string()
+    } else {
+        tool_name
+    };
+
+    let existing_idx = app.streaming_tool_calls.iter().position(|c| match (&id, &c.id) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }).or_else(|| {
+        if id.is_none() {
+            app.streaming_tool_calls.iter().rposition(|c| {
+                c.id.is_none() && (c.tool_name == name || c.tool_name == "tool")
+            })
+        } else {
+            None
+        }
+    });
+
+    if let Some(idx) = existing_idx {
+        let prev = app.streaming_tool_calls[idx].arguments_chars;
+        if arguments_chars > prev {
+            let delta = arguments_chars - prev;
+            app.usage_state.stream_output_bytes =
+                app.usage_state.stream_output_bytes.saturating_add(delta);
+            app.usage_state.estimated_request_output_bytes = app
+                .usage_state
+                .estimated_request_output_bytes
+                .saturating_add(delta);
+        }
+        let entry = &mut app.streaming_tool_calls[idx];
+        if name != "tool" {
+            entry.tool_name = name;
+        }
+        entry.arguments_chars = entry.arguments_chars.max(arguments_chars);
+        if entry.id.is_none() {
+            entry.id = id;
+        }
+        return;
+    }
+
+    if arguments_chars > 0 {
+        app.usage_state.stream_output_bytes = app
+            .usage_state
+            .stream_output_bytes
+            .saturating_add(arguments_chars);
+        app.usage_state.estimated_request_output_bytes = app
+            .usage_state
+            .estimated_request_output_bytes
+            .saturating_add(arguments_chars);
+    }
+
+    app.streaming_tool_calls
+        .push(crate::state::StreamingToolCall {
+            id,
+            tool_name: name,
+            arguments_chars,
+        });
+}
+
+fn clear_streaming_tool_call(app: &mut TuiApp, id: Option<&str>, tool_name: Option<&str>) {
+    if app.streaming_tool_calls.is_empty() {
+        return;
+    }
+    let before = app.streaming_tool_calls.len();
+    if let Some(id) = id {
+        app.streaming_tool_calls
+            .retain(|c| c.id.as_deref() != Some(id));
+    }
+    if let Some(name) = tool_name {
+        app.streaming_tool_calls
+            .retain(|c| !(c.id.is_none() && (c.tool_name == name || c.tool_name == "tool")));
+    }
+    // Single outstanding streaming call that just became a real request.
+    if before == 1 && app.streaming_tool_calls.len() == 1 {
+        app.streaming_tool_calls.clear();
+    }
+}
+
 fn tool_result_is_background_running(result: &navi_sdk::ToolResult) -> bool {
     result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
         && result
@@ -929,6 +1049,7 @@ fn is_turn_cancelled_error(message: &str) -> bool {
 }
 
 fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, String>) {
+    app.streaming_tool_calls.clear();
     let elapsed_ms = app
         .loading_start
         .map(|start| start.elapsed().as_millis() as u64)
