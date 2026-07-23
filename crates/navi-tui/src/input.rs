@@ -52,6 +52,17 @@ pub(crate) fn queued_edit_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
     TextInputRef::new(&mut app.queued_edit_text, &mut app.queued_edit_cursor)
 }
 
+pub(crate) fn goal_draft_input_ref(app: &mut TuiApp) -> TextInputRef<'_> {
+    TextInputRef::new(&mut app.goal_draft_text, &mut app.goal_draft_cursor)
+}
+
+pub(crate) fn insert_goal_draft_text(app: &mut TuiApp, text: &str) {
+    let sanitized = text.replace('\r', "");
+    if !sanitized.is_empty() {
+        goal_draft_input_ref(app).insert_text(&sanitized);
+    }
+}
+
 pub(crate) fn handle_text_input_key(
     mut input: TextInputRef<'_>,
     code: KeyCode,

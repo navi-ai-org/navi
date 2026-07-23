@@ -114,6 +114,8 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Backspace => {
             if app.input.is_empty() && !app.pending_images.is_empty() {
                 app.pending_images.pop();
+            } else if crate::paste_compact::try_delete_paste_before_cursor(app) {
+                // Whole paste chip removed.
             } else {
                 delete_input_previous_char(app);
             }
@@ -159,6 +161,8 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
         KeyCode::Enter => {
             if !app.pending_questions.is_empty() {
                 super::replace_modal(app, ModalKind::Question);
+            } else if crate::paste_compact::try_expand_paste_at_cursor(app) {
+                // Cursor was on a paste chip — expand for editing.
             } else if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
                 submit_message(app);
             }

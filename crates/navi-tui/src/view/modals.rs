@@ -523,6 +523,54 @@ fn fit_inline(value: &str, width: usize) -> String {
     result
 }
 
+pub(crate) fn render_set_goal(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
+    clear_modal_area(frame, area);
+    frame.render_widget(modal_block("Set Goal"), area);
+
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(8),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(
+            "Describe the multi-turn objective. Enter sends it as a chat message and starts the agent.",
+        )
+        .style(Style::default().fg(muted()).bg(modal_bg()))
+        .wrap(ratatui::widgets::Wrap { trim: true }),
+        rows[0],
+    );
+
+    render_text_area(
+        frame,
+        rows[1],
+        &app.goal_draft_text,
+        app.goal_draft_cursor,
+        app.mode == crate::state::Mode::SetGoal,
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("enter", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" send goal  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("shift+enter", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" newline  ·  ", Style::default().fg(muted()).bg(modal_bg())),
+            Span::styled("esc", Style::default().fg(text()).bg(modal_bg())),
+            Span::styled(" cancel", Style::default().fg(muted()).bg(modal_bg())),
+        ]))
+        .style(Style::default().bg(modal_bg())),
+        rows[2],
+    );
+}
+
 pub(crate) fn render_queued_message_edit(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Edit Queued Message"), area);

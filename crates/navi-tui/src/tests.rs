@@ -2755,6 +2755,42 @@ fn esc_while_loading_opens_cancel_confirmation() {
 }
 
 #[test]
+fn large_paste_is_compacted_to_chip() {
+    let mut app = test_app("");
+    app.mode = Mode::Normal;
+    // 4 lines → 3 newlines → compact
+    crate::event_loop::handle_paste(&mut app, "a\nb\nc\nd");
+    assert!(
+        app.input.contains("[Pasted text #1"),
+        "expected paste chip, got {:?}",
+        app.input
+    );
+    assert!(
+        app.input.contains("+4 lines"),
+        "expected line count in chip, got {:?}",
+        app.input
+    );
+    assert_eq!(app.pending_pastes.len(), 1);
+    assert_eq!(app.pending_pastes[0].text, "a\nb\nc\nd");
+    assert_eq!(app.pending_pastes[0].line_count, 4);
+
+    // Pre-submit expansion (same path submit_message uses).
+    crate::paste_compact::expand_composer_pastes(&mut app);
+    assert_eq!(app.input, "a\nb\nc\nd");
+    assert!(app.pending_pastes.is_empty());
+}
+
+#[test]
+fn small_paste_stays_raw() {
+    let mut app = test_app("");
+    app.mode = Mode::Normal;
+    // 3 lines → 2 newlines → raw
+    crate::event_loop::handle_paste(&mut app, "a\nb\nc");
+    assert_eq!(app.input, "a\nb\nc");
+    assert!(app.pending_pastes.is_empty());
+}
+
+#[test]
 fn paste_text_and_image_tags_work_while_streaming() {
     let mut app = test_app("");
     app.is_loading = true;
@@ -4691,4 +4727,65 @@ fn background_commands_down_arrow_moves_selection() {
     assert_eq!(app.bg_command_selected, 1);
     assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(app.bg_command_selected, 2);
+}
+
+
+#[test]
+fn set_goal_command_opens_modal() {
+    use crate::state::{ModalKind, Mode};
+
+    let mut app = test_app("");
+    app.input = "prefilled objective".into();
+    // Same path as CommandAction::SetGoal.
+    app.goal_draft_text = app.input.trim().to_string();
+    app.goal_draft_cursor = app.goal_draft_text.len();
+    crate::keybindings::replace_modal(&mut app, ModalKind::SetGoal);
+    assert_eq!(app.mode, Mode::SetGoal);
+    assert_eq!(app.goal_draft_text, "prefilled objective");
+}
+
+#[test]
+fn submit_goal_objective_adds_goal_chat_and_model_history() {
+    let mut app = test_app("");
+    app.provider_configured = false; // skip tokio stream in unit test
+    crate::chat::submit_goal_objective(&mut app, "Ship coverage gate in CI".into());
+    assert!(app.goal_state.is_some());
+    let goal_msg = app
+        .messages
+        .iter()
+        .find(|m| m.is_goal)
+        .expect("goal chat message");
+    assert_eq!(goal_msg.content, "Ship coverage gate in CI");
+    let hist = app.conversation_history.last().expect("history");
+    assert!(
+        hist.content.contains("# Goal") && hist.content.contains("Ship coverage gate in CI"),
+        "model history must include goal framing: {}",
+        hist.content
+    );
+}
+
+#[test]
+fn set_goal_enter_submits_and_closes_modal() {
+    use crate::state::{ModalKind, Mode};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut app = test_app("");
+    // Avoid starting a real stream/reactor in unit tests.
+    app.provider_configured = false;
+    app.goal_draft_text = "Fix the goal UX".into();
+    app.goal_draft_cursor = app.goal_draft_text.len();
+    crate::keybindings::replace_modal(&mut app, ModalKind::SetGoal);
+    assert_eq!(app.mode, Mode::SetGoal);
+
+    crate::keybindings::handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.goal_draft_text.is_empty());
+    // First message is the Goal bubble; stream may add an error assistant if no key.
+    let goal_msg = app
+        .messages
+        .iter()
+        .find(|m| m.is_goal)
+        .expect("goal chat message");
+    assert_eq!(goal_msg.content, "Fix the goal UX");
+    assert!(app.goal_state.is_some());
 }

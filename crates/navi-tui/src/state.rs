@@ -8,7 +8,7 @@ use navi_sdk::{
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 
-/// An image captured from the clipboard, waiting to be sent with the next message.
+/// An image captured from the clipboard, waiting to be attached to the next message.
 pub struct PendingImage {
     /// MIME type of the image (e.g. `"image/png"`, `"image/jpeg"`).
     pub media_type: String,
@@ -18,6 +18,15 @@ pub struct PendingImage {
     pub width: Option<u32>,
     /// Image height in pixels, if known.
     pub height: Option<u32>,
+}
+
+/// A large clipboard paste held outside the composer draft and shown as a chip.
+#[derive(Debug, Clone)]
+pub struct PendingPaste {
+    /// Full pasted body (newlines normalized to `\n`).
+    pub text: String,
+    /// Line count shown in the chip (`+N lines`).
+    pub line_count: usize,
 }
 
 #[derive(Debug)]
@@ -227,6 +236,8 @@ pub struct ChatMessage {
     pub is_compact_summary: bool,
     /// Post-turn recap line ("Recap").
     pub is_recap: bool,
+    /// User message that defined a thread goal (shown with a Goal label in chat).
+    pub is_goal: bool,
     /// Wall-clock time when the message was submitted/received (for /// right-aligned timestamps on user prompts).
     pub sent_at: Option<std::time::SystemTime>,
 }
@@ -248,6 +259,7 @@ impl ChatMessage {
             tool_result: None,
             is_compact_summary: false,
             is_recap: false,
+            is_goal: false,
             sent_at: None,
         }
     }
@@ -292,6 +304,16 @@ pub(crate) struct ChatRenderCache {
     /// Cached lines for finalized history prefix.
     pub history_lines: Vec<Line<'static>>,
     pub history_line_sources: Vec<ChatLineSource>,
+    /// Absolute top line of the chat viewport when the user has scrolled up.
+    ///
+    /// `scroll_offset` is bottom-relative (0 = follow the live end). While the
+    /// user is reading history, streaming / composer-height changes would move
+    /// that bottom-relative window. We lock the absolute top line across frames
+    /// so the text under the cursor stays put for copy/selection.
+    pub locked_viewport_top: Option<usize>,
+    /// `scroll_offset` value that produced `locked_viewport_top`. When the user
+    /// (or jump-to-latest) changes `scroll_offset`, we re-derive the lock.
+    pub locked_scroll_offset: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -307,6 +329,14 @@ pub(crate) enum ChatView {
 pub(crate) struct SubagentTranscript {
     pub(crate) title: String,
     pub(crate) items: Vec<SubagentTranscriptItem>,
+}
+
+/// Model is still generating tool-call arguments (before ToolRequested).
+#[derive(Debug, Clone)]
+pub(crate) struct StreamingToolCall {
+    pub(crate) id: Option<String>,
+    pub(crate) tool_name: String,
+    pub(crate) arguments_chars: usize,
 }
 
 impl SubagentTranscript {
@@ -515,6 +545,8 @@ pub enum Mode {
     AttachmentModels,
     MessageQueue,
     QueuedMessageEdit,
+    /// Multi-line entry for setting a thread goal (sent as chat + set_goal).
+    SetGoal,
     ConfirmCancelTurn,
     ConfirmPlan,
     /// Confirm merging mcp.json from a just-installed plugin into global config.
@@ -563,6 +595,7 @@ pub(crate) enum ModalKind {
     AttachmentModels,
     MessageQueue,
     QueuedMessageEdit,
+    SetGoal,
     ConfirmCancelTurn,
     ConfirmPlan,
     SudoPassword,
@@ -602,6 +635,7 @@ impl ModalKind {
             Self::AttachmentModels => Mode::AttachmentModels,
             Self::MessageQueue => Mode::MessageQueue,
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
+            Self::SetGoal => Mode::SetGoal,
             Self::ConfirmCancelTurn => Mode::ConfirmCancelTurn,
             Self::ConfirmPlan => Mode::ConfirmPlan,
             Self::SudoPassword => Mode::SudoPassword,

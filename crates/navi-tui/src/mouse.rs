@@ -53,11 +53,21 @@ fn map_mouse_to_text_with_clamp(
 
     let total_lines = cache.lines.len();
     let visible_height = inner.height as usize;
-    let max_scroll = total_lines.saturating_sub(visible_height);
-    let effective_scroll = app.scroll_offset.min(max_scroll);
-    let start = total_lines
-        .saturating_sub(visible_height)
-        .saturating_sub(effective_scroll);
+    // Prefer the render-time lock so drag-select stays under the cursor while
+    // the model streams below a scrolled-up viewport.
+    let start = if app.scroll_offset == 0 {
+        total_lines.saturating_sub(visible_height)
+    } else if let Some(top) = cache.locked_viewport_top {
+        if cache.locked_scroll_offset == app.scroll_offset {
+            top.min(total_lines.saturating_sub(visible_height))
+        } else {
+            let max_start = total_lines.saturating_sub(visible_height);
+            max_start.saturating_sub(app.scroll_offset.min(max_start))
+        }
+    } else {
+        let max_start = total_lines.saturating_sub(visible_height);
+        max_start.saturating_sub(app.scroll_offset.min(max_start))
+    };
 
     let line_index = start + visible_y;
     if line_index >= total_lines {
@@ -1136,6 +1146,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::OAuth
         | Mode::Usage
         | Mode::QueuedMessageEdit
+        | Mode::SetGoal
         | Mode::ConfirmCancelTurn
         | Mode::ConfirmMcpMerge
         | Mode::About

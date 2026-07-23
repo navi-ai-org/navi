@@ -286,6 +286,14 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         76,
         20,
     )));
+    // Set thread goal (text area → chat + set_goal)
+    pm.add_overlay(Box::new(ModalPanel::new(
+        "set-goal",
+        Mode::SetGoal,
+        modals::render_set_goal,
+        76,
+        18,
+    )));
     // Confirm cancel turn
     pm.add_overlay(Box::new(ModalPanel::new(
         "confirm-cancel",

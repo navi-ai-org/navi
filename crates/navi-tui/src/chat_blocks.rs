@@ -160,10 +160,9 @@ fn ensure_selected_block_visible(app: &mut TuiApp) {
     drop(cache);
 
     let max_scroll = total.saturating_sub(visible);
-    // Bottom-anchored scroll: offset 0 shows the last page.
-    let first_visible = total
-        .saturating_sub(visible)
-        .saturating_sub(app.scroll_offset.min(max_scroll));
+    // Prefer the render-time viewport lock so block selection doesn't fight
+    // streaming growth while the user is reading history.
+    let first_visible = crate::view::chat::chat_viewport_start(app, visible);
     let last_visible = first_visible.saturating_add(visible.saturating_sub(1));
 
     if end < first_visible {
@@ -173,12 +172,15 @@ fn ensure_selected_block_visible(app: &mut TuiApp) {
             .saturating_sub(visible)
             .saturating_sub(desired_first)
             .min(max_scroll);
+        // User-driven scroll: drop lock so the next paint re-derives from offset.
+        app.chat_render_cache.borrow_mut().locked_viewport_top = None;
     } else if start > last_visible {
         // Block is below viewport → scroll down (decrease offset).
         app.scroll_offset = total
             .saturating_sub(visible)
             .saturating_sub(start)
             .min(max_scroll);
+        app.chat_render_cache.borrow_mut().locked_viewport_top = None;
     }
 }
 

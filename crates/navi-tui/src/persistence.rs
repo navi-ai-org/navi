@@ -152,6 +152,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.chat_view = crate::state::ChatView::Parent;
     app.tool_invocations.clear();
     app.pending_images.clear();
+    app.pending_pastes.clear();
     app.background_commands.clear();
 
     let mut tool_invocations = std::collections::HashMap::new();

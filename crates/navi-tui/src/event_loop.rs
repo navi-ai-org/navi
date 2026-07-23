@@ -896,10 +896,12 @@ pub(crate) fn handle_paste(app: &mut TuiApp, content: &str) {
                 return;
             }
 
-            insert_input_text(app, content);
+            // Large pastes become a single chip so the short composer stays usable.
+            crate::paste_compact::insert_paste_into_composer(app, content);
         }
         Mode::ApiKeyEntry => insert_api_key_text(app, content),
         Mode::QueuedMessageEdit => crate::input::insert_queued_edit_text(app, content),
+        Mode::SetGoal => crate::input::insert_goal_draft_text(app, content),
         _ => {}
     }
 }
