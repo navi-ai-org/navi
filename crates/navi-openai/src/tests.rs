@@ -1669,6 +1669,41 @@ fn sse_decoder_skips_events_without_data() {
     assert!(events.is_empty());
 }
 
+#[test]
+fn sse_decoder_treats_plain_json_lines_as_events_until_sse_frame() {
+    let mut decoder = SseDecoder::default();
+    // Plain NDJSON-style lines are emitted until an SSE "data:" frame is seen.
+    let e1 = decoder.push_bytes(b"{\"a\":1}\n");
+    assert_eq!(e1, vec!["{\"a\":1}".to_string()]);
+    let e2 = decoder.push_bytes(b"{\"b\":2}\n");
+    assert_eq!(e2, vec!["{\"b\":2}".to_string()]);
+    let e3 = decoder.push_bytes(b"data: done\n\n");
+    assert_eq!(e3, vec!["done".to_string()]);
+    // After an SSE frame, subsequent non-SSE lines are ignored.
+    let e4 = decoder.push_bytes(b"ignored\n");
+    assert!(e4.is_empty());
+}
+
+#[test]
+fn sse_decoder_drain_emits_remaining_data_and_sse() {
+    let mut decoder = SseDecoder::default();
+    let events = decoder.push_bytes(b"data: partial");
+    assert!(events.is_empty());
+    assert_eq!(decoder.drain(), vec!["partial".to_string()]);
+
+    let mut decoder = SseDecoder::default();
+    decoder.push_bytes(b"plain text");
+    assert_eq!(decoder.drain(), vec!["plain text".to_string()]);
+
+    let mut decoder = SseDecoder::default();
+    decoder.push_bytes(b"data: final\n\nextra");
+    // After an SSE frame, trailing non-SSE data is ignored.
+    assert!(decoder.drain().is_empty());
+
+    let mut decoder = SseDecoder::default();
+    assert!(decoder.drain().is_empty());
+}
+
 // ── Anthropic SSE golden tests ──────────────────────────────────────────────
 
 #[test]

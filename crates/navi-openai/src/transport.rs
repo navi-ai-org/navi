@@ -152,3 +152,83 @@ pub(crate) fn extract_requested_delay_from_json(json: &Value) -> Option<Duration
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_retry_after_accepts_seconds() {
+        assert_eq!(parse_retry_after("5"), Some(Duration::from_secs(5)));
+        assert_eq!(parse_retry_after("  10  "), Some(Duration::from_secs(10)));
+        assert_eq!(parse_retry_after("not-a-number"), None);
+    }
+
+    #[test]
+    fn is_usage_limit_error_detects_keywords() {
+        assert!(is_usage_limit_error("FreeUsageLimitError"));
+        assert!(is_usage_limit_error("free usage limit"));
+        assert!(is_usage_limit_error("usage limit exceeded"));
+        assert!(is_usage_limit_error("insufficient_quota"));
+        assert!(is_usage_limit_error("exceeded your current quota"));
+        assert!(!is_usage_limit_error("rate limit"));
+    }
+
+    #[test]
+    fn value_to_duration_seconds_parses_u64_and_f64() {
+        assert_eq!(
+            value_to_duration_seconds(&json!(2)),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
+            value_to_duration_seconds(&json!(1.5)),
+            Some(Duration::from_secs_f64(1.5))
+        );
+        assert_eq!(value_to_duration_seconds(&json!("x")), None);
+    }
+
+    #[test]
+    fn retry_delay_uses_backoff_when_no_requested_delay() {
+        let err = ProviderError::Api {
+            status: reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            body: String::new(),
+            requested_delay: None,
+            body_read_error: None,
+        };
+        let delay = retry_delay_for_error(&err, 1);
+        // First backoff is ~200ms with ±10% jitter.
+        assert!(delay >= Duration::from_millis(180) && delay <= Duration::from_millis(220));
+    }
+
+    #[test]
+    fn retry_delay_caps_requested_delay() {
+        let err = ProviderError::Api {
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            body: String::new(),
+            requested_delay: Some(Duration::from_secs(120)),
+            body_read_error: None,
+        };
+        assert_eq!(retry_delay_for_error(&err, 1), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn should_retry_respects_retry_429_flag() {
+        let err = ProviderError::Api {
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            body: String::new(),
+            requested_delay: None,
+            body_read_error: None,
+        };
+        assert!(should_retry_error(&err, true));
+        assert!(!should_retry_error(&err, false));
+
+        let usage_err = ProviderError::Api {
+            status: reqwest::StatusCode::TOO_MANY_REQUESTS,
+            body: "insufficient_quota".to_string(),
+            requested_delay: None,
+            body_read_error: None,
+        };
+        assert!(!should_retry_error(&usage_err, true));
+    }
+}
