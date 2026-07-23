@@ -203,11 +203,9 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     };
 
     if !result.ok {
-        // Bash already embeds sticky failure bits in its summary (`Run … · 4p/1f · test`).
-        // Don't append a second `· signal` from the generic error path.
-        let bash_already_signaled =
-            invocation.tool_name == "bash" && shell_failure_header_bits(&result.output).is_some();
-        if bash_already_signaled {
+        // Bash owns failure chrome in `bash_summary` (`Run … · exit N · bits`).
+        // Never append a second `· exit N` / generic "Bash failed" here.
+        if invocation.tool_name == "bash" {
             // nothing extra
         } else if let Some(error) = tool_error_message(&result.output) {
             // Prefer a short, high-signal failure reason over repeating "Bash failed".
@@ -582,8 +580,10 @@ fn render_tool_error_body(
     // non-shell tools — avoids double-printing the same error string.
     if is_shellish {
         let has_sticky = shell_failure_summary(obj).is_some();
-        let should_show_command =
-            has_sticky || has_streams || has_extra || error_code.is_some() || hint.is_some();
+        // Only echo the command when there is real output/context — not for a
+        // bare exit code (header already says `exit N`). Never dump multi-line
+        // scripts / heredocs as a single flattened wall of text.
+        let should_show_command = has_sticky || has_streams || has_extra || hint.is_some();
         if should_show_command
             && let Some(command) = invocation
                 .input
@@ -591,18 +591,21 @@ fn render_tool_error_body(
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
         {
-            // Prefer full command only when the header had to compact it.
             let flat = one_line(command);
-            if compact_command(command) != flat || has_sticky || has_streams {
-                content.push_str(&format!("$ {flat}\n"));
+            let header_compacted = compact_command(command) != flat;
+            if command_is_bulky(command) || header_compacted || has_sticky || has_streams {
+                content.push_str(&format_command_for_body(command));
             }
         }
         if let Some(summary) = shell_failure_summary(obj) {
-            content.push_str(&summary);
-            if !summary.ends_with('\n') {
+            // Skip pure "Summary: exit N" — header already has exit.
+            if !is_exit_only_failure_summary(&summary) {
+                content.push_str(&summary);
+                if !summary.ends_with('\n') {
+                    content.push('\n');
+                }
                 content.push('\n');
             }
-            content.push('\n');
         } else if (has_streams || has_extra)
             && let Some(error) = error
         {
@@ -870,8 +873,8 @@ fn append_shell_streams_capped(
         .and_then(|v| v.as_i64())
         .or_else(|| obj.get("status").and_then(|v| v.as_i64()));
 
-    // Prefer the sticky summary (already printed above) over a second exit line
-    // when we already extracted a failure summary for the body.
+    // Prefer sticky summary over a second exit line. Skip a lone `exit N`
+    // when streams are empty — the header already carries the code.
     let already_has_summary = content.lines().any(|line| {
         let t = line.trim();
         t.starts_with("Summary:")
@@ -879,9 +882,11 @@ fn append_shell_streams_capped(
             || t.starts_with("Assert:")
             || t.starts_with("At:")
     });
+    let has_stream_text = !stdout.trim().is_empty() || !stderr.trim().is_empty();
     if let Some(code) = exit_code
         && code != 0
         && !already_has_summary
+        && has_stream_text
     {
         content.push_str(&format!("exit {code}\n"));
     }
@@ -1561,16 +1566,26 @@ fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
         // only `exit 101` (body still has the full dump).
         if !result.ok {
             let mut parts = vec![format!("Run {cmd}")];
-            if let Some(status) = result
+            if let Some(signal) = shell_failure_header_bits(&result.output) {
+                if let Some(status) = result
+                    .output
+                    .get("status")
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| result.output.get("exit_code").and_then(|v| v.as_i64()))
+                {
+                    parts.push(format!("exit {status}"));
+                }
+                parts.extend(signal);
+            } else if let Some(status) = result
                 .output
                 .get("status")
                 .and_then(|v| v.as_i64())
                 .or_else(|| result.output.get("exit_code").and_then(|v| v.as_i64()))
             {
+                // Bare failure: single exit chip (never `exit N · exit N`).
                 parts.push(format!("exit {status}"));
-            }
-            if let Some(signal) = shell_failure_header_bits(&result.output) {
-                parts.extend(signal);
+            } else {
+                parts.push("failed".to_string());
             }
             return parts.join(" · ");
         }
@@ -2853,6 +2868,57 @@ fn one_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Multi-line scripts, heredocs, or very long one-liners — never dump as a wall.
+fn command_is_bulky(command: &str) -> bool {
+    let lines = command.lines().count().max(1);
+    if lines > 2 {
+        return true;
+    }
+    if command.contains("<<") {
+        return true;
+    }
+    one_line(command).chars().count() > COMPACT_COMMAND_CHARS * 2
+}
+
+/// Body form of `$ command` for shell failure cards.
+///
+/// Multi-line / heredoc scripts stay as a short head + line count — never
+/// `one_line()` the whole payload (that produced unreadable walls of Python).
+fn format_command_for_body(command: &str) -> String {
+    let line_count = command.lines().filter(|l| !l.is_empty()).count().max(1);
+    if command_is_bulky(command) {
+        let first = command
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("command");
+        let head = if first.chars().count() > COMPACT_COMMAND_CHARS {
+            truncate_for_summary(first, COMPACT_COMMAND_CHARS)
+        } else {
+            first.to_string()
+        };
+        return format!("$ {head}\n  … ({line_count} lines)\n");
+    }
+    let flat = one_line(command);
+    if flat.chars().count() > COMPACT_COMMAND_CHARS {
+        format!("$ {}\n", compact_command(command))
+    } else {
+        format!("$ {flat}\n")
+    }
+}
+
+/// Sticky summary that only restates the exit code (already in the header).
+fn is_exit_only_failure_summary(summary: &str) -> bool {
+    let mut saw_line = false;
+    for line in summary.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        saw_line = true;
+        if !line.starts_with("Summary: exit ") {
+            return false;
+        }
+    }
+    saw_line
+}
+
 /// Compact shell command for one-line tool headers.
 ///
 /// Prefers the head of long pipelines (`cmd1 && cmd2…`) so the primary command
@@ -3553,6 +3619,99 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         assert!(
             text.contains("0p/1f") || text.contains("bar"),
             "expected sticky bits in header: {text}"
+        );
+        assert_eq!(
+            text.matches("exit 101").count(),
+            1,
+            "exit code must appear once: {text}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_header_does_not_double_exit_chip() {
+        let text = tool_compact_text(
+            &invocation("bash", json!({ "command": "false" })),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(text.starts_with("Run false"), "{text}");
+        assert!(text.contains("exit 1"), "{text}");
+        assert_eq!(
+            text.matches("exit 1").count(),
+            1,
+            "must not render exit twice: {text}"
+        );
+        assert!(
+            !text.contains("Bash failed") && !text.contains("error:"),
+            "generic bash failed must not appear: {text}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_sanitizes_multiline_script_command() {
+        let script = "cd /tmp && python3 <<'PY'\nfrom pathlib import Path\nPath('x').write_text('y' * 200)\nprint('done')\nPY";
+        let content = tool_body_content(
+            &invocation("bash", json!({ "command": script })),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "SyntaxError: invalid syntax\n",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(
+            !content.contains("from pathlib import Path Path('x')"),
+            "must not flatten heredoc into a wall:\n{content}"
+        );
+        assert!(
+            content.contains("…") || content.contains("lines"),
+            "expected compact multi-line command form:\n{content}"
+        );
+        assert!(
+            content.contains("SyntaxError") || content.contains("invalid syntax"),
+            "stderr signal should remain:\n{content}"
+        );
+        assert!(
+            !content.contains("Error: Bash failed"),
+            "generic bash failed must not lead body:\n{content}"
+        );
+        assert!(
+            content.matches("exit 1").count() <= 1,
+            "exit should not spam:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_empty_streams_is_header_only() {
+        let content = tool_body_content(
+            &invocation(
+                "bash",
+                json!({
+                    "command": "cd /home/enrell/projects/navi && python3 <<'PY'\nprint(1\nPY"
+                }),
+            ),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(
+            content.trim().is_empty()
+                || (!content.contains("python3 <<") && !content.contains("print(1")),
+            "empty-stream failures must not dump the script wall:\n{content}"
+        );
+        assert!(
+            !content.contains("Error: Bash failed"),
+            "no generic error chrome:\n{content}"
         );
     }
 
