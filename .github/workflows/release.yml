@@ -566,18 +566,29 @@ jobs:
 
   # ── Publish npm packages (after GitHub Release assets exist) ────────────────
   #
-  # Invokes publish-npm.yml as a reusable workflow so npm OIDC Trusted Publishing
-  # continues to match workflow filename `publish-npm.yml` on npmjs.com.
+  # Dispatch publish-npm.yml as a *top-level* run (not workflow_call).
+  # npm Trusted Publishing OIDC is bound to workflow filename `publish-npm.yml`;
+  # calling it as a reusable workflow from release.yml produced 404 on
+  # `npm publish` (token/permission mismatch). workflow_dispatch matches the
+  # trusted publisher config on npmjs.com.
   # Skips prerelease tags (contain '-').
 
   publish-npm:
     name: Publish npm
     needs: [release]
     if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') }}
-    uses: ./.github/workflows/publish-npm.yml
-    with:
-      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
+      actions: write
       contents: read
-    secrets: inherit
+    steps:
+      - name: Dispatch publish-npm.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "Dispatching publish-npm.yml for $TAG"
+          gh workflow run publish-npm.yml \
+            --repo "${{ github.repository }}" \
+            -f "tag=$TAG"
