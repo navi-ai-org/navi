@@ -738,14 +738,12 @@ impl ToolExecutor {
         let pre_execution_snapshot = if tool_kind == Some(crate::tool::ToolKind::Write) {
             let paths = self.snapshot_paths_for_invocation(&invocation);
             // First-touch paths: capture pre-write bytes into the current rewind point.
-            if let Some(store) = &self.rewind_store {
-                if !paths.is_empty() {
-                    if let Ok(mut store) = store.lock() {
-                        if let Err(e) = store.ensure_pre_write_capture(paths.iter().cloned()) {
-                            tracing::debug!(error = %e, "rewind: pre-write capture failed");
-                        }
-                    }
-                }
+            if let Some(store) = &self.rewind_store
+                && !paths.is_empty()
+                && let Ok(mut store) = store.lock()
+                && let Err(e) = store.ensure_pre_write_capture(paths.iter().cloned())
+            {
+                tracing::debug!(error = %e, "rewind: pre-write capture failed");
             }
             if paths.is_empty() {
                 None
@@ -770,25 +768,26 @@ impl ToolExecutor {
         };
 
         // Track successful write paths for session rewind (dirty set + created).
-        if result.ok && tool_kind == Some(crate::tool::ToolKind::Write) {
-            if let Some(store) = &self.rewind_store {
-                let paths = crate::effect::extract_paths(
-                    &result,
-                    &ToolInvocation {
-                        id: inv_id.clone(),
-                        tool_name: tool_name.clone(),
-                        input: inv_input.clone(),
-                    },
-                );
-                let abs_paths: Vec<std::path::PathBuf> = paths
-                    .into_iter()
-                    .map(|p| self.policy.resolve_project_path(&p))
-                    .collect();
-                if !abs_paths.is_empty() {
-                    if let Ok(mut store) = store.lock() {
-                        store.note_written_paths(abs_paths);
-                    }
-                }
+        if result.ok
+            && tool_kind == Some(crate::tool::ToolKind::Write)
+            && let Some(store) = &self.rewind_store
+        {
+            let paths = crate::effect::extract_paths(
+                &result,
+                &ToolInvocation {
+                    id: inv_id.clone(),
+                    tool_name: tool_name.clone(),
+                    input: inv_input.clone(),
+                },
+            );
+            let abs_paths: Vec<std::path::PathBuf> = paths
+                .into_iter()
+                .map(|p| self.policy.resolve_project_path(&p))
+                .collect();
+            if !abs_paths.is_empty()
+                && let Ok(mut store) = store.lock()
+            {
+                store.note_written_paths(abs_paths);
             }
         }
 
@@ -928,10 +927,12 @@ impl ToolExecutor {
         // Post-execution verifier hint injection: if the tool metadata advertises
         // a verifier hint, surface it in the result so the harness (and model)
         // can suggest or run verification after mutation tools.
-        if result.ok && tool_kind == Some(crate::tool::ToolKind::Write) {
-            if let Some(verifier_cmd) = tool_verifier_hint {
-                if let Value::Object(ref mut map) = result.output {
-                    map.insert(
+        if result.ok
+            && tool_kind == Some(crate::tool::ToolKind::Write)
+            && let Some(verifier_cmd) = tool_verifier_hint
+            && let Value::Object(ref mut map) = result.output
+        {
+            map.insert(
                         "verifier_hint".to_string(),
                         json!({
                             "suggested": true,
@@ -942,8 +943,6 @@ impl ToolExecutor {
                             ),
                         }),
                     );
-                }
-            }
         }
 
         tracing::info!(tool = %tool_name, ok = result.ok, dur_ms = started.elapsed().as_millis() as u64, "invoke finished");
@@ -1380,10 +1379,11 @@ fn recover_misnamed_tool_invocation(
     {
         let mut recovered = inv.clone();
         recovered.tool_name = "fs_browser".to_string();
-        if !has_path_field && path_like_name {
-            if let Some(obj) = recovered.input.as_object_mut() {
-                obj.insert("path".to_string(), Value::String(name.to_string()));
-            }
+        if !has_path_field
+            && path_like_name
+            && let Some(obj) = recovered.input.as_object_mut()
+        {
+            obj.insert("path".to_string(), Value::String(name.to_string()));
         }
         tracing::info!(
             from = %inv.tool_name,

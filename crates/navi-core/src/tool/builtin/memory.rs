@@ -316,15 +316,15 @@ impl Tool for MemoryTool {
         let output: Value = match action {
             "write" => {
                 let raw_id = helpers::required_string(&invocation.input, "id")?;
-                let id = sanitize_id(&raw_id);
+                let id = sanitize_id(raw_id);
                 let memory_type_str = helpers::required_string(&invocation.input, "memory_type")?;
-                let memory_type = MemoryType::from_str(&memory_type_str)
+                let memory_type = MemoryType::from_str(memory_type_str)
                     .context(format!("Invalid memory_type: {memory_type_str}"))?;
                 let name = helpers::required_string(&invocation.input, "name")?;
                 let description = helpers::required_string(&invocation.input, "description")?;
                 let body = helpers::required_string(&invocation.input, "body")?;
 
-                let entry = new_entry(&id, memory_type, &name, &description, &body);
+                let entry = new_entry(&id, memory_type, name, description, body);
                 store.upsert(&entry)?;
 
                 // Generate and store embedding if available
@@ -345,7 +345,7 @@ impl Tool for MemoryTool {
             }
 
             "read" => {
-                let id = sanitize_id(&helpers::required_string(&invocation.input, "id")?);
+                let id = sanitize_id(helpers::required_string(&invocation.input, "id")?);
                 let entry = store
                     .get(&id)?
                     .context(format!("Memory '{}' not found", id))?;
@@ -412,7 +412,7 @@ impl Tool for MemoryTool {
                     crate::memory::MemoryType,
                     f64,
                     String,
-                )> = if let Some(query_emb) = self.try_generate_embedding(&query) {
+                )> = if let Some(query_emb) = self.try_generate_embedding(query) {
                     let semantic = store.search_semantic(&query_emb, 0.3, limit)?;
                     if !semantic.is_empty() {
                         semantic
@@ -430,7 +430,7 @@ impl Tool for MemoryTool {
                             .collect()
                     } else {
                         // Semantic returned nothing — fall back to text
-                        let text_results = store.search_text(&query, limit)?;
+                        let text_results = store.search_text(query, limit)?;
                         text_results
                             .into_iter()
                             .map(|m| {
@@ -447,7 +447,7 @@ impl Tool for MemoryTool {
                     }
                 } else {
                     // No embeddings available — text search only
-                    let text_results = store.search_text(&query, limit)?;
+                    let text_results = store.search_text(query, limit)?;
                     text_results
                         .into_iter()
                         .map(|m| {
@@ -479,12 +479,12 @@ impl Tool for MemoryTool {
             }
 
             "update" => {
-                let id = sanitize_id(&helpers::required_string(&invocation.input, "id")?);
+                let id = sanitize_id(helpers::required_string(&invocation.input, "id")?);
 
-                if let Some(status_str) = invocation.input.get("status").and_then(|v| v.as_str()) {
-                    if let Some(status) = MemoryStatus::from_str(status_str) {
-                        store.set_status(&id, status)?;
-                    }
+                if let Some(status_str) = invocation.input.get("status").and_then(|v| v.as_str())
+                    && let Some(status) = MemoryStatus::from_str(status_str)
+                {
+                    store.set_status(&id, status)?;
                 }
 
                 let name = invocation.input.get("name").and_then(|v| v.as_str());
@@ -520,7 +520,7 @@ impl Tool for MemoryTool {
             }
 
             "delete" => {
-                let id = sanitize_id(&helpers::required_string(&invocation.input, "id")?);
+                let id = sanitize_id(helpers::required_string(&invocation.input, "id")?);
                 store.delete(&id)?;
 
                 json!({

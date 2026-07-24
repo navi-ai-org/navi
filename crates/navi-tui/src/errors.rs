@@ -115,21 +115,21 @@ fn usage_reset_hint(app: &TuiApp) -> String {
         if !limit.limit_reached {
             continue;
         }
-        if let Some(ref primary) = limit.primary {
-            if primary.reset_after_seconds > 0 {
-                let hint = format_usage_reset(primary.reset_after_seconds);
-                return format!("\n\n⏰ 5h window resets {hint}.");
-            }
+        if let Some(ref primary) = limit.primary
+            && primary.reset_after_seconds > 0
+        {
+            let hint = format_usage_reset(primary.reset_after_seconds);
+            return format!("\n\n⏰ 5h window resets {hint}.");
         }
     }
 
     // If no reached limit found, show the first primary window anyway
     for limit in &report.limits {
-        if let Some(ref primary) = limit.primary {
-            if primary.reset_after_seconds > 0 {
-                let hint = format_usage_reset(primary.reset_after_seconds);
-                return format!("\n\n⏰ 5h window resets {hint}.");
-            }
+        if let Some(ref primary) = limit.primary
+            && primary.reset_after_seconds > 0
+        {
+            let hint = format_usage_reset(primary.reset_after_seconds);
+            return format!("\n\n⏰ 5h window resets {hint}.");
         }
     }
 

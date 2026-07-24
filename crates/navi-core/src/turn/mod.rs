@@ -503,19 +503,18 @@ fn build_model_request(
     // Models without reasoning support are forced to Off automatically.
     let model_name = ctx.active_model_name();
     let provider_id = config.model.provider.clone();
-    if let Some(provider) = crate::config::resolve_provider_config(&config, &provider_id) {
-        if let Some(model) = provider
+    if let Some(provider) = crate::config::resolve_provider_config(&config, &provider_id)
+        && let Some(model) = provider
             .models
             .iter()
             .find(|m| m.name == model_name || m.name.eq_ignore_ascii_case(&model_name))
-        {
-            thinking = crate::resolve_model_thinking_level(
-                thinking,
-                model.supports_thinking,
-                &model.reasoning_levels,
-                model.default_reasoning_effort.as_deref(),
-            );
-        }
+    {
+        thinking = crate::resolve_model_thinking_level(
+            thinking,
+            model.supports_thinking,
+            &model.reasoning_levels,
+            model.default_reasoning_effort.as_deref(),
+        );
     }
 
     ModelRequest {
@@ -612,7 +611,7 @@ fn unsupported_attachment_tool_instruction(kind: AttachmentKind, part: &ContentP
     // models cannot reliably re-emit base64 into analyze_attachment anyway.
     let byte_len = part
         .data()
-        .map(|data| approx_decoded_attachment_bytes(data))
+        .map(approx_decoded_attachment_bytes)
         .unwrap_or(0);
     let name = part
         .name()
@@ -840,7 +839,7 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
             }
             // API metadata/rate-limit headers are surfaced by the provider but
             // do not affect turn accumulation.
-            ModelStreamEvent::ApiMeta { .. } => {}
+            ModelStreamEvent::ApiMeta(_) => {}
         }
     }
 
@@ -1059,7 +1058,7 @@ async fn handle_tool_calls(
 }
 
 fn manual_context_summary(result: &crate::tool::ToolResult) -> Option<String> {
-    if !result.ok || result.output.get("new_context_requested")?.as_bool()? != true {
+    if !result.ok || !result.output.get("new_context_requested")?.as_bool()? {
         return None;
     }
     let summary = result.output.get("summary")?.as_str()?.trim();
@@ -1112,21 +1111,21 @@ async fn execute_tool_call(
     }
 
     // Optional tool allowlist (nested subagent or soft harness on the root turn).
-    if let Some(ref allowed) = ctx.allowed_tool_names {
-        if !allowed.contains(&invocation.tool_name) {
-            let result = tool_error_result(
-                &invocation,
-                tool_allowlist_deny_message(ctx.is_subagent, &invocation.tool_name),
-            );
-            if let Some(ref tx) = ctx.event_tx {
-                let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
-            }
-            let observation =
-                ctx.components
-                    .harness
-                    .compact_tool_observation(&invocation, &result, policy);
-            return (invocation, result, observation, Vec::new());
+    if let Some(ref allowed) = ctx.allowed_tool_names
+        && !allowed.contains(&invocation.tool_name)
+    {
+        let result = tool_error_result(
+            &invocation,
+            tool_allowlist_deny_message(ctx.is_subagent, &invocation.tool_name),
+        );
+        if let Some(ref tx) = ctx.event_tx {
+            let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
         }
+        let observation =
+            ctx.components
+                .harness
+                .compact_tool_observation(&invocation, &result, policy);
+        return (invocation, result, observation, Vec::new());
     }
 
     if let Err(invalid) = ctx.tool_executor.validate_arguments(&invocation) {
@@ -1304,16 +1303,14 @@ async fn wait_for_plan_review(
                 obj.insert("comments".into(), json!(comments_json));
                 obj.insert("freeform".into(), json!(resp.freeform));
                 // On approve, re-surface the markdown so the model has the plan after mode exit.
-                if matches!(resp.decision, crate::event::PlanReviewDecision::Approve) {
-                    if let Some(path) = obj
+                if matches!(resp.decision, crate::event::PlanReviewDecision::Approve)
+                    && let Some(path) = obj
                         .get("plan_file_path")
                         .and_then(|v| v.as_str())
                         .map(std::path::PathBuf::from)
-                    {
-                        if let Some(md) = crate::plan_store::read_plan_file(&path) {
-                            obj.insert("body_markdown".into(), json!(md));
-                        }
-                    }
+                    && let Some(md) = crate::plan_store::read_plan_file(&path)
+                {
+                    obj.insert("body_markdown".into(), json!(md));
                 }
                 obj.insert(
                     "message".into(),
@@ -1601,10 +1598,10 @@ async fn combined_memory_injection(ctx: &TurnContext) -> Option<String> {
     let parts: Vec<String> = Vec::new();
     let mut parts = parts;
 
-    if let Some(ref idx) = auto_memory_index {
-        if !idx.trim().is_empty() {
-            parts.push(format!("=== AUTO-MEMORY INDEX ===\n{}", idx));
-        }
+    if let Some(ref idx) = auto_memory_index
+        && !idx.trim().is_empty()
+    {
+        parts.push(format!("=== AUTO-MEMORY INDEX ===\n{}", idx));
     }
 
     match (ctx.memory_injection.clone(), rebuild_context) {

@@ -43,15 +43,14 @@ impl crate::provider::OpenAiProvider {
             // Prepend the stable base instructions as the first system block
             // with cache_control so the prefix is cached independently of
             // the dynamic developer blocks that follow.
-            if let Some(instructions) = &request.instructions {
-                if !instructions.is_empty() {
+            if let Some(instructions) = &request.instructions
+                && !instructions.is_empty() {
                     let mut block = json!({ "type": "text", "text": instructions });
                     if let Some(cache_control) = &cache_control {
                         block["cache_control"] = cache_control.clone();
                     }
                     system.insert(0, block);
                 }
-            }
             let thinking = request.thinking.to_thinking_request();
             let budget = thinking.budget_tokens.unwrap_or(0);
             let max_tokens = (budget + 1024).max(4096);
@@ -181,14 +180,14 @@ pub(crate) fn parse_anthropic_sse_with_state(
                     .map(String::from);
                 state.current_json_buf.clear();
                 state.last_progress_args = 0;
-                if let Some(name) = state.current_tool_name.clone() {
-                    if !name.is_empty() {
-                        return vec![Ok(ModelStreamEvent::ToolCallProgress {
-                            id: state.current_tool_id.clone(),
-                            tool_name: name,
-                            arguments_chars: 0,
-                        })];
-                    }
+                if let Some(name) = state.current_tool_name.clone()
+                    && !name.is_empty()
+                {
+                    return vec![Ok(ModelStreamEvent::ToolCallProgress {
+                        id: state.current_tool_id.clone(),
+                        tool_name: name,
+                        arguments_chars: 0,
+                    })];
                 }
             }
             Vec::new()

@@ -150,8 +150,8 @@ pub async fn new_page_ws(cdp_http_base: &str, initial_url: &str) -> Result<(Stri
 
     // Prefer /json/new (Chrome).
     let new_url = format!("{base}/json/new?{}", urlencoding_minimal(initial_url));
-    if let Ok(resp) = client.put(&new_url).send().await {
-        if resp.status().is_success() {
+    if let Ok(resp) = client.put(&new_url).send().await
+        && resp.status().is_success() {
             let body: Value = resp.json().await.context("json/new body")?;
             let id = body
                 .get("id")
@@ -165,7 +165,6 @@ pub async fn new_page_ws(cdp_http_base: &str, initial_url: &str) -> Result<(Stri
                 .to_string();
             return Ok((id, ws));
         }
-    }
 
     // Fallback: list existing about:blank tabs.
     let list_url = format!("{base}/json/list");

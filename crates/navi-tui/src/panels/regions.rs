@@ -14,7 +14,7 @@ use crate::view;
 use super::NaviPanelContext;
 
 /// Helper to downcast ctx and get (&TuiApp, &mut TuiApp) pair.
-fn app_refs<'a>(ctx: &'a dyn PanelContext) -> (&'a TuiApp, &'a mut TuiApp) {
+fn app_refs(ctx: &dyn PanelContext) -> (&TuiApp, &mut TuiApp) {
     // Invariant: navi-tui only registers region panels against NaviPanelContext.
     let navi_ctx = ctx
         .as_any()

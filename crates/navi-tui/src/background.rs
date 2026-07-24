@@ -82,14 +82,13 @@ pub(crate) fn upsert_background_command(app: &mut TuiApp, command: BackgroundCom
     app.background_commands
         .sort_by(|left, right| left.task_id.cmp(&right.task_id));
 
-    if let Some(task_id) = selected_task_id {
-        if let Some(index) = app
+    if let Some(task_id) = selected_task_id
+        && let Some(index) = app
             .background_commands
             .iter()
             .position(|cmd| cmd.task_id == task_id)
-        {
-            app.bg_command_selected = index;
-        }
+    {
+        app.bg_command_selected = index;
     }
     clamp_background_selection(app);
 }
@@ -105,14 +104,13 @@ pub(crate) fn replace_background_commands(
     app.background_commands = commands;
     app.background_commands
         .sort_by(|left, right| left.task_id.cmp(&right.task_id));
-    if let Some(task_id) = selected_task_id {
-        if let Some(index) = app
+    if let Some(task_id) = selected_task_id
+        && let Some(index) = app
             .background_commands
             .iter()
             .position(|cmd| cmd.task_id == task_id)
-        {
-            app.bg_command_selected = index;
-        }
+    {
+        app.bg_command_selected = index;
     }
     clamp_background_selection(app);
     if app.background_commands.iter().any(|cmd| cmd.is_running()) {

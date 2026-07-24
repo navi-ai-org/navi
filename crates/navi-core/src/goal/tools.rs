@@ -212,29 +212,29 @@ impl Tool for CreateGoalTool {
             ));
         }
 
-        if let Some(existing) = self.runtime.get_goal() {
-            if is_unfinished(existing.status) {
-                return Ok(make_result(
-                    &invocation.id,
-                    false,
-                    json!({
-                        "error": "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first",
-                        "existing_goal_id": existing.goal_id.as_str(),
-                        "existing_status": existing.status.as_str(),
-                    }),
-                ));
-            }
+        if let Some(existing) = self.runtime.get_goal()
+            && is_unfinished(existing.status)
+        {
+            return Ok(make_result(
+                &invocation.id,
+                false,
+                json!({
+                    "error": "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first",
+                    "existing_goal_id": existing.goal_id.as_str(),
+                    "existing_status": existing.status.as_str(),
+                }),
+            ));
         }
 
         let token_budget = args.get("token_budget").and_then(|v| v.as_i64());
-        if let Some(budget) = token_budget {
-            if budget <= 0 {
-                return Ok(make_result(
-                    &invocation.id,
-                    false,
-                    json!({"error": "token_budget must be a positive integer when set"}),
-                ));
-            }
+        if let Some(budget) = token_budget
+            && budget <= 0
+        {
+            return Ok(make_result(
+                &invocation.id,
+                false,
+                json!({"error": "token_budget must be a positive integer when set"}),
+            ));
         }
 
         let short_description = args

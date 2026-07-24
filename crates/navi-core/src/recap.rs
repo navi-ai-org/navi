@@ -304,7 +304,7 @@ fn snippet_outcome(text: &str, max: usize) -> String {
 
     // Prefer last short non-heading paragraph (often the conclusion).
     let paragraphs: Vec<&str> = trimmed
-        .split(|c| c == '\n')
+        .split('\n')
         .map(str::trim)
         .filter(|p| {
             !p.is_empty()
@@ -339,7 +339,7 @@ fn first_sentence(text: &str) -> String {
     let hard = 140usize;
     let punct = trimmed.find(['.', '!', '?', '。', '！', '？']);
     let end = match punct {
-        Some(i) if i + 1 <= hard => i + 1,
+        Some(i) if i < hard => i + 1,
         Some(_) | None => trimmed
             .char_indices()
             .nth(hard)
@@ -355,7 +355,7 @@ fn finalize_recap(body: &str) -> String {
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .map(|l| collapse_ws(l))
+        .map(collapse_ws)
         .filter(|l| !l.is_empty())
         .take(RECAP_MAX_LINES)
         .collect();

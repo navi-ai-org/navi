@@ -223,12 +223,11 @@ fn handle_confirm_mcp_merge_key(app: &mut TuiApp, code: KeyCode) -> bool {
     use crate::notifications::show_notification;
     match code {
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            if let Some(path) = app.pending_mcp_merge.take() {
-                if let Some(msg) =
+            if let Some(path) = app.pending_mcp_merge.take()
+                && let Some(msg) =
                     navi_sdk::merge_mcp_from_package(&app.loaded_config.data_dir, &path)
-                {
-                    show_notification(app, "MCP", msg);
-                }
+            {
+                show_notification(app, "MCP", msg);
             }
             app.mode = Mode::Normal;
             false

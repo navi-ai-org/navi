@@ -50,15 +50,15 @@ pub fn list_harness_ids(data_dir: &Path) -> Result<Vec<String>> {
     let mut ids = Vec::new();
     for entry in fs::read_dir(&root).with_context(|| format!("read {}", root.display()))? {
         let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with('.') {
-                    continue;
-                }
-                // Prefer packs that have loop.toml
-                if entry.path().join("loop.toml").is_file() {
-                    ids.push(name.to_string());
-                }
+        if entry.file_type()?.is_dir()
+            && let Some(name) = entry.file_name().to_str()
+        {
+            if name.starts_with('.') {
+                continue;
+            }
+            // Prefer packs that have loop.toml
+            if entry.path().join("loop.toml").is_file() {
+                ids.push(name.to_string());
             }
         }
     }
@@ -178,10 +178,10 @@ pub fn write_pack(data_dir: &Path, pack: &HarnessPack) -> Result<PathBuf> {
 
     if let Some(cap) = &pack.capability_md {
         fs::write(root.join("CAPABILITY.md"), cap)
-            .with_context(|| format!("write CAPABILITY.md"))?;
+            .with_context(|| "write CAPABILITY.md".to_string())?;
     }
     if let Some(skill) = &pack.skill_md {
-        fs::write(root.join("SKILL.md"), skill).with_context(|| format!("write SKILL.md"))?;
+        fs::write(root.join("SKILL.md"), skill).with_context(|| "write SKILL.md".to_string())?;
     }
 
     // Seed CHANGELOG if missing

@@ -136,12 +136,11 @@ impl SandboxManager {
         for entry in &snapshot.entries {
             if !entry.path.exists() {
                 files_deleted.push(entry.path.clone());
-            } else if entry.path.is_file() {
-                if let Ok(current) = hash_file(&entry.path) {
-                    if current != entry.hash {
-                        files_modified.push(entry.path.clone());
-                    }
-                }
+            } else if entry.path.is_file()
+                && let Ok(current) = hash_file(&entry.path)
+                && current != entry.hash
+            {
+                files_modified.push(entry.path.clone());
             }
         }
 

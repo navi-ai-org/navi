@@ -128,12 +128,11 @@ impl std::fmt::Debug for AutoMemoryStore {
 impl AutoMemoryStore {
     /// Opens (or creates) the auto-memory SQLite database.
     pub fn open(db_path: &Path) -> Result<Self> {
-        if let Some(parent) = db_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create auto-memory directory: {:?}", parent)
-                })?;
-            }
+        if let Some(parent) = db_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create auto-memory directory: {:?}", parent))?;
         }
 
         let conn = Connection::open(db_path)
@@ -250,9 +249,7 @@ impl AutoMemoryStore {
              FROM memories WHERE id = ?1",
         )?;
 
-        let entry = stmt
-            .query_row(params![id], |row| row_to_entry(row))
-            .optional()?;
+        let entry = stmt.query_row(params![id], row_to_entry).optional()?;
 
         Ok(entry)
     }
@@ -717,7 +714,7 @@ impl AutoMemoryStore {
              ORDER BY type, name",
         )?;
         let rows = stmt
-            .query_map([], |row| row_to_entry(row))?
+            .query_map([], row_to_entry)?
             .filter_map(|r| r.ok())
             .collect();
         Ok(rows)

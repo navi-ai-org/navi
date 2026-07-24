@@ -87,11 +87,11 @@ pub fn write_atomic_safe(path: &Path, expected_root: &Path, content: &str) -> Re
 }
 
 pub fn write_atomic(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directories: {:?}", parent))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directories: {:?}", parent))?;
     }
 
     // Create backup if target exists

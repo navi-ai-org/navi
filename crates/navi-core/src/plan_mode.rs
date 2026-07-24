@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 /// The collaboration mode of the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AgentMode {
     /// Normal execution mode — all tools available, full agentic loop.
+    #[default]
     Default,
     /// Plan mode — only read-only tools, model proposes a plan via text tags.
     Plan,
@@ -33,12 +35,6 @@ impl AgentMode {
     /// Returns true if this mode restricts tool access.
     pub fn restricts_tools(&self) -> bool {
         matches!(self, Self::Plan)
-    }
-}
-
-impl Default for AgentMode {
-    fn default() -> Self {
-        Self::Default
     }
 }
 

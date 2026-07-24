@@ -268,15 +268,13 @@ impl SkillStore {
         let skill_id = slugify_skill_id(&skill_id);
         let mut deleted = false;
 
-        if let Some(skill) = self.get_in_pool(&skill_id, pool_hint.as_deref())? {
-            if let Some(parent) = skill.path.parent() {
-                if parent.is_dir() {
-                    fs::remove_dir_all(parent).with_context(|| {
-                        format!("failed to delete skill dir {}", parent.display())
-                    })?;
-                    deleted = true;
-                }
-            }
+        if let Some(skill) = self.get_in_pool(&skill_id, pool_hint.as_deref())?
+            && let Some(parent) = skill.path.parent()
+            && parent.is_dir()
+        {
+            fs::remove_dir_all(parent)
+                .with_context(|| format!("failed to delete skill dir {}", parent.display()))?;
+            deleted = true;
         }
         Ok(deleted)
     }
@@ -367,10 +365,11 @@ fn split_pool_skill_ref(id: &str, pool: Option<&str>) -> (Option<String>, String
     if let Some(p) = pool.filter(|s| !s.trim().is_empty()) {
         return (Some(p.to_string()), id.to_string());
     }
-    if let Some((p, s)) = id.split_once('/') {
-        if !p.is_empty() && !s.is_empty() {
-            return (Some(p.to_string()), s.to_string());
-        }
+    if let Some((p, s)) = id.split_once('/')
+        && !p.is_empty()
+        && !s.is_empty()
+    {
+        return (Some(p.to_string()), s.to_string());
     }
     (None, id.to_string())
 }
@@ -406,10 +405,9 @@ fn list_root_skills_in(root: &Path, scope: SkillWriteScope) -> Result<Vec<SkillM
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .eq_ignore_ascii_case("POOL.md")
+                && let Ok(skill) = load_skill_md(&path, scope, None)
             {
-                if let Ok(skill) = load_skill_md(&path, scope, None) {
-                    out.push(skill);
-                }
+                out.push(skill);
             }
             continue;
         }
@@ -418,10 +416,10 @@ fn list_root_skills_in(root: &Path, scope: SkillWriteScope) -> Result<Vec<SkillM
             continue;
         }
         let skill_md = path.join("SKILL.md");
-        if skill_md.is_file() {
-            if let Ok(skill) = load_skill_md(&skill_md, scope, None) {
-                out.push(skill);
-            }
+        if skill_md.is_file()
+            && let Ok(skill) = load_skill_md(&skill_md, scope, None)
+        {
+            out.push(skill);
         }
     }
     Ok(out)
@@ -480,16 +478,16 @@ fn dir_has_nested_skills(path: &Path) -> bool {
 
 fn read_pool_meta(path: &Path, fallback_id: &str) -> (String, Option<String>) {
     let meta = path.join("POOL.md");
-    if meta.is_file() {
-        if let Ok(raw) = fs::read_to_string(&meta) {
-            let parsed = parse_skill_md(&raw, fallback_id);
-            let name = if parsed.name.trim().is_empty() {
-                fallback_id.to_string()
-            } else {
-                parsed.name
-            };
-            return (name, parsed.description);
-        }
+    if meta.is_file()
+        && let Ok(raw) = fs::read_to_string(&meta)
+    {
+        let parsed = parse_skill_md(&raw, fallback_id);
+        let name = if parsed.name.trim().is_empty() {
+            fallback_id.to_string()
+        } else {
+            parsed.name
+        };
+        return (name, parsed.description);
     }
     (
         fallback_id.to_string(),
@@ -521,15 +519,15 @@ fn list_skills_in_pool_dir(
         }
         if path.is_dir() {
             let skill_md = path.join("SKILL.md");
-            if skill_md.is_file() {
-                if let Ok(skill) = load_skill_md(&skill_md, scope, Some(pool_id)) {
-                    out.push(skill);
-                }
-            }
-        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            if let Ok(skill) = load_skill_md(&path, scope, Some(pool_id)) {
+            if skill_md.is_file()
+                && let Ok(skill) = load_skill_md(&skill_md, scope, Some(pool_id))
+            {
                 out.push(skill);
             }
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md")
+            && let Ok(skill) = load_skill_md(&path, scope, Some(pool_id))
+        {
+            out.push(skill);
         }
     }
     Ok(out)

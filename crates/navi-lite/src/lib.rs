@@ -390,13 +390,12 @@ fn report_from_events(events: &[AgentEvent]) -> (Option<Value>, Vec<String>) {
                 requested.insert(invocation.id.clone(), invocation.tool_name.clone());
                 tool_names.push(invocation.tool_name.clone());
             }
-            AgentEvent::ToolCompleted(result) => {
+            AgentEvent::ToolCompleted(result)
                 if requested.get(&result.invocation_id).map(String::as_str)
                     == Some(EMIT_REPORT_TOOL)
-                    && result.ok
-                {
-                    report = result.output.get("report").cloned();
-                }
+                    && result.ok =>
+            {
+                report = result.output.get("report").cloned();
             }
             _ => {}
         }

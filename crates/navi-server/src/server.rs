@@ -457,10 +457,10 @@ impl NaviServer {
                         }
                     } else {
                         let mut answers = vec![body.answer];
-                        if let Some(custom) = body.custom {
-                            if !custom.is_empty() {
-                                answers.push(custom);
-                            }
+                        if let Some(custom) = body.custom
+                            && !custom.is_empty()
+                        {
+                            answers.push(custom);
                         }
                         navi_core::QuestionResponse::Answered {
                             id: body.question_id,
@@ -782,10 +782,10 @@ async fn handle_ws(
 
     let forward = tokio::spawn(async move {
         while let Ok(event) = rx.recv().await {
-            if let Ok(json) = serde_json::to_string(&event) {
-                if ws_tx.send(Message::text(json)).await.is_err() {
-                    break;
-                }
+            if let Ok(json) = serde_json::to_string(&event)
+                && ws_tx.send(Message::text(json)).await.is_err()
+            {
+                break;
             }
         }
     });

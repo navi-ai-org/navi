@@ -718,12 +718,12 @@ impl NaviEngine {
         short_description: Option<String>,
         token_budget: Option<i64>,
     ) -> Result<SessionGoal> {
-        if let Some(budget) = token_budget {
-            if budget <= 0 {
-                return Err(NaviError::from(anyhow::anyhow!(
-                    "token_budget must be a positive integer when set"
-                )));
-            }
+        if let Some(budget) = token_budget
+            && budget <= 0
+        {
+            return Err(NaviError::from(anyhow::anyhow!(
+                "token_budget must be a positive integer when set"
+            )));
         }
         let session = self.session(session_id)?;
         let runtime = session.runtime.lock().await;
@@ -1878,24 +1878,23 @@ impl NaviEngine {
             // Aggregator providers (e.g. OpenRouter) get a rich model sync
             // that fetches metadata from /models and stores it in the SQLite
             // registry cache with capability tags (free, nitro, online).
-            if provider.aggregator {
-                if let Some(ref store) = self.inner.registry_store {
-                    match navi_core::registry::sync_aggregator_models(store, &provider, &api_key)
-                        .await
-                    {
-                        Ok(count) => {
-                            updated.push(NaviSyncedProvider {
-                                provider_id: provider.id,
-                                model_count: count,
-                            });
-                        }
-                        Err(error) => failed.push(NaviProviderSyncFailure {
+            if provider.aggregator
+                && let Some(ref store) = self.inner.registry_store
+            {
+                match navi_core::registry::sync_aggregator_models(store, &provider, &api_key).await
+                {
+                    Ok(count) => {
+                        updated.push(NaviSyncedProvider {
                             provider_id: provider.id,
-                            message: error.to_string(),
-                        }),
+                            model_count: count,
+                        });
                     }
-                    continue;
+                    Err(error) => failed.push(NaviProviderSyncFailure {
+                        provider_id: provider.id,
+                        message: error.to_string(),
+                    }),
                 }
+                continue;
             }
 
             match list_models_for_provider(&provider, api_key).await {
@@ -1935,7 +1934,7 @@ impl NaviEngine {
                         // attachment gaps so stale NULL rows get provider defaults).
                         let api_names: std::collections::HashSet<String> =
                             merged.iter().map(|m| m.name.to_lowercase()).collect();
-                        for (name, _cached) in &existing {
+                        for name in existing.keys() {
                             if !api_names.contains(&name.to_lowercase()) {
                                 merged.push(
                                     navi_core::registry::enrich_synced_registry_model_with_catalog(
@@ -2338,13 +2337,13 @@ fn xai_report_to_sdk(
             value: format!("{bal}"),
         });
     }
-    if let (Some(used), Some(cap)) = (report.on_demand_used, report.on_demand_cap) {
-        if used > 0.0 || cap > 0.0 {
-            details.push(NaviUsageDetail {
-                label: "On-demand".into(),
-                value: format!("{used} / {cap}"),
-            });
-        }
+    if let (Some(used), Some(cap)) = (report.on_demand_used, report.on_demand_cap)
+        && (used > 0.0 || cap > 0.0)
+    {
+        details.push(NaviUsageDetail {
+            label: "On-demand".into(),
+            value: format!("{used} / {cap}"),
+        });
     }
 
     let plan = if report.is_unified_billing == Some(true) {
@@ -2415,18 +2414,18 @@ fn openrouter_report_to_sdk(
     }
 
     let mut limits = Vec::new();
-    if let (Some(limit), Some(remaining)) = (report.limit, report.limit_remaining) {
-        if limit > 0.0 {
-            let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
-            limits.push(NaviUsageLimitSnapshot {
-                limit_id: Some("credit-limit".into()),
-                limit_name: Some("Credit limit".into()),
-                metered_feature: Some("credits".into()),
-                limit_reached: remaining <= 0.0,
-                primary: Some(percent_window(used_pct)),
-                secondary: None,
-            });
-        }
+    if let (Some(limit), Some(remaining)) = (report.limit, report.limit_remaining)
+        && limit > 0.0
+    {
+        let used_pct = ((limit - remaining) / limit * 100.0).clamp(0.0, 100.0);
+        limits.push(NaviUsageLimitSnapshot {
+            limit_id: Some("credit-limit".into()),
+            limit_name: Some("Credit limit".into()),
+            metered_feature: Some("credits".into()),
+            limit_reached: remaining <= 0.0,
+            primary: Some(percent_window(used_pct)),
+            secondary: None,
+        });
     }
 
     let plan = if report.is_free_tier == Some(true) {

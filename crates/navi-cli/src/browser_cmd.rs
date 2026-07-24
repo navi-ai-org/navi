@@ -23,14 +23,14 @@ pub async fn handle_browser_command(
         crate::BrowserAction::Doctor => {
             let report = doctor_report(&runtime);
             println!("{}", serde_json::to_string_pretty(&report)?);
-            if let Some(hints) = report.get("hints").and_then(|h| h.as_array()) {
-                if !hints.is_empty() {
-                    println!();
-                    println!("Hints:");
-                    for h in hints {
-                        if let Some(s) = h.as_str() {
-                            println!("  - {s}");
-                        }
+            if let Some(hints) = report.get("hints").and_then(|h| h.as_array())
+                && !hints.is_empty()
+            {
+                println!();
+                println!("Hints:");
+                for h in hints {
+                    if let Some(s) = h.as_str() {
+                        println!("  - {s}");
                     }
                 }
             }

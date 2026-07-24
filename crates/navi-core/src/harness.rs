@@ -377,11 +377,9 @@ fn build_system_prompt_inner(
             tool_calling_mode,
             crate::config::ToolCallingMode::Native | crate::config::ToolCallingMode::Disabled
         );
-    if embed_manifest {
-        if let Some(manifest) = tool_manifest {
-            prompt.push_str("\nAvailable tools (text tool manifest):\n");
-            prompt.push_str(manifest);
-        }
+    if embed_manifest && let Some(manifest) = tool_manifest {
+        prompt.push_str("\nAvailable tools (text tool manifest):\n");
+        prompt.push_str(manifest);
     }
     prompt
 }

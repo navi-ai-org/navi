@@ -281,12 +281,11 @@ fn action_write(
     }
 
     // Ensure a top-level heading if the model omitted one.
-    if markdown_title(&body).is_none() {
-        if let Some(title) = helpers::optional_string(&invocation.input, "title") {
-            if !title.trim().is_empty() {
-                body = format!("# {}\n\n{}", title.trim(), body.trim_start());
-            }
-        }
+    if markdown_title(&body).is_none()
+        && let Some(title) = helpers::optional_string(&invocation.input, "title")
+        && !title.trim().is_empty()
+    {
+        body = format!("# {}\n\n{}", title.trim(), body.trim_start());
     }
 
     write_plan_file(plan_file, &body)?;
@@ -374,30 +373,29 @@ fn action_submit(
     let mut parsed = parse_create_payload(&invocation.input)?;
 
     // Submit reads the plan file when body is omitted (plan already on disk).
-    if parsed.body_markdown.trim().is_empty() {
-        if let Some(from_disk) = read_plan_file(plan_file) {
-            parsed.body_markdown = from_disk;
-            if parsed.title == "Plan" || parsed.title.is_empty() {
-                parsed.title = title_from_markdown(&parsed.body_markdown);
-            }
-            if parsed.steps.is_empty() {
-                parsed.steps = steps_from_markdown(&parsed.body_markdown);
-            }
+    if parsed.body_markdown.trim().is_empty()
+        && let Some(from_disk) = read_plan_file(plan_file)
+    {
+        parsed.body_markdown = from_disk;
+        if parsed.title == "Plan" || parsed.title.is_empty() {
+            parsed.title = title_from_markdown(&parsed.body_markdown);
+        }
+        if parsed.steps.is_empty() {
+            parsed.steps = steps_from_markdown(&parsed.body_markdown);
         }
     }
 
     // If the model wrote via write_file but store has an active draft, merge.
-    if parsed.body_markdown.trim().is_empty() {
-        if let Some(active) = store.active(project_id)? {
-            if !active.body_markdown.trim().is_empty() {
-                parsed.body_markdown = active.body_markdown;
-                if parsed.title.is_empty() || parsed.title == "Plan" {
-                    parsed.title = active.title;
-                }
-                if parsed.steps.is_empty() {
-                    parsed.steps = active.steps;
-                }
-            }
+    if parsed.body_markdown.trim().is_empty()
+        && let Some(active) = store.active(project_id)?
+        && !active.body_markdown.trim().is_empty()
+    {
+        parsed.body_markdown = active.body_markdown;
+        if parsed.title.is_empty() || parsed.title == "Plan" {
+            parsed.title = active.title;
+        }
+        if parsed.steps.is_empty() {
+            parsed.steps = active.steps;
         }
     }
 
@@ -719,10 +717,10 @@ fn markdown_title(body: &str) -> Option<String> {
 /// - CreatePlan markdown: plan/body/body_markdown/content
 fn parse_create_payload(input: &Value) -> Result<ParsedCreate> {
     let mut description = helpers::optional_string(input, "description").unwrap_or_default();
-    if description.trim().is_empty() {
-        if let Some(overview) = helpers::optional_string(input, "overview") {
-            description = overview;
-        }
+    if description.trim().is_empty()
+        && let Some(overview) = helpers::optional_string(input, "overview")
+    {
+        description = overview;
     }
 
     let body_markdown = first_nonempty_string(input, &["plan", "body", "body_markdown", "content"])
@@ -770,10 +768,10 @@ fn parse_create_payload(input: &Value) -> Result<ParsedCreate> {
 
 fn first_nonempty_string(input: &Value, keys: &[&str]) -> Option<String> {
     for key in keys {
-        if let Some(s) = helpers::optional_string(input, key) {
-            if !s.trim().is_empty() {
-                return Some(s);
-            }
+        if let Some(s) = helpers::optional_string(input, key)
+            && !s.trim().is_empty()
+        {
+            return Some(s);
         }
     }
     None

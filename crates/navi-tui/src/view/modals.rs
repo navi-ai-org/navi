@@ -2217,10 +2217,10 @@ fn resolve_bg_model_label(app: &TuiApp, task: &str) -> String {
     if task == "memory_extraction" && bg.memory_extraction.is_none() {
         return "not configured (automatic extraction off)".to_string();
     }
-    if let Some(entry) = bg.resolve(task) {
-        if let (Some(provider), Some(model)) = (&entry.provider, &entry.model) {
-            return format!("{provider}:{model}");
-        }
+    if let Some(entry) = bg.resolve(task)
+        && let (Some(provider), Some(model)) = (&entry.provider, &entry.model)
+    {
+        return format!("{provider}:{model}");
     }
     let main_provider = &app.loaded_config.config.model.provider;
     let main_model = &app.loaded_config.config.model.name;

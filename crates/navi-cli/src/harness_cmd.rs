@@ -79,8 +79,8 @@ fn list_harnesses(loaded_config: &LoadedConfig) -> Result<()> {
         return Ok(());
     }
     println!(
-        "{:<24} {:<12} {:<14} {}",
-        "ID", "MAX_TURNS", "TOKEN_BUDGET", "PATH"
+        "{:<24} {:<12} {:<14} PATH",
+        "ID", "MAX_TURNS", "TOKEN_BUDGET"
     );
     println!("{}", "-".repeat(72));
     for id in &ids {

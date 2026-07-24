@@ -208,7 +208,6 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
                 "Setup",
                 "Choose the dedicated model for automatic memory extraction.",
             );
-            return;
         }
         Some(crate::state::SetupPhase::MemoryModel)
             if app
@@ -219,15 +218,13 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
                 .is_some() =>
         {
             begin_setup_approvals(app);
-            return;
         }
         Some(crate::state::SetupPhase::Approvals)
         | Some(crate::state::SetupPhase::MarketplaceTip) => {
             // Wait for keyboard confirmation in those steps.
-            return;
         }
-        Some(crate::state::SetupPhase::Interview) => return,
-        _ => return,
+        Some(crate::state::SetupPhase::Interview) => (),
+        _ => (),
     }
 }
 

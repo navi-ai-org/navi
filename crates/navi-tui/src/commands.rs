@@ -578,11 +578,11 @@ fn command_match_score(item: &CommandItem, filter: &str) -> Option<u8> {
     best = min_score(best, match_score(action_keywords(item.action), filter));
     // Soft hub-name boost only (not hub.detail — that starts with "skills,"
     // and would make every Extensions item rank equal for "skills").
-    if let Some(hub) = item.hub {
-        if let Some(s) = match_score(hub.label(), filter) {
-            // Never beat a direct label/keyword hit.
-            best = min_score(best, Some(s.saturating_add(2).min(4)));
-        }
+    if let Some(hub) = item.hub
+        && let Some(s) = match_score(hub.label(), filter)
+    {
+        // Never beat a direct label/keyword hit.
+        best = min_score(best, Some(s.saturating_add(2).min(4)));
     }
     best
 }

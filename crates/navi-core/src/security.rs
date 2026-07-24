@@ -116,10 +116,10 @@ impl SecurityPolicy {
 
     fn is_plan_file_path(&self, path: &Path) -> bool {
         let gate = self.plan_mode.read().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref plan_file) = gate.plan_file {
-            if paths_equal(path, plan_file) {
-                return true;
-            }
+        if let Some(ref plan_file) = gate.plan_file
+            && paths_equal(path, plan_file)
+        {
+            return true;
         }
         // Also allow any markdown under data_dir/plans when plan mode is active
         // so write_file can create the file before normalize has a parent.

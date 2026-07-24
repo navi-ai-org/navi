@@ -300,48 +300,47 @@ pub async fn sync_registry(
     force: bool,
 ) -> Result<bool> {
     // Check if we need to update.
-    if !force {
-        if let Some(updated_at) = store.manifest_updated_at()? {
-            if let Ok(parsed) = parse_iso_timestamp(&updated_at) {
-                if parsed.hours_ago < 24 && !store.is_empty()? {
-                    tracing::debug!("registry cache is fresh, skipping fetch");
-                    return Ok(false);
-                }
-            }
-        }
+    if !force
+        && let Some(updated_at) = store.manifest_updated_at()?
+        && let Ok(parsed) = parse_iso_timestamp(&updated_at)
+        && parsed.hours_ago < 24
+        && !store.is_empty()?
+    {
+        tracing::debug!("registry cache is fresh, skipping fetch");
+        return Ok(false);
     }
 
     tracing::info!("fetching remote registry manifest");
     let manifest = std::sync::Arc::new(fetcher.fetch_manifest().await?);
 
     // Compare with stored manifest version.
-    if !force {
-        if let Some(stored_version) = store.manifest_version()? {
-            if stored_version >= manifest.version && !store.is_empty()? {
-                // Same (or newer) version can still leave orphan rows when a
-                // provider was deleted from the remote catalog but the cache
-                // already advanced its manifest metadata via embedded merge
-                // without pruning. Always drop providers not in the remote set.
-                let keep_ids: std::collections::HashSet<&str> =
-                    manifest.providers.keys().map(|s| s.as_str()).collect();
-                let tx_keep: std::collections::HashSet<&str> = manifest
-                    .transcription_providers
-                    .keys()
-                    .map(|s| s.as_str())
-                    .collect();
-                let model_keep: std::collections::HashSet<&str> =
-                    manifest.models.keys().map(|s| s.as_str()).collect();
-                store.delete_providers_not_in(&keep_ids)?;
-                store.delete_transcription_providers_not_in(&tx_keep)?;
-                store.delete_canonical_models_not_in(&model_keep)?;
-                tracing::debug!(
-                    stored = stored_version,
-                    remote = manifest.version,
-                    "registry manifest is up-to-date"
-                );
-                return Ok(false);
-            }
-        }
+    if !force
+        && let Some(stored_version) = store.manifest_version()?
+        && stored_version >= manifest.version
+        && !store.is_empty()?
+    {
+        // Same (or newer) version can still leave orphan rows when a
+        // provider was deleted from the remote catalog but the cache
+        // already advanced its manifest metadata via embedded merge
+        // without pruning. Always drop providers not in the remote set.
+        let keep_ids: std::collections::HashSet<&str> =
+            manifest.providers.keys().map(|s| s.as_str()).collect();
+        let tx_keep: std::collections::HashSet<&str> = manifest
+            .transcription_providers
+            .keys()
+            .map(|s| s.as_str())
+            .collect();
+        let model_keep: std::collections::HashSet<&str> =
+            manifest.models.keys().map(|s| s.as_str()).collect();
+        store.delete_providers_not_in(&keep_ids)?;
+        store.delete_transcription_providers_not_in(&tx_keep)?;
+        store.delete_canonical_models_not_in(&model_keep)?;
+        tracing::debug!(
+            stored = stored_version,
+            remote = manifest.version,
+            "registry manifest is up-to-date"
+        );
+        return Ok(false);
     }
 
     // Diff: figure out which providers actually changed.

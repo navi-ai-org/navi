@@ -113,10 +113,10 @@ pub(super) fn optional_u64(input: &Value, key: &str) -> Option<u64> {
         return Some(n);
     }
     // Some providers emit integers as signed JSON numbers.
-    if let Some(n) = value.as_i64() {
-        if n >= 0 {
-            return Some(n as u64);
-        }
+    if let Some(n) = value.as_i64()
+        && n >= 0
+    {
+        return Some(n as u64);
     }
     None
 }

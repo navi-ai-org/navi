@@ -446,12 +446,11 @@ fn call_agent(
     if host.cancel_token.is_requested() {
         return Err(mlua::Error::RuntimeError("cancelled".into()));
     }
-    if !result.ok {
-        if let Some(err) = &result.error {
-            if err.contains("cancelled") {
-                return Err(mlua::Error::RuntimeError("cancelled".into()));
-            }
-        }
+    if !result.ok
+        && let Some(err) = &result.error
+        && err.contains("cancelled")
+    {
+        return Err(mlua::Error::RuntimeError("cancelled".into()));
     }
     let truncated = truncate_json_value(result.output, AGENT_RESULT_MAX_BYTES);
     json_to_lua(lua, &truncated)
@@ -558,10 +557,8 @@ fn parse_agent_opts(opts: Option<Table>) -> AgentPolicyOpts {
 fn read_string_array(t: &Table, key: &str) -> Option<Vec<String>> {
     let tbl: Table = t.get(key).ok()?;
     let mut v = Vec::new();
-    for pair in tbl.sequence_values::<String>() {
-        if let Ok(s) = pair {
-            v.push(s);
-        }
+    for s in tbl.sequence_values::<String>().flatten() {
+        v.push(s);
     }
     Some(v)
 }

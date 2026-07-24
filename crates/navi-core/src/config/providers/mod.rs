@@ -488,10 +488,10 @@ fn lookup_attachment_support(
 ) -> Option<bool> {
     let mut saw_explicit_false = false;
     for provider in catalog {
-        if let Some(want) = provider_id {
-            if canonical_provider_id(&provider.id) != want {
-                continue;
-            }
+        if let Some(want) = provider_id
+            && canonical_provider_id(&provider.id) != want
+        {
+            continue;
         }
         for model in &provider.models {
             if !candidates

@@ -115,19 +115,19 @@ impl RepetitionDetector {
         }
 
         // Alternating pattern check: 2 chars * MAX_ALT_CYCLES = chars needed
-        if self.alt_count >= MAX_ALT_CYCLES {
-            if let Some((a, b)) = self.alt_pair {
-                return Some(RepetitionWarning {
-                    kind: RepetitionKind::AlternatingPattern {
-                        pattern: format!("{a}{b}"),
-                        cycles: self.alt_count,
-                    },
-                    message: format!(
-                        "Alternating pattern \"{a}{b}\" repeated {}+ times. Model output may be degenerate.",
-                        self.alt_count
-                    ),
-                });
-            }
+        if self.alt_count >= MAX_ALT_CYCLES
+            && let Some((a, b)) = self.alt_pair
+        {
+            return Some(RepetitionWarning {
+                kind: RepetitionKind::AlternatingPattern {
+                    pattern: format!("{a}{b}"),
+                    cycles: self.alt_count,
+                },
+                message: format!(
+                    "Alternating pattern \"{a}{b}\" repeated {}+ times. Model output may be degenerate.",
+                    self.alt_count
+                ),
+            });
         }
 
         None

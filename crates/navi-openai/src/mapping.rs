@@ -282,43 +282,43 @@ pub(crate) fn apply_thinking_to_body(
 
     match api_kind {
         OpenAiApiKind::Responses => {
-            if thinking.enabled {
-                if let Some(effort) = thinking.effort {
-                    object.insert("reasoning".to_string(), json!({ "effort": effort }));
-                }
+            if thinking.enabled
+                && let Some(effort) = thinking.effort
+            {
+                object.insert("reasoning".to_string(), json!({ "effort": effort }));
             }
         }
         OpenAiApiKind::ChatCompletions => match provider.as_str() {
             navi_core::ProviderId::ANTHROPIC => {
-                if thinking.enabled {
-                    if let Some(budget) = thinking.budget_tokens {
-                        object.insert(
-                            "thinking".to_string(),
-                            json!({ "type": "enabled", "budget_tokens": budget }),
-                        );
-                        let max_tokens = (budget + 1024).max(4096);
-                        object.insert("max_tokens".to_string(), json!(max_tokens));
-                    }
+                if thinking.enabled
+                    && let Some(budget) = thinking.budget_tokens
+                {
+                    object.insert(
+                        "thinking".to_string(),
+                        json!({ "type": "enabled", "budget_tokens": budget }),
+                    );
+                    let max_tokens = (budget + 1024).max(4096);
+                    object.insert("max_tokens".to_string(), json!(max_tokens));
                 }
             }
             navi_core::ProviderId::GOOGLE_GEMINI => {
-                if thinking.enabled {
-                    if let Some(budget) = thinking.budget_tokens {
-                        object.insert(
-                            "extra_body".to_string(),
-                            json!({ "google": { "thinking_config": { "thinkingBudget": budget } } }),
-                        );
-                    }
+                if thinking.enabled
+                    && let Some(budget) = thinking.budget_tokens
+                {
+                    object.insert(
+                        "extra_body".to_string(),
+                        json!({ "google": { "thinking_config": { "thinkingBudget": budget } } }),
+                    );
                 }
             }
             navi_core::ProviderId::OPENROUTER => {
-                if thinking.enabled {
-                    if let Some(effort) = thinking.effort {
-                        object.insert(
-                            "reasoning".to_string(),
-                            json!({ "effort": effort, "exclude": true }),
-                        );
-                    }
+                if thinking.enabled
+                    && let Some(effort) = thinking.effort
+                {
+                    object.insert(
+                        "reasoning".to_string(),
+                        json!({ "effort": effort, "exclude": true }),
+                    );
                 }
             }
             // OpenCode Zen hosts Tencent Hy3 / Hunyuan family among others.
@@ -327,20 +327,20 @@ pub(crate) fn apply_thinking_to_body(
             navi_core::ProviderId::OPENCODE
             | navi_core::ProviderId::OPENCODE_ZEN
             | navi_core::ProviderId::OPENCODE_GO => {
-                if thinking.enabled {
-                    if let Some(effort) = thinking.effort {
-                        // Map NAVI effort labels onto Hy's no_think/low/high when possible.
-                        let hy_effort = match effort.as_str() {
-                            "off" | "none" | "minimal" => "no_think",
-                            "max" | "xhigh" | "highest" => "high",
-                            other => other,
-                        };
-                        object.insert("reasoning_effort".to_string(), json!(hy_effort));
-                        object.insert(
-                            "extra_body".to_string(),
-                            json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
-                        );
-                    }
+                if thinking.enabled
+                    && let Some(effort) = thinking.effort
+                {
+                    // Map NAVI effort labels onto Hy's no_think/low/high when possible.
+                    let hy_effort = match effort.as_str() {
+                        "off" | "none" | "minimal" => "no_think",
+                        "max" | "xhigh" | "highest" => "high",
+                        other => other,
+                    };
+                    object.insert("reasoning_effort".to_string(), json!(hy_effort));
+                    object.insert(
+                        "extra_body".to_string(),
+                        json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
+                    );
                 }
             }
             _ => {
@@ -353,10 +353,10 @@ pub(crate) fn apply_thinking_to_body(
                         json!({ "type": if thinking.enabled { "enabled" } else { "disabled" } }),
                     );
                 }
-                if thinking.enabled {
-                    if let Some(effort) = thinking.effort {
-                        object.insert("reasoning_effort".to_string(), json!(effort));
-                    }
+                if thinking.enabled
+                    && let Some(effort) = thinking.effort
+                {
+                    object.insert("reasoning_effort".to_string(), json!(effort));
                 }
             }
         },
@@ -462,10 +462,10 @@ pub(crate) fn usage_from_value_with_behavior(
             .or_else(|| json_u64(usage.get("prompt_cache_hit_tokens")));
         let cache_creation_tokens = json_u64(usage.get("cache_creation_input_tokens"))
             .or_else(|| json_u64(usage.get("prompt_cache_miss_tokens")));
-        if input_tokens.is_none() {
-            if let Some(total) = json_u64(usage.get("total_tokens")) {
-                input_tokens = Some(total.saturating_sub(output_tokens.unwrap_or(0)));
-            }
+        if input_tokens.is_none()
+            && let Some(total) = json_u64(usage.get("total_tokens"))
+        {
+            input_tokens = Some(total.saturating_sub(output_tokens.unwrap_or(0)));
         }
         NormalizedUsage {
             input_tokens,

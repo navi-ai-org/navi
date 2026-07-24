@@ -791,13 +791,13 @@ impl AgentRuntime {
         self.harness_allow_tools = applied.allow_tools;
         // If a harness sets a token budget and no goal exists yet, leave budget
         // for host/model create_goal; if a goal is Active, optionally annotate budget.
-        if let Some(budget) = applied.token_budget {
-            if let Some(mut goal) = self.goal_runtime.get_goal() {
-                if goal.token_budget.is_none() && goal.status.should_auto_continue() {
-                    goal.token_budget = Some(budget);
-                    self.goal_runtime.update_goal(goal);
-                }
-            }
+        if let Some(budget) = applied.token_budget
+            && let Some(mut goal) = self.goal_runtime.get_goal()
+            && goal.token_budget.is_none()
+            && goal.status.should_auto_continue()
+        {
+            goal.token_budget = Some(budget);
+            self.goal_runtime.update_goal(goal);
         }
     }
 
@@ -980,12 +980,11 @@ impl AgentRuntime {
         let id = self.session.id().clone();
         // Bind rewind store to this session id and attach it to the tool executor.
         self.rebind_rewind_store();
-        if let Ok(_) = self.ensure_tool_executor() {
-            if let Some(stored) = self.tool_executor.as_mut() {
-                if let Some(exec) = Arc::get_mut(stored) {
-                    exec.set_rewind_store(Some(self.rewind_store.clone()));
-                }
-            }
+        if let Ok(_) = self.ensure_tool_executor()
+            && let Some(stored) = self.tool_executor.as_mut()
+            && let Some(exec) = Arc::get_mut(stored)
+        {
+            exec.set_rewind_store(Some(self.rewind_store.clone()));
         }
         // Goal lifecycle: session start + register runtime
         self.goal_extension.on_session_start(id.as_str());
@@ -1178,8 +1177,8 @@ impl AgentRuntime {
                     self.record_event(event);
                     // Apply + persist as soon as `set_session_title` completes so
                     // live UIs and session lists do not wait for the whole turn.
-                    if self.apply_pending_session_title() {
-                        if let Err(err) = self.session.snapshot(
+                    if self.apply_pending_session_title()
+                        && let Err(err) = self.session.snapshot(
                             &self.project_dir,
                             &self.session_store,
                             &self.event_bus,
@@ -1187,7 +1186,6 @@ impl AgentRuntime {
                         ) {
                             tracing::debug!(error = %err, "early title snapshot failed");
                         }
-                    }
                 }
             }
         };
@@ -2169,16 +2167,14 @@ impl AgentRuntime {
         match &event {
             AgentEvent::ToolCompleted(_result) => {
                 // Track if the model used the memory tool with write action during this turn
-                if _result.ok {
-                    if let Some(output) = _result.output.as_object() {
-                        if output.get("tool_name").and_then(|v| v.as_str()) == Some("memory") {
+                if _result.ok
+                    && let Some(output) = _result.output.as_object()
+                        && output.get("tool_name").and_then(|v| v.as_str()) == Some("memory") {
                             self.turn_used_memory_write = true;
                         }
-                    }
-                }
                 let budget_prompt = self.goal_extension.on_tool_complete();
-                if budget_prompt.is_some() {
-                    if let Some(goal) = self.goal_runtime.get_goal() {
+                if budget_prompt.is_some()
+                    && let Some(goal) = self.goal_runtime.get_goal() {
                         self.event_bus.publish(RuntimeEventKind::GoalUpdated {
                             session_id: goal.session_id.clone(),
                             goal_id: goal.goal_id.as_str().to_string(),
@@ -2189,7 +2185,6 @@ impl AgentRuntime {
                             token_budget: goal.token_budget,
                         });
                     }
-                }
             }
             AgentEvent::UsageReported {
                 input_tokens,
@@ -2199,8 +2194,8 @@ impl AgentRuntime {
                 let exceeded = self
                     .goal_extension
                     .on_token_usage(*input_tokens, *output_tokens);
-                if exceeded {
-                    if let Some(goal) = self.goal_runtime.get_goal() {
+                if exceeded
+                    && let Some(goal) = self.goal_runtime.get_goal() {
                         self.event_bus.publish(RuntimeEventKind::GoalUpdated {
                             session_id: goal.session_id.clone(),
                             goal_id: goal.goal_id.as_str().to_string(),
@@ -2211,7 +2206,6 @@ impl AgentRuntime {
                             token_budget: goal.token_budget,
                         });
                     }
-                }
             }
             AgentEvent::SetGoalRequested {
                 objective,
@@ -2247,10 +2241,10 @@ impl AgentRuntime {
                     token_budget: *token_budget,
                 });
             }
-            AgentEvent::ModelDelta { text } => {
+            AgentEvent::ModelDelta { text }
                 // Feed text deltas to plan parser when in Plan mode.
-                if self.agent_mode() == crate::plan_mode::AgentMode::Plan {
-                    let plans = self.feed_plan_text(&text);
+                if self.agent_mode() == crate::plan_mode::AgentMode::Plan => {
+                    let plans = self.feed_plan_text(text);
                     for plan in plans {
                         self.event_bus.publish(RuntimeEventKind::PlanProposed {
                             session_id: self.session.id().as_str().to_string(),
@@ -2259,10 +2253,9 @@ impl AgentRuntime {
                         });
                     }
                 }
-            }
-            AgentEvent::ModelOutput { text, .. } => {
+            AgentEvent::ModelOutput { text, .. }
                 // Feed final model output to plan parser (catches plans at end of turn).
-                if self.agent_mode() == crate::plan_mode::AgentMode::Plan {
+                if self.agent_mode() == crate::plan_mode::AgentMode::Plan => {
                     let plans = self.feed_plan_text(text);
                     for plan in plans {
                         self.event_bus.publish(RuntimeEventKind::PlanProposed {
@@ -2281,7 +2274,6 @@ impl AgentRuntime {
                         });
                     }
                 }
-            }
             AgentEvent::PlanProposed { .. } => {}
             AgentEvent::PlanReviewRequested(_) | AgentEvent::PlanReviewResolved(_) => {}
             AgentEvent::SudoPasswordRequested(_) => {}

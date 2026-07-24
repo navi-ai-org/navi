@@ -278,10 +278,10 @@ async fn handle_voice_ws(ws: WebSocket, state: SharedState, params: HashMap<Stri
         loop {
             match rx.recv().await {
                 Ok(event) => {
-                    if let Ok(json) = serde_json::to_string(&event) {
-                        if ws_tx.send(Message::text(json)).await.is_err() {
-                            break;
-                        }
+                    if let Ok(json) = serde_json::to_string(&event)
+                        && ws_tx.send(Message::text(json)).await.is_err()
+                    {
+                        break;
                     }
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,

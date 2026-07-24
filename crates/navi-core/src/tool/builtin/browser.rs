@@ -163,7 +163,7 @@ Use to test local web UIs, research pages, and capture screenshots. Screenshots 
                 "goto" => {
                     let url = helpers::required_string(&invocation.input, "url")?;
                     let session = self.session()?;
-                    session.goto(&url).await?
+                    session.goto(url).await?
                 }
                 "snapshot" => {
                     let session = self.session()?;
@@ -176,18 +176,18 @@ Use to test local web UIs, research pages, and capture screenshots. Screenshots 
                 "click" => {
                     let selector = helpers::required_string(&invocation.input, "selector")?;
                     let session = self.session()?;
-                    session.click(&selector).await?
+                    session.click(selector).await?
                 }
                 "type" => {
                     let selector = helpers::required_string(&invocation.input, "selector")?;
                     let text = helpers::required_string(&invocation.input, "text")?;
                     let session = self.session()?;
-                    session.type_text(&selector, &text).await?
+                    session.type_text(selector, text).await?
                 }
                 "press" => {
                     let key = helpers::required_string(&invocation.input, "key")?;
                     let session = self.session()?;
-                    session.press(&key).await?
+                    session.press(key).await?
                 }
                 "content" => {
                     let kind = invocation
@@ -201,7 +201,7 @@ Use to test local web UIs, research pages, and capture screenshots. Screenshots 
                 "evaluate" => {
                     let expression = helpers::required_string(&invocation.input, "expression")?;
                     let session = self.session()?;
-                    session.evaluate(&expression).await?
+                    session.evaluate(expression).await?
                 }
                 "close" => {
                     let session = self.session()?;

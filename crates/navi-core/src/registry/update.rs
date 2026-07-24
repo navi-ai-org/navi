@@ -114,15 +114,13 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
         maybe_rehydrate_from_catalog(store, merged);
 
         // Reload only when the store may have changed.
-        if merged {
-            if let Some(reloaded) = load_cached_registry(store) {
-                tracing::info!(
-                    version = reloaded.manifest.version,
-                    providers = reloaded.providers.len(),
-                    "loaded registry from local cache (after embedded merge)"
-                );
-                return reloaded;
-            }
+        if merged && let Some(reloaded) = load_cached_registry(store) {
+            tracing::info!(
+                version = reloaded.manifest.version,
+                providers = reloaded.providers.len(),
+                "loaded registry from local cache (after embedded merge)"
+            );
+            return reloaded;
         }
         tracing::debug!(
             version = loaded.manifest.version,
@@ -308,12 +306,11 @@ fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
 /// or when the store just mutated (`force`).
 fn maybe_rehydrate_from_catalog(store: &RegistryStore, force: bool) {
     let fingerprint = catalog_rehydrate_fingerprint(store);
-    if !force {
-        if let Ok(Some(prev)) = store.meta_get(META_REHYDRATE_FP) {
-            if prev == fingerprint {
-                return;
-            }
-        }
+    if !force
+        && let Ok(Some(prev)) = store.meta_get(META_REHYDRATE_FP)
+        && prev == fingerprint
+    {
+        return;
     }
     match store.rehydrate_provider_models_from_catalog() {
         Ok(_) => {

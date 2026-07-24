@@ -380,7 +380,10 @@ pub enum ModelStreamEvent {
         arguments_chars: usize,
     },
     /// API metadata and rate-limit headers from the provider response.
-    ApiMeta(ApiMeta),
+    ///
+    /// Boxed because [`ApiMeta`] is much larger than the other variants,
+    /// and this event is passed through async streams and channels.
+    ApiMeta(Box<ApiMeta>),
     /// The stream has ended.
     Done,
 }
@@ -715,10 +718,10 @@ pub fn thinking_levels_for_model(
 
     let mut out = Vec::new();
     for raw in reasoning_levels {
-        if let Some(level) = parse_reasoning_level(raw) {
-            if !out.contains(&level) {
-                out.push(level);
-            }
+        if let Some(level) = parse_reasoning_level(raw)
+            && !out.contains(&level)
+        {
+            out.push(level);
         }
     }
     if out.is_empty() {

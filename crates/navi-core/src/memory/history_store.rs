@@ -22,12 +22,12 @@ impl std::fmt::Debug for HistoryStore {
 impl HistoryStore {
     /// Opens the SQLite database at `db_path` and runs migrations/schema creation.
     pub fn new(db_path: &Path) -> Result<Self> {
-        if let Some(parent) = db_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create history-store directory: {:?}", parent)
-                })?;
-            }
+        if let Some(parent) = db_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create history-store directory: {:?}", parent)
+            })?;
         }
 
         let conn = Connection::open(db_path)
@@ -230,9 +230,9 @@ impl HistoryStore {
 
         let meta = metadata.cloned().unwrap_or(json!({}));
 
-        let content_redacted = content.map(|s| crate::security::redact_secrets(s));
-        let tool_input_redacted = tool_input_json.map(|s| crate::security::redact_secrets(s));
-        let tool_output_redacted = tool_output.map(|s| crate::security::redact_secrets(s));
+        let content_redacted = content.map(crate::security::redact_secrets);
+        let tool_input_redacted = tool_input_json.map(crate::security::redact_secrets);
+        let tool_output_redacted = tool_output.map(crate::security::redact_secrets);
 
         conn.execute(
             "INSERT INTO events (

@@ -135,7 +135,7 @@ impl SessionCheckpoint {
         });
         out.push_str("\n\n## Miscellaneous Notes\n");
         out.push_str(if self.misc.is_empty() { "" } else { &self.misc });
-        out.push_str("\n");
+        out.push('\n');
         out
     }
 }

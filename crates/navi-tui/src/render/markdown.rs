@@ -2400,7 +2400,7 @@ fn is_command_name(token: &str) -> bool {
 }
 
 fn is_number_like(token: &str) -> bool {
-    let trimmed = token.trim_end_matches(|ch: char| matches!(ch, '%' | 'K' | 'M' | 's' | 'm'));
+    let trimmed = token.trim_end_matches(['%', 'K', 'M', 's', 'm']);
     !trimmed.is_empty()
         && trimmed
             .chars()

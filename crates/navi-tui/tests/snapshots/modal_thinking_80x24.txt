@@ -6,11 +6,11 @@
     ██╔██╗ ██║███████║██║   ██║██║      via     OpenAI
     ██║╚██╗██║██╔══██║╚██╗ ██╔╝██║      effort  medium
     ██║ ╚████║██║  █╭ Effort Level · gpt-5.5 ──────────────╮
-    ╚═╝  ╚═══╝╚═╝  ╚│   high                               │
-                    │ ● medium                             │
-                    │   low                                │rite grep patch
-                    │                                      │
-                    │                                      │
+    ╚═╝  ╚═══╝╚═╝  ╚│   xhigh                              │
+                    │   high                               │
+                    │ ● medium                             │rite grep patch
+                    │   low                                │
+                    │   off                                │
                     │                                      │
                     │                                      │
                     │ effort levels for this model         │

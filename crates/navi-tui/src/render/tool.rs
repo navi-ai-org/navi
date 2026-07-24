@@ -742,7 +742,7 @@ fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, conten
         .input
         .get("action")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| match invocation.tool_name.as_str() {
+        .unwrap_or(match invocation.tool_name.as_str() {
             "list_dir" => "list",
             "glob" => "find",
             _ => "grep",
@@ -1150,10 +1150,9 @@ fn apply_patch_summary(invocation: &ToolInvocation, result: &ToolResult) -> Stri
         .get("diff")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
+        && let Some(summary) = patch_edit_summaries(diff).into_iter().next()
     {
-        if let Some(summary) = patch_edit_summaries(diff).into_iter().next() {
-            return summary;
-        }
+        return summary;
     }
     let Some(patch) = first_patch_input(invocation) else {
         return if invocation.tool_name == "write" {
@@ -1659,8 +1658,7 @@ fn extract_count(text: &str, label: &str) -> Option<u64> {
     let before = &text[..idx];
     before
         .split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .next_back()
+        .rfind(|s| !s.is_empty())
         .and_then(|n| n.parse().ok())
         .or_else(|| {
             // also allow `FAILED. 4 passed` without leading space edge cases
@@ -1974,7 +1972,7 @@ fn search_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> Stri
         .input
         .get("action")
         .and_then(|v| v.as_str())
-        .unwrap_or_else(|| match invocation.tool_name.as_str() {
+        .unwrap_or(match invocation.tool_name.as_str() {
             "list_dir" => "list",
             "glob" => "find",
             _ => "grep",
@@ -2710,7 +2708,7 @@ fn history_ops_summary(invocation: &ToolInvocation, result: &ToolResult) -> Stri
                 .unwrap_or(0);
             format!("History recent ({count} events)")
         }
-        "get" => format!("History get"),
+        "get" => "History get".to_string(),
         "summaries" => {
             let count = result
                 .output
@@ -3062,16 +3060,16 @@ fn shell_failure_summary(obj: &serde_json::Map<String, Value>) -> Option<String>
     // First failed test name: `test foo::bar ... FAILED`
     if let Some(failed_test) = combined.lines().find_map(|line| {
         let t = line.trim();
-        if let Some(rest) = t.strip_prefix("test ") {
-            if rest.contains("FAILED") {
-                let name = rest
-                    .split_whitespace()
-                    .next()
-                    .unwrap_or("")
-                    .trim_end_matches("...");
-                if !name.is_empty() {
-                    return Some(name.to_string());
-                }
+        if let Some(rest) = t.strip_prefix("test ")
+            && rest.contains("FAILED")
+        {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches("...");
+            if !name.is_empty() {
+                return Some(name.to_string());
             }
         }
         // `failures:` block list line

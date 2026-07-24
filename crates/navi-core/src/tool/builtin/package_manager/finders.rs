@@ -66,10 +66,10 @@ pub(super) fn find_dart_package(manifest: &str, package: &str) -> bool {
                 continue;
             }
             // Match dependency name before colon
-            if let Some(name) = trimmed.split(':').next() {
-                if name.trim() == package {
-                    return true;
-                }
+            if let Some(name) = trimmed.split(':').next()
+                && name.trim() == package
+            {
+                return true;
             }
         }
     }

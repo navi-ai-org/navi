@@ -157,7 +157,7 @@ impl EffectAnalyzer {
 
         // Package manager / runtime config.
         if matches!(
-            file_name.as_ref(),
+            file_name,
             ".npmrc" | ".yarnrc" | ".yarnrc.yml" | ".browserslistrc"
         ) {
             return Some(format!("{file_name} (config)"));
@@ -171,10 +171,10 @@ impl EffectAnalyzer {
     fn find_sensitive_files(paths: &[&PathBuf]) -> Vec<String> {
         let mut sensitive = Vec::new();
         for path in paths {
-            if let Some(label) = Self::check_sensitivity(path) {
-                if !sensitive.contains(&label) {
-                    sensitive.push(label);
-                }
+            if let Some(label) = Self::check_sensitivity(path)
+                && !sensitive.contains(&label)
+            {
+                sensitive.push(label);
             }
         }
         sensitive

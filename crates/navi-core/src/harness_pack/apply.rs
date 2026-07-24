@@ -83,11 +83,11 @@ pub fn apply_harness_for_skills(
                     .unwrap_or(pack.loop_spec.max_turns),
             );
         }
-        if let Some(budget) = pack.loop_spec.token_budget {
-            if budget > 0 {
-                result.token_budget =
-                    Some(result.token_budget.map(|b| b.min(budget)).unwrap_or(budget));
-            }
+        if let Some(budget) = pack.loop_spec.token_budget
+            && budget > 0
+        {
+            result.token_budget =
+                Some(result.token_budget.map(|b| b.min(budget)).unwrap_or(budget));
         }
         if let Some(tools) = effective_allow_tools_for_pack(&pack) {
             allow_lists.push(tools);
@@ -119,13 +119,13 @@ fn render_harness_card_section(pack: &HarnessPack) -> String {
         lines.push(format!("- graph.entry: {}", graph.entry));
         let node_ids: Vec<&str> = graph.nodes.iter().map(|n| n.id.as_str()).collect();
         lines.push(format!("- graph.nodes: [{}]", node_ids.join(", ")));
-        if let Some(entry) = pack.entry_node() {
-            if !entry.allow_tools.is_empty() {
-                lines.push(format!(
-                    "- graph.entry_allow_tools: [{}]",
-                    entry.allow_tools.join(", ")
-                ));
-            }
+        if let Some(entry) = pack.entry_node()
+            && !entry.allow_tools.is_empty()
+        {
+            lines.push(format!(
+                "- graph.entry_allow_tools: [{}]",
+                entry.allow_tools.join(", ")
+            ));
         }
     }
     lines.join("\n")

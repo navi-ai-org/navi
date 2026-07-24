@@ -824,32 +824,32 @@ fn input_lines(app: &TuiApp, width: usize) -> (Vec<Line<'static>>, usize, usize)
             }
 
             // Compact paste chip: [Pasted text #N +L lines]
-            if rest.starts_with("[Pasted text #") {
-                if let Some(close) = rest.find(']') {
-                    let tag_end = current_idx + close + 1;
-                    let tag_text = &line_text[current_idx..tag_end];
-                    let mut style = Style::default()
-                        .bg(code_operator())
-                        .fg(ratatui::style::Color::Black)
-                        .add_modifier(Modifier::BOLD);
-                    if let Some((sel_start, sel_end)) = selected {
-                        let tag_start_byte = start + current_idx;
-                        let tag_end_byte = start + tag_end;
-                        if tag_start_byte >= sel_start && tag_end_byte <= sel_end {
-                            style = Style::default().fg(selection_fg()).bg(selection_bg());
-                        }
+            if rest.starts_with("[Pasted text #")
+                && let Some(close) = rest.find(']')
+            {
+                let tag_end = current_idx + close + 1;
+                let tag_text = &line_text[current_idx..tag_end];
+                let mut style = Style::default()
+                    .bg(code_operator())
+                    .fg(ratatui::style::Color::Black)
+                    .add_modifier(Modifier::BOLD);
+                if let Some((sel_start, sel_end)) = selected {
+                    let tag_start_byte = start + current_idx;
+                    let tag_end_byte = start + tag_end;
+                    if tag_start_byte >= sel_start && tag_end_byte <= sel_end {
+                        style = Style::default().fg(selection_fg()).bg(selection_bg());
                     }
-                    spans.push(Span::styled(tag_text.to_string(), style));
-                    // Soft expand hint after the chip (composer-only chrome).
-                    if line_index == 0 && tag_end == line_text.len() && ranges.len() == 1 {
-                        spans.push(Span::styled(
-                            " (press enter to expand)".to_string(),
-                            Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
-                        ));
-                    }
-                    current_idx = tag_end;
-                    continue;
                 }
+                spans.push(Span::styled(tag_text.to_string(), style));
+                // Soft expand hint after the chip (composer-only chrome).
+                if line_index == 0 && tag_end == line_text.len() && ranges.len() == 1 {
+                    spans.push(Span::styled(
+                        " (press enter to expand)".to_string(),
+                        Style::default().fg(ghost()).add_modifier(Modifier::ITALIC),
+                    ));
+                }
+                current_idx = tag_end;
+                continue;
             }
 
             if let Some(ch) = rest.chars().next() {

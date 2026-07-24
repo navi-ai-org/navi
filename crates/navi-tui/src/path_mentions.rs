@@ -98,21 +98,17 @@ pub(crate) fn handle_path_mentions_key(
             app.path_mention_start = None;
             crate::keybindings::close_active_modal(app);
         }
-        KeyCode::Down | KeyCode::Tab => {
-            if len > 0 {
-                app.selected_path = (app.selected_path + 1).min(len - 1);
-                app.path_scroll = scroll_for(app.selected_path, VISIBLE_ROWS);
-            }
+        KeyCode::Down | KeyCode::Tab if len > 0 => {
+            app.selected_path = (app.selected_path + 1).min(len - 1);
+            app.path_scroll = scroll_for(app.selected_path, VISIBLE_ROWS);
         }
         KeyCode::Up => {
             app.selected_path = app.selected_path.saturating_sub(1);
             app.path_scroll = scroll_for(app.selected_path, VISIBLE_ROWS);
         }
-        KeyCode::PageDown => {
-            if len > 0 {
-                app.selected_path = (app.selected_path + 8).min(len - 1);
-                app.path_scroll = scroll_for(app.selected_path, VISIBLE_ROWS);
-            }
+        KeyCode::PageDown if len > 0 => {
+            app.selected_path = (app.selected_path + 8).min(len - 1);
+            app.path_scroll = scroll_for(app.selected_path, VISIBLE_ROWS);
         }
         KeyCode::PageUp => {
             app.selected_path = app.selected_path.saturating_sub(8);
@@ -332,10 +328,11 @@ fn collect_dir(
         }
         let rel = format!("{base_rel}{name}{}", if is_dir { "/" } else { "" });
         // Ensure path is under project
-        if let Ok(abs) = entry.path().canonicalize() {
-            if !abs.starts_with(project_dir) && !entry.path().starts_with(project_dir) {
-                continue;
-            }
+        if let Ok(abs) = entry.path().canonicalize()
+            && !abs.starts_with(project_dir)
+            && !entry.path().starts_with(project_dir)
+        {
+            continue;
         }
         out.push(PathCandidate { rel, is_dir });
     }

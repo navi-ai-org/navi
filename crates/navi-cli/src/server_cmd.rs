@@ -332,23 +332,23 @@ fn dirs_home() -> Option<PathBuf> {
 
 fn resolve_navi_server_bin() -> Option<PathBuf> {
     // 1) Sibling of current navi binary (release/debug install layouts).
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            let candidate = dir.join("navi-server");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let candidate = dir.join("navi-server");
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
     // 2) PATH
-    if let Ok(output) = Command::new("which").arg("navi-server").output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                let p = PathBuf::from(path);
-                if p.is_file() {
-                    return Some(p);
-                }
+    if let Ok(output) = Command::new("which").arg("navi-server").output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            let p = PathBuf::from(path);
+            if p.is_file() {
+                return Some(p);
             }
         }
     }
