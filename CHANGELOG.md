@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-07-24
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.8...v0.3.9
+
+Custom provider model list hydration and symlink traversal fix.
+
+### Added
+
+- **Canonical model hydration for custom providers** — `[[providers.models]]` entries that specify only `name` are resolved against the canonical model catalog (`navi-registry/models/<id>.json`). Missing metadata (context window, max output tokens, reasoning support/levels, default reasoning effort, and attachment flags) is filled automatically, while any user-specified values are preserved.
+
 ### Fixed
 
 - **Directory traversal symlink cycles** — `search` (`list`/`find`/`grep`/`tree`) and `repo_intelligence` no longer follow directory symlinks, preventing infinite recursion on self-referencing symlinks such as Wine/Proton `pfx -> .`.
+
+### Changed
+
+- **Workspace crates + npm packages** bumped to **0.3.9**.
 
 ## [0.3.8] - 2026-07-23
 
