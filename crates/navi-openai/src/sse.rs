@@ -44,6 +44,7 @@ impl SseDecoder {
         events
     }
 
+    #[cfg(test)]
     pub(crate) fn drain(&mut self) -> Vec<String> {
         let raw = std::mem::take(&mut self.buffer);
         let trimmed = raw.trim();
