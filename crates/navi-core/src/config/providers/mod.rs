@@ -1,6 +1,7 @@
 mod opencode;
 mod registry;
 
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::config::types::{
@@ -9,6 +10,7 @@ use crate::config::types::{
 };
 use crate::model::AttachmentKind;
 use crate::registry::RegistryStore;
+use crate::registry::types::CanonicalModel;
 
 pub use opencode::{is_free_model_name, model_can_run_publicly, provider_request_model_name};
 pub use registry::default_request_options_for;
@@ -28,6 +30,10 @@ static REGISTRY_STORE: RwLock<Option<Arc<RegistryStore>>> = RwLock::new(None);
 /// Providers modal and model lists lag hard.
 static BASE_CATALOG_CACHE: RwLock<Option<Arc<Vec<ProviderConfig>>>> = RwLock::new(None);
 
+/// In-memory canonical model catalog used to hydrate bare model refs from
+/// `[[providers.models]]` entries (e.g. `{ name = "claude-opus-4" }`).
+static CANONICAL_MODEL_CACHE: RwLock<Option<Arc<CanonicalCatalog>>> = RwLock::new(None);
+
 /// Sets the process-global registry store used by [`provider_catalog`].
 /// Typically called once during engine initialization.
 pub fn set_registry_store(store: Arc<RegistryStore>) {
@@ -42,6 +48,10 @@ pub fn set_registry_store(store: Arc<RegistryStore>) {
 /// from SQLite. Call after remote registry sync / model API sync mutates the store.
 pub fn invalidate_registry_catalog_cache() {
     match BASE_CATALOG_CACHE.write() {
+        Ok(mut guard) => *guard = None,
+        Err(poisoned) => *poisoned.into_inner() = None,
+    }
+    match CANONICAL_MODEL_CACHE.write() {
         Ok(mut guard) => *guard = None,
         Err(poisoned) => *poisoned.into_inner() = None,
     }
@@ -64,6 +74,7 @@ pub fn registry_store_for_catalog() -> Option<Arc<RegistryStore>> {
 pub fn provider_catalog(config: &NaviConfig) -> Vec<ProviderConfig> {
     let mut providers = base_provider_catalog();
     merge_provider_configs(&mut providers, config.providers.clone());
+    resolve_provider_model_refs(&mut providers);
     apply_default_request_options(&mut providers);
     providers
 }
@@ -106,6 +117,132 @@ fn write_base_catalog_cache(providers: Vec<ProviderConfig>) {
     match BASE_CATALOG_CACHE.write() {
         Ok(mut guard) => *guard = Some(arc),
         Err(poisoned) => *poisoned.into_inner() = Some(arc),
+    }
+}
+
+/// In-memory canonical model catalog with normalized (lowercase, dash-separated)
+/// lookup keys covering model ids and aliases.
+struct CanonicalCatalog {
+    by_ref: HashMap<String, CanonicalModel>,
+}
+
+impl CanonicalCatalog {
+    fn from_models(models: HashMap<String, CanonicalModel>) -> Self {
+        let mut by_ref = HashMap::with_capacity(models.len() * 2);
+        for (id, model) in models {
+            by_ref.insert(normalize_model_ref(&id), model.clone());
+            for alias in &model.aliases {
+                by_ref.insert(normalize_model_ref(alias), model.clone());
+            }
+        }
+        Self { by_ref }
+    }
+
+    fn get(&self, name: &str) -> Option<&CanonicalModel> {
+        self.by_ref.get(&normalize_model_ref(name))
+    }
+}
+
+fn normalize_model_ref(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .replace('/', "-")
+        .replace('_', "-")
+}
+
+fn read_canonical_model_cache() -> Option<Arc<CanonicalCatalog>> {
+    match CANONICAL_MODEL_CACHE.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
+
+fn write_canonical_model_cache(catalog: Arc<CanonicalCatalog>) {
+    match CANONICAL_MODEL_CACHE.write() {
+        Ok(mut guard) => *guard = Some(catalog),
+        Err(poisoned) => *poisoned.into_inner() = Some(catalog),
+    }
+}
+
+/// Loads the canonical model catalog from the registry cache, falling back to
+/// the embedded snapshot when the cache is empty or unavailable.
+fn canonical_model_catalog() -> Arc<CanonicalCatalog> {
+    if let Some(cached) = read_canonical_model_cache() {
+        return cached;
+    }
+
+    let raw: HashMap<String, CanonicalModel> = match registry_store_for_catalog() {
+        Some(store) => {
+            let catalog = store.load_canonical_model_catalog().unwrap_or_default();
+            if catalog.is_empty() {
+                crate::registry::embedded_model_catalog().unwrap_or_default()
+            } else {
+                catalog
+            }
+        }
+        None => crate::registry::embedded_model_catalog().unwrap_or_default(),
+    };
+
+    let catalog = Arc::new(CanonicalCatalog::from_models(raw));
+    write_canonical_model_cache(catalog.clone());
+    catalog
+}
+
+/// Fills missing model metadata from the canonical model catalog for any
+/// `[[providers.models]]` entry whose `name` matches a canonical id or alias.
+fn resolve_provider_model_refs(providers: &mut [ProviderConfig]) {
+    let catalog = canonical_model_catalog();
+    if catalog.by_ref.is_empty() {
+        return;
+    }
+    for provider in providers {
+        for model in &mut provider.models {
+            resolve_provider_model_config(model, &catalog);
+        }
+    }
+}
+
+fn resolve_provider_model_config(model: &mut ProviderModelConfig, catalog: &CanonicalCatalog) {
+    if model.name.is_empty() {
+        return;
+    }
+    let Some(canonical) = catalog.get(&model.name) else {
+        return;
+    };
+
+    if model.context_window_tokens.is_none() {
+        model.context_window_tokens = canonical.context_window_tokens;
+    }
+    if model.max_output_tokens.is_none() {
+        model.max_output_tokens = canonical.max_output_tokens;
+    }
+    if model.recommended_temperature.is_none() {
+        model.recommended_temperature = canonical.recommended_temperature;
+    }
+    if model.supports_thinking.is_none() {
+        model.supports_thinking = canonical.supports_thinking;
+    }
+    if model.reasoning_levels.is_empty() && !canonical.reasoning_levels.is_empty() {
+        model
+            .reasoning_levels
+            .clone_from(&canonical.reasoning_levels);
+    }
+    if model.default_reasoning_effort.is_none() {
+        model
+            .default_reasoning_effort
+            .clone_from(&canonical.default_reasoning_effort);
+    }
+    if model.supports_images.is_none() {
+        model.supports_images = canonical.attachments.images;
+    }
+    if model.supports_audio.is_none() {
+        model.supports_audio = canonical.attachments.audio;
+    }
+    if model.supports_video.is_none() {
+        model.supports_video = canonical.attachments.video;
+    }
+    if model.supports_documents.is_none() {
+        model.supports_documents = canonical.attachments.documents;
     }
 }
 
@@ -1200,5 +1337,95 @@ mod tests {
             "custom-provider"
         );
         assert_eq!(super::canonical_provider_id(""), "");
+    }
+
+    #[test]
+    fn resolve_provider_model_config_hydrates_from_canonical_catalog() {
+        use std::collections::HashMap;
+
+        use super::{CanonicalCatalog, resolve_provider_model_config};
+        use crate::config::types::ProviderModelConfig;
+        use crate::registry::types::{CanonicalModel, RegistryAttachments};
+
+        let canonical = CanonicalModel {
+            id: "my-canonical-model".to_string(),
+            context_window_tokens: Some(128_000),
+            max_output_tokens: Some(4096),
+            recommended_temperature: Some(0.7),
+            supports_thinking: Some(true),
+            reasoning_levels: vec!["low".to_string(), "high".to_string()],
+            default_reasoning_effort: Some("low".to_string()),
+            attachments: RegistryAttachments {
+                images: Some(true),
+                audio: None,
+                video: None,
+                documents: Some(true),
+            },
+            aliases: vec!["Alias-Model".to_string()],
+            ..Default::default()
+        };
+
+        let mut catalog = HashMap::new();
+        catalog.insert("my-canonical-model".to_string(), canonical);
+        let catalog = CanonicalCatalog::from_models(catalog);
+
+        let mut model = ProviderModelConfig {
+            name: "my-canonical-model".to_string(),
+            ..Default::default()
+        };
+        resolve_provider_model_config(&mut model, &catalog);
+
+        assert_eq!(model.context_window_tokens, Some(128_000));
+        assert_eq!(model.max_output_tokens, Some(4096));
+        assert_eq!(model.recommended_temperature, Some(0.7));
+        assert_eq!(model.supports_thinking, Some(true));
+        assert_eq!(model.reasoning_levels, vec!["low", "high"]);
+        assert_eq!(model.default_reasoning_effort.as_deref(), Some("low"));
+        assert_eq!(model.supports_images, Some(true));
+        assert_eq!(model.supports_documents, Some(true));
+
+        // Alias lookup also works (normalized to lowercase/dash).
+        let mut aliased = ProviderModelConfig {
+            name: "alias/model".to_string(),
+            ..Default::default()
+        };
+        resolve_provider_model_config(&mut aliased, &catalog);
+        assert_eq!(aliased.context_window_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn resolve_provider_model_config_preserves_user_overrides() {
+        use std::collections::HashMap;
+
+        use super::{CanonicalCatalog, resolve_provider_model_config};
+        use crate::config::types::ProviderModelConfig;
+        use crate::registry::types::{CanonicalModel, RegistryAttachments};
+
+        let canonical = CanonicalModel {
+            id: "override-test".to_string(),
+            context_window_tokens: Some(128_000),
+            supports_thinking: Some(true),
+            attachments: RegistryAttachments {
+                images: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut catalog = HashMap::new();
+        catalog.insert("override-test".to_string(), canonical);
+        let catalog = CanonicalCatalog::from_models(catalog);
+
+        let mut model = ProviderModelConfig {
+            name: "override-test".to_string(),
+            context_window_tokens: Some(32_000),
+            supports_thinking: Some(false),
+            ..Default::default()
+        };
+        resolve_provider_model_config(&mut model, &catalog);
+
+        assert_eq!(model.context_window_tokens, Some(32_000));
+        assert_eq!(model.supports_thinking, Some(false));
+        assert_eq!(model.supports_images, Some(true));
     }
 }

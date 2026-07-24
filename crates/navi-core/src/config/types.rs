@@ -744,7 +744,7 @@ pub enum ProviderKind {
 }
 
 /// A single model entry within a provider's configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderModelConfig {
     /// Model name (e.g. `"gpt-5.5"`).
     pub name: String,

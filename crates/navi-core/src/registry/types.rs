@@ -187,7 +187,7 @@ pub struct RegistryModel {
 
 /// A canonical model entry from `models/<id>.json`.
 /// Contains intrinsic model metadata shared across all providers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanonicalModel {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
