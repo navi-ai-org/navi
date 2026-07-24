@@ -11,6 +11,7 @@ use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 const DEFAULT_MAX_RESULTS: usize = 50;
 const MAX_RESULTS: usize = 500;
 const FS_MAX_DEPTH: u64 = 10;
+const SEARCH_MAX_DEPTH: u64 = 100;
 
 pub(crate) struct SearchTool {
     project_root: PathBuf,
@@ -439,7 +440,7 @@ impl SearchTool {
 fn run_grep(project_root: &Path, input: GrepInput) -> Result<Value> {
     let root = resolve_project_path(project_root, &input.path);
     let mut matches = Vec::new();
-    collect_matches(project_root, &root, &input, &mut matches)?;
+    collect_matches(project_root, &root, &input, &mut matches, 0)?;
     let truncated = matches.len() >= input.max_results;
     Ok(json!({
         "matches": matches,
@@ -454,10 +455,23 @@ fn collect_matches(
     path: &Path,
     input: &GrepInput,
     matches: &mut Vec<Value>,
+    depth: u64,
 ) -> Result<()> {
-    if matches.len() >= input.max_results || should_skip(path) {
+    if matches.len() >= input.max_results || depth > SEARCH_MAX_DEPTH || should_skip(path) {
         return Ok(());
     }
+
+    // Avoid directory symlinks entirely; follow file symlinks for grepping.
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        if path.is_file() {
+            grep_file(project_root, path, input, matches)?;
+        }
+        return Ok(());
+    }
+
     if path.is_file() {
         grep_file(project_root, path, input, matches)?;
         return Ok(());
@@ -469,7 +483,21 @@ fn collect_matches(
         if matches.len() >= input.max_results {
             break;
         }
-        collect_matches(project_root, &entry?.path(), input, matches)?;
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        if file_type.is_symlink() {
+            if entry_path.is_file() {
+                grep_file(project_root, &entry_path, input, matches)?;
+            }
+            continue;
+        }
+
+        collect_matches(project_root, &entry_path, input, matches, depth + 1)?;
     }
     Ok(())
 }
@@ -622,7 +650,14 @@ impl SearchTool {
         let files = tokio::task::spawn_blocking(move || {
             let root_path = resolve_project_path(&project_root, &path_for_closure);
             let mut files = Vec::new();
-            collect_files_recursive(&project_root, &root_path, &config, 0, u64::MAX, &mut files);
+            collect_files_recursive(
+                &project_root,
+                &root_path,
+                &config,
+                0,
+                SEARCH_MAX_DEPTH,
+                &mut files,
+            );
             files
         })
         .await
@@ -690,7 +725,14 @@ impl SearchTool {
         let files = tokio::task::spawn_blocking(move || {
             let root_path = resolve_project_path(&project_root, &path_for_closure);
             let mut files = Vec::new();
-            collect_files_recursive(&project_root, &root_path, &config, 0, u64::MAX, &mut files);
+            collect_files_recursive(
+                &project_root,
+                &root_path,
+                &config,
+                0,
+                SEARCH_MAX_DEPTH,
+                &mut files,
+            );
             files
         })
         .await
@@ -802,9 +844,26 @@ fn collect_files_recursive(
         }
 
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        // Never follow symlinks into directories — that creates cycles like
+        // Wine/Proton `pfx -> .`.
+        if file_type.is_symlink() {
+            if path.is_file() {
+                let display = display_path(project_root, &path);
+                if matches_pattern(&display, config.pattern.as_deref()) {
+                    files.push(display);
+                }
+            }
+            continue;
+        }
+
+        if file_type.is_dir() {
             collect_files_recursive(project_root, &path, config, depth + 1, max_depth, files);
-        } else {
+        } else if file_type.is_file() {
             let display = display_path(project_root, &path);
             if matches_pattern(&display, config.pattern.as_deref()) {
                 files.push(display);
@@ -838,9 +897,25 @@ fn build_tree(root: &Path, max_depth: u64, hidden: bool, depth: u64) -> Vec<Valu
         }
 
         let path = entry.path();
-        let meta = fs::metadata(&path).ok();
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
 
-        if path.is_dir() {
+        // Never follow symlinks into directories.
+        if file_type.is_symlink() {
+            let size = fs::symlink_metadata(&path).map(|m| m.len()).unwrap_or(0);
+            entries.push(json!({
+                "name": name_str,
+                "type": "symlink",
+                "size": size,
+                "children": 0,
+                "entries": [],
+            }));
+            continue;
+        }
+
+        if file_type.is_dir() {
             let children = if depth < max_depth {
                 build_tree(&path, max_depth, hidden, depth + 1)
             } else {
@@ -853,7 +928,7 @@ fn build_tree(root: &Path, max_depth: u64, hidden: bool, depth: u64) -> Vec<Valu
                 "entries": children,
             }));
         } else {
-            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             entries.push(json!({
                 "name": name_str,
                 "type": "file",
@@ -1076,5 +1151,80 @@ mod tests {
         assert_eq!(result.output["size"], 5);
         assert!(result.output["modified"].is_number());
         assert!(result.output["permissions"].is_string());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn collect_files_recursive_respects_symlink_cycle() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink(".", root.join("pfx")).unwrap();
+
+        let config = CollectConfig {
+            pattern: None,
+            hidden: false,
+            max_results: 100,
+        };
+        let mut files = Vec::new();
+        collect_files_recursive(root, root, &config, 0, 50, &mut files);
+
+        assert_eq!(files.len(), 1, "expected one a.txt, got: {files:?}");
+        assert!(
+            files.iter().all(|p| !p.contains("pfx")),
+            "symlink cycle leaked into paths: {files:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn build_tree_respects_symlink_cycle() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path();
+        std::fs::write(root.join("a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink(".", root.join("pfx")).unwrap();
+
+        let entries = build_tree(root, 10, false, 0);
+
+        assert!(entries.iter().any(|e| e["name"] == "a.txt"));
+        let pfx = entries
+            .iter()
+            .find(|e| e["name"] == "pfx")
+            .expect("symlink should be listed");
+        assert_eq!(pfx["type"], "symlink", "pfx should be a symlink: {pfx:?}");
+        assert_eq!(
+            pfx["children"], 0,
+            "symlink should not have children: {pfx:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn test_search_tree_symlink_cycle() {
+        let tempdir = tempfile::tempdir().unwrap();
+        std::fs::write(tempdir.path().join("a.txt"), "a").unwrap();
+        std::os::unix::fs::symlink(".", tempdir.path().join("pfx")).unwrap();
+
+        let (tool, _) = mock_tool(tempdir.path());
+        let inv = ToolInvocation {
+            id: "t_symlink".into(),
+            tool_name: "search".into(),
+            input: json!({
+                "action": "tree",
+                "path": ".",
+                "depth": 3,
+            }),
+        };
+
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        let entries = result.output["entries"].as_array().unwrap();
+        assert!(entries.iter().any(|e| e["name"] == "a.txt"));
+        let pfx = entries
+            .iter()
+            .find(|e| e["name"] == "pfx")
+            .expect("symlink should be listed");
+        assert_eq!(pfx["type"], "symlink");
+        assert_eq!(pfx["children"], 0);
     }
 }

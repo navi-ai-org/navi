@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Directory traversal symlink cycles** — `search` (`list`/`find`/`grep`/`tree`) and `repo_intelligence` no longer follow directory symlinks, preventing infinite recursion on self-referencing symlinks such as Wine/Proton `pfx -> .`.
+
 ## [0.3.8] - 2026-07-23
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.7...v0.3.8

@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
+const REPO_INDEX_MAX_DEPTH: u64 = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoIndex {
@@ -836,7 +837,7 @@ fn build_index_with_cache(
         .canonicalize()
         .with_context(|| format!("failed to resolve repo root {}", root.display()))?;
     let mut files = Vec::new();
-    collect_source_files(&root, &root, &mut files)?;
+    collect_source_files(&root, &root, 0, &mut files)?;
     files.sort();
 
     let mut indexed_files = Vec::new();
@@ -907,7 +908,10 @@ fn build_index_with_cache(
     })
 }
 
-fn collect_source_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+fn collect_source_files(root: &Path, dir: &Path, depth: u64, out: &mut Vec<PathBuf>) -> Result<()> {
+    if depth > REPO_INDEX_MAX_DEPTH {
+        return Ok(());
+    }
     for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
@@ -916,10 +920,40 @@ fn collect_source_files(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Resu
         if name.starts_with('.') || matches!(name.as_ref(), "target" | "node_modules" | "dist") {
             continue;
         }
-        if path.is_dir() {
-            collect_source_files(root, &path, out)?;
+        let file_type = match entry.file_type() {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        // Never follow symlinks into directories — prevents infinite recursion on
+        // Wine/Proton-style `pfx -> .` cycles.
+        if file_type.is_symlink() {
+            if path.is_file() {
+                let Ok(metadata) = fs::metadata(&path) else {
+                    continue;
+                };
+                if metadata.len() > MAX_FILE_BYTES {
+                    continue;
+                }
+                let Ok(relative) = path.strip_prefix(root) else {
+                    continue;
+                };
+                if language_for_path(relative) != "unknown" {
+                    out.push(relative.to_path_buf());
+                }
+            }
             continue;
         }
+
+        if file_type.is_dir() {
+            collect_source_files(root, &path, depth + 1, out)?;
+            continue;
+        }
+
+        if !file_type.is_file() {
+            continue;
+        }
+
         let Ok(metadata) = fs::metadata(&path) else {
             continue;
         };
@@ -1284,5 +1318,30 @@ mod tests {
 
         assert_eq!(matches[0].path, PathBuf::from("src/a.rs"));
         assert_eq!(matches[1].path, PathBuf::from("src/b.rs"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn build_index_skips_symlink_cycle() {
+        let dir = tempfile::tempdir().unwrap();
+        write_source(dir.path(), "src/lib.rs", "pub fn stable() {}\n");
+        std::os::unix::fs::symlink(".", dir.path().join("pfx")).unwrap();
+
+        let index = build_index(dir.path()).unwrap();
+
+        assert_eq!(
+            index.files.len(),
+            1,
+            "expected one source file, got: {:?}",
+            index.files
+        );
+        assert!(
+            index
+                .files
+                .iter()
+                .all(|f| !f.path.to_string_lossy().contains("pfx")),
+            "symlink cycle leaked into index files: {:?}",
+            index.files
+        );
     }
 }
