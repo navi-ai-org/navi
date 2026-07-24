@@ -7,6 +7,10 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use super::policy::{
+    AgentPolicyOpts, MAX_AGENTS_CEILING, MAX_PARALLEL_CEILING, clamp_max_agents,
+    clamp_max_parallel, default_run_policy, intersect_agent_policy,
+};
 use super::*;
 use crate::cancel::CancelToken;
 use crate::config::WorkflowConfig;
@@ -382,7 +386,6 @@ async fn h7_unknown_builtin_absent() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c1_default_max_parallel_is_16() {
-    assert_eq!(DEFAULT_MAX_PARALLEL, 16);
     assert_eq!(WorkflowConfig::default().max_parallel, 16);
 }
 
@@ -1224,6 +1227,5 @@ fn description_contains_section_12_bullets() {
 #[test]
 fn mlua_not_quickjs() {
     // Structural: this crate depends on mlua (compile-time via module).
-    let _ = DEFAULT_MAX_PARALLEL;
     assert_eq!(NESTED_WORKFLOW_TOOLS, &["subagent", "workflow"]);
 }

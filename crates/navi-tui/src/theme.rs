@@ -377,24 +377,6 @@ pub(crate) fn bg() -> Color {
 pub(crate) fn ghost() -> Color {
     p().ghost
 }
-#[allow(dead_code)] // reserved for future soft-card chrome if re-enabled
-pub(crate) fn interactive_bg() -> Color {
-    let palette = p();
-    if palette.panel == Color::Reset {
-        Color::Black
-    } else {
-        palette.panel
-    }
-}
-#[allow(dead_code)] // hover wash removed from chat cells; keep palette helper
-pub(crate) fn interactive_hover_bg() -> Color {
-    let palette = p();
-    if palette.ghost == Color::Reset {
-        Color::DarkGray
-    } else {
-        palette.ghost
-    }
-}
 pub(crate) fn user_accent() -> Color {
     p().user_accent
 }

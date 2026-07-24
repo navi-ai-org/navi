@@ -1370,11 +1370,7 @@ mod tests {
     #[test]
     fn composer_hint_height_zero_even_with_active_goal() {
         let mut app = crate::tests::test_app("");
-        app.goal_state = Some(crate::state::GoalUiState {
-            objective: "Implement a very long detailed objective".to_string(),
-            short_description: Some("Fix modal layout".to_string()),
-            ..Default::default()
-        });
+        app.goal_state = Some(crate::state::GoalUiState);
         // Goals live in chat, not under the composer.
         assert_eq!(composer_hint_height(&app), 0);
     }

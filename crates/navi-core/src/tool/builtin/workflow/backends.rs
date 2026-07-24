@@ -98,7 +98,7 @@ impl AgentBackend for WorkerProbeBackend {
             };
         }
 
-        let probe = probe_worker_capabilities_inner(&self.policy, &request.effective);
+        let probe = probe_worker_capabilities(&self.policy, &request.effective);
 
         if let Some(ref inflight) = self.in_flight {
             inflight.fetch_sub(1, Ordering::SeqCst);
@@ -136,44 +136,17 @@ impl AgentBackend for WorkerProbeBackend {
 }
 
 #[derive(Debug, Default)]
-struct ProbeResult {
-    can_write_file: bool,
-    can_edit: bool,
-    can_bash: bool,
-    can_subagent: bool,
-    can_workflow: bool,
-    write_path_allowed: Vec<String>,
-    write_path_denied: Vec<String>,
-    create_new_file_allowed: bool,
-    registered_tools: Vec<String>,
-    policy_denials: Vec<String>,
-}
-
-/// Public probe summary for unit tests (fields only; no mock echo).
-#[derive(Debug, Clone)]
-pub struct WorkerProbeSummary {
-    pub can_bash: bool,
-    pub can_write_file: bool,
-    pub can_edit: bool,
-    pub can_subagent: bool,
-    pub can_workflow: bool,
-    pub registered_tools: Vec<String>,
-}
-
-/// Probe real tool allowlist + SecurityPolicy for a worker's effective policy.
-pub fn probe_worker_capabilities(
-    base_policy: &SecurityPolicy,
-    effective: &EffectiveAgentPolicy,
-) -> WorkerProbeSummary {
-    let inner = probe_worker_capabilities_inner(base_policy, effective);
-    WorkerProbeSummary {
-        can_bash: inner.can_bash,
-        can_write_file: inner.can_write_file,
-        can_edit: inner.can_edit,
-        can_subagent: inner.can_subagent,
-        can_workflow: inner.can_workflow,
-        registered_tools: inner.registered_tools,
-    }
+pub(crate) struct ProbeResult {
+    pub(crate) can_write_file: bool,
+    pub(crate) can_edit: bool,
+    pub(crate) can_bash: bool,
+    pub(crate) can_subagent: bool,
+    pub(crate) can_workflow: bool,
+    pub(crate) write_path_allowed: Vec<String>,
+    pub(crate) write_path_denied: Vec<String>,
+    pub(crate) create_new_file_allowed: bool,
+    pub(crate) registered_tools: Vec<String>,
+    pub(crate) policy_denials: Vec<String>,
 }
 
 fn scoped_policy(base: &SecurityPolicy, effective: &EffectiveAgentPolicy) -> SecurityPolicy {
@@ -186,7 +159,7 @@ fn scoped_policy(base: &SecurityPolicy, effective: &EffectiveAgentPolicy) -> Sec
         })
 }
 
-fn probe_worker_capabilities_inner(
+pub(crate) fn probe_worker_capabilities(
     base_policy: &SecurityPolicy,
     effective: &EffectiveAgentPolicy,
 ) -> ProbeResult {

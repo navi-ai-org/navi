@@ -43,13 +43,7 @@ pub(crate) fn submit_goal_objective(app: &mut TuiApp, objective: String) {
         return;
     }
 
-    let short: String = objective.chars().take(40).collect();
-    app.goal_state = Some(crate::state::GoalUiState {
-        objective: objective.clone(),
-        short_description: Some(short.clone()),
-        tokens_used: 0,
-        token_budget: None,
-    });
+    app.goal_state = Some(crate::state::GoalUiState);
 
     let session_id = app.session_id.as_str().to_string();
     let engine = app.engine();

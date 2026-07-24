@@ -564,7 +564,6 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         HitAction::Session(index) => app.hover_index = Some(*index),
         HitAction::Skill(index) => app.hover_index = Some(*index),
         HitAction::Setting(index) => app.hover_index = Some(*index),
-        HitAction::ExtensionsItem(index) => app.hover_index = Some(*index),
         HitAction::MessageAction(index) => app.hover_index = Some(*index),
         HitAction::RewindCheckpoint(index) => app.hover_index = Some(*index),
         HitAction::PluginInstallOrUpdate(index) => {
@@ -782,14 +781,6 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
         }
         HitAction::Setting(index) => {
             app.selected_setting = index;
-            let _ = handle_key(
-                app,
-                crossterm::event::KeyCode::Enter,
-                crossterm::event::KeyModifiers::NONE,
-            );
-        }
-        HitAction::ExtensionsItem(index) => {
-            app.selected_extensions_item = index;
             let _ = handle_key(
                 app,
                 crossterm::event::KeyCode::Enter,
@@ -1156,11 +1147,7 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
             Some(ScrollTarget::BackgroundModels)
         }
         Mode::BgModelPicker => Some(ScrollTarget::Models),
-        Mode::Normal
-        | Mode::ApiKeyEntry
-        | Mode::Mcp
-        | Mode::Extensions
-        | Mode::AttachmentModels => None,
+        Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp | Mode::AttachmentModels => None,
         Mode::Setup => None,
         Mode::ConfirmPlan | Mode::SudoPassword => None,
     }

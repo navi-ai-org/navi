@@ -4553,7 +4553,6 @@ fn next_model_index_from_recovers_when_selection_not_in_rows() {
     let rows = vec![
         ListRow::Header {
             label: "— Recent models —".into(),
-            description: String::new(),
             provider_id: String::new(),
         },
         ListRow::Spacer,
@@ -4561,8 +4560,7 @@ fn next_model_index_from_recovers_when_selection_not_in_rows() {
         ListRow::Model { index: 7 },
         ListRow::Header {
             label: "Other".into(),
-            description: String::new(),
-            provider_id: String::new(),
+            provider_id: "other-provider".into(),
         },
         ListRow::Model { index: 1 },
     ];

@@ -27,8 +27,6 @@ pub enum HitAction {
     Session(usize),
     Skill(usize),
     Setting(usize),
-    /// Extensions hub row (Skills / Plugins / MCP).
-    ExtensionsItem(usize),
     PluginInstallOrUpdate(usize),
     PluginRefresh,
     /// Open background-task output (chevron / card body).

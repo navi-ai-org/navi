@@ -2362,14 +2362,6 @@ impl AgentRuntime {
         }
     }
 
-    fn load_active_skills(&self) -> Vec<SkillManifest> {
-        self.load_catalog_skills()
-    }
-
-    fn load_available_skills(&self) -> Vec<SkillManifest> {
-        self.load_catalog_skills()
-    }
-
     fn discover_available_skills(&self) -> Result<Vec<SkillManifest>> {
         // Full discovery (root + pool members) for load_skill / harness.
         discover_configured_skills(

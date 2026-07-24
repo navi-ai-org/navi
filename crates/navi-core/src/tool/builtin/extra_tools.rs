@@ -134,17 +134,11 @@ impl Tool for SleepTool {
 
 // ── ContextRemainingTool ───────────────────────────────────────────────────
 
-pub(crate) struct ContextRemainingTool {
-    /// Reserved for future project-scoped context accounting; currently unused
-    /// because the model passes window/used tokens explicitly in the tool input.
-    _project_root: PathBuf,
-}
+pub(crate) struct ContextRemainingTool;
 
 impl ContextRemainingTool {
-    pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self {
-            _project_root: project_root,
-        }
+    pub(crate) fn new() -> Self {
+        Self
     }
 }
 
@@ -650,7 +644,7 @@ mod tests {
 
     #[test]
     fn context_remaining_definition_has_correct_name() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let def: ToolDefinition = tool.definition();
         assert_eq!(def.name, "get_context_remaining");
         assert!(matches!(def.kind, ToolKind::Read));
@@ -658,7 +652,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_remaining_invoke_basic() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let result = tool
             .invoke(ToolInvocation {
                 id: "t6".into(),
@@ -678,7 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_remaining_critical_threshold() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let result = tool
             .invoke(ToolInvocation {
                 id: "t7".into(),
@@ -700,7 +694,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_remaining_warning_threshold() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let result = tool
             .invoke(ToolInvocation {
                 id: "t8".into(),
@@ -722,7 +716,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_remaining_handles_full_context() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let result = tool
             .invoke(ToolInvocation {
                 id: "t9".into(),
@@ -739,7 +733,7 @@ mod tests {
 
     #[tokio::test]
     async fn context_remaining_zero_window_no_panic() {
-        let tool = ContextRemainingTool::new(PathBuf::from("/tmp"));
+        let tool = ContextRemainingTool::new();
         let result = tool
             .invoke(ToolInvocation {
                 id: "t10".into(),

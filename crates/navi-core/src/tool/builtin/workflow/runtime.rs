@@ -19,7 +19,6 @@ pub struct LuaRunInput {
     pub args: JsonValue,
     pub run_policy: RunPolicy,
     pub max_agents: usize,
-    pub max_parallel: usize,
     pub job_tx: UnboundedSender<AgentJob>,
     pub cancel_token: CancelToken,
 }
@@ -29,7 +28,6 @@ pub struct LuaRunOutcome {
     pub phases: Vec<String>,
     pub logs: Vec<String>,
     pub agents_started: usize,
-    pub max_parallel_used: usize,
     pub error: Option<WorkflowHostError>,
 }
 
@@ -41,8 +39,6 @@ struct HostState {
     agent_counter: AtomicU64,
     phases: Mutex<Vec<String>>,
     logs: Mutex<Vec<String>>,
-    #[allow(dead_code)]
-    max_parallel: usize,
     /// When > 0, `agent()` enqueues without waiting so `parallel` can fan out.
     defer_depth: AtomicU64,
     /// Deferred agent receivers (filled while defer_depth > 0).
@@ -63,7 +59,6 @@ pub fn run_lua_workflow(input: LuaRunInput) -> Result<LuaRunOutcome, WorkflowHos
         agent_counter: AtomicU64::new(0),
         phases: Mutex::new(Vec::new()),
         logs: Mutex::new(Vec::new()),
-        max_parallel: input.max_parallel,
         defer_depth: AtomicU64::new(0),
         deferred: Mutex::new(Vec::new()),
     });
@@ -94,7 +89,6 @@ pub fn run_lua_workflow(input: LuaRunInput) -> Result<LuaRunOutcome, WorkflowHos
                 phases: take_phases(&host),
                 logs: take_logs(&host),
                 agents_started: host.agent_counter.load(Ordering::SeqCst) as usize,
-                max_parallel_used: 0,
                 error: Some(e),
             });
         }
@@ -106,7 +100,6 @@ pub fn run_lua_workflow(input: LuaRunInput) -> Result<LuaRunOutcome, WorkflowHos
         phases: take_phases(&host),
         logs: take_logs(&host),
         agents_started: host.agent_counter.load(Ordering::SeqCst) as usize,
-        max_parallel_used: 0,
         error: None,
     })
 }
@@ -122,7 +115,6 @@ fn outcome_err(
         phases: take_phases(host),
         logs: take_logs(host),
         agents_started: host.agent_counter.load(Ordering::SeqCst) as usize,
-        max_parallel_used: 0,
         error: Some(WorkflowHostError {
             code,
             message,

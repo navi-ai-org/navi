@@ -6,10 +6,6 @@ use serde_json::Value;
 use super::policy::EffectiveAgentPolicy;
 use crate::cancel::CancelToken;
 
-/// Default max concurrent workers per run.
-pub const DEFAULT_MAX_PARALLEL: usize = 16;
-/// Default max agents per run.
-pub const DEFAULT_MAX_AGENTS: usize = 1000;
 /// Default max Lua script size (64 KiB).
 pub const DEFAULT_MAX_SCRIPT_BYTES: usize = 64 * 1024;
 /// Truncate agent payloads before injecting into Lua (spec NF4).

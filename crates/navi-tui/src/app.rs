@@ -286,8 +286,6 @@ pub struct TuiApp {
 
     /// Active tab in the unified Model Routing modal.
     pub(crate) model_routing_tab: crate::state::ModelRoutingTab,
-    /// Selected row in the Extensions hub.
-    pub(crate) selected_extensions_item: usize,
 
     // goals
     pub(crate) goal_state: Option<crate::state::GoalUiState>,
@@ -542,7 +540,6 @@ impl TuiApp {
             selected_attachment_model: 0,
             attachment_model_picker_active: false,
             model_routing_tab: crate::state::ModelRoutingTab::Agents,
-            selected_extensions_item: 0,
             setup_phase: None,
             setup_list_selected: 0,
             pending_mcp_merge: None,

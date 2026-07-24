@@ -437,17 +437,10 @@ pub(crate) fn selected_provider_label(app: &TuiApp) -> &str {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // `description` and `provider_id` are used in tests only
 pub(crate) enum ListRow {
-    Header {
-        label: String,
-        description: String,
-        provider_id: String,
-    },
+    Header { label: String, provider_id: String },
     Spacer,
-    Model {
-        index: usize,
-    },
+    Model { index: usize },
 }
 
 /// Row used by the Provider Accounts modal. Headers are non-selectable
@@ -500,7 +493,6 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
                 if rows.is_empty() {
                     rows.push(ListRow::Header {
                         label: "— Recent models —".to_string(),
-                        description: String::new(),
                         provider_id: String::new(),
                     });
                     rows.push(ListRow::Spacer);
@@ -532,7 +524,6 @@ pub(crate) fn build_model_rows(app: &TuiApp) -> Vec<ListRow> {
             current_provider = Some(model.provider_label.as_str());
             rows.push(ListRow::Header {
                 label: model.provider_label.clone(),
-                description: model.provider_description.clone(),
                 provider_id: model.provider_id.clone(),
             });
             rows.push(ListRow::Spacer);
