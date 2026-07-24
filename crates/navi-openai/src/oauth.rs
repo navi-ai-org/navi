@@ -1951,6 +1951,42 @@ mod tests {
     }
 
     #[test]
+    fn extract_hypercredit_balance_rejects_negative_and_non_finite() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+        assert_eq!(
+            extract_hypercredit_balance_from_usage(&serde_json::json!({
+                "remaining": { "hypercredits": -1.0 }
+            })),
+            None
+        );
+        assert_eq!(
+            extract_hypercredit_balance_from_usage(&serde_json::json!({
+                "remaining": { "hypercredits": "not-a-number" }
+            })),
+            None
+        );
+        assert_eq!(peek_hypercredit_balance(), None);
+    }
+
+    #[test]
+    fn format_hypercredits_groups_thousands_for_six_digits() {
+        // 100000 has length 6 (multiple of 3) so first_group is forced to 3.
+        assert_eq!(format_hypercredits(100_000.0), "100,000");
+        assert_eq!(format_hypercredits(-1_234_567.0), "-1,234,567");
+    }
+
+    #[test]
+    fn set_hypercredit_balance_ignores_negative_and_nan() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+        set_hypercredit_balance_authoritative(50.0);
+        set_hypercredit_balance(-10.0);
+        set_hypercredit_balance(f64::NAN);
+        assert_eq!(peek_hypercredit_balance(), Some(50.0));
+    }
+
+    #[test]
     fn stream_zero_does_not_clobber_positive_hypercredit_balance() {
         let _guard = hypercredit_test_lock();
         let _ = take_hypercredit_balance();
@@ -2431,6 +2467,61 @@ mod tests {
         assert_eq!(report.balance, 123.45);
         assert_eq!(report.source.as_deref(), Some("credits-api"));
         let _ = take_hypercredit_balance();
+    }
+
+    #[tokio::test]
+    async fn charm_hyper_credits_report_falls_back_to_cached_balance() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+        set_hypercredit_balance_authoritative(99.0);
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/credits"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+            .mount(&mock_server)
+            .await;
+
+        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
+        let report = charm_hyper_credits_report("key").await.unwrap();
+        unsafe { std::env::remove_var("HYPER_URL") };
+        assert_eq!(report.balance, 99.0);
+        assert_eq!(report.source.as_deref(), Some("stream-usage"));
+        let _ = take_hypercredit_balance();
+    }
+
+    #[tokio::test]
+    async fn charm_hyper_credits_report_returns_error_when_no_cache() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/credits"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
+        let result = charm_hyper_credits_report("key").await;
+        unsafe { std::env::remove_var("HYPER_URL") };
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_hyper_credits_http_errors_on_non_success_status() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/credits"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&mock_server)
+            .await;
+
+        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
+        let result = fetch_hyper_credits_http("key").await;
+        unsafe { std::env::remove_var("HYPER_URL") };
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unauthorized"));
     }
 
     fn connected_tcp_pair() -> (TcpStream, TcpStream) {
