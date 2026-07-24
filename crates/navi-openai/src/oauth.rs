@@ -38,6 +38,14 @@ pub const XAI_GROK_CLI_BASE_URL: &str = "https://cli-chat-proxy.grok.com/v1";
 /// Prefer [`xai_grok_cli_client_version`], which can pick up a newer installed
 /// `grok` binary under `~/.grok/downloads/`.
 pub const XAI_GROK_CLI_CLIENT_VERSION: &str = "0.2.101";
+
+fn xai_grok_base_url() -> String {
+    std::env::var("NAVI_XAI_GROK_BASE_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| XAI_GROK_CLI_BASE_URL.to_string())
+}
 /// Client mode used by the official Grok CLI surface for interactive chat.
 pub const XAI_GROK_CLI_CLIENT_MODE: &str = "chat";
 /// Client surface used for Grok Build / CLI subscription billing.
@@ -235,6 +243,7 @@ pub struct CharmHyperCreditsReport {
 pub const HYPERCREDIT_USD: f64 = 0.05;
 
 const HYPER_DEFAULT_BASE_URL: &str = "https://hyper.charm.land";
+const OPENROUTER_DEFAULT_BASE_URL: &str = "https://openrouter.ai";
 
 /// Last known Hypercredit balance (process-wide).
 ///
@@ -297,6 +306,14 @@ pub fn hyper_base_url() -> String {
         .map(|v| v.trim().trim_end_matches('/').to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| HYPER_DEFAULT_BASE_URL.to_string())
+}
+
+fn openrouter_base_url() -> String {
+    std::env::var("NAVI_OPENROUTER_BASE_URL")
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| OPENROUTER_DEFAULT_BASE_URL.to_string())
 }
 
 /// Store a Hypercredit balance extracted from stream usage metadata.
@@ -473,7 +490,7 @@ pub async fn openrouter_usage_report(
     api_key: &str,
 ) -> std::result::Result<OpenRouterUsageReport, String> {
     let response = reqwest::Client::new()
-        .get("https://openrouter.ai/api/v1/key")
+        .get(format!("{}/api/v1/key", openrouter_base_url()))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json")
         .header("User-Agent", "navi/0.1.0")
@@ -532,10 +549,7 @@ pub async fn xai_usage_report(access_token: &str) -> std::result::Result<XaiUsag
     // Billing lives on the Grok CLI chat proxy and requires the CLI token
     // auth header + client version (otherwise 426 / 401).
     let response = reqwest::Client::new()
-        .get(format!(
-            "{}/billing?format=credits",
-            XAI_GROK_CLI_BASE_URL.trim_end_matches('/')
-        ))
+        .get(format!("{}/billing?format=credits", xai_grok_base_url()))
         .header("Authorization", format!("Bearer {access_token}"))
         .header("Accept", "application/json")
         .header(
@@ -1820,6 +1834,22 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// std::env::set_var/remove_var are unsafe and racy across threads; serialize
+    /// tests that mutate provider-specific env variables.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    async fn with_env_set<F, Fut, T>(key: &str, value: &str, f: F) -> T
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        let _guard = ENV_LOCK.lock().await;
+        unsafe { std::env::set_var(key, value) };
+        let result = f().await;
+        unsafe { std::env::remove_var(key) };
+        result
+    }
+
     #[test]
     fn device_oauth_started_fields_are_accessible() {
         let started = DeviceOAuthStarted {
@@ -2436,14 +2466,12 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        unsafe {
-            std::env::set_var(
-                "NAVI_OPENAI_USAGE_URL",
-                format!("{}/usage", mock_server.uri()),
-            )
-        };
-        let report = openai_usage_report("token").await.unwrap();
-        unsafe { std::env::remove_var("NAVI_OPENAI_USAGE_URL") };
+        let url = format!("{}/usage", mock_server.uri());
+        let report = with_env_set("NAVI_OPENAI_USAGE_URL", &url, || {
+            openai_usage_report("token")
+        })
+        .await
+        .unwrap();
         assert_eq!(report.plan_type.as_deref(), Some("plus"));
     }
 
@@ -2461,9 +2489,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
-        let report = charm_hyper_credits_report("key").await.unwrap();
-        unsafe { std::env::remove_var("HYPER_URL") };
+        let report = with_env_set("HYPER_URL", &mock_server.uri(), || {
+            charm_hyper_credits_report("key")
+        })
+        .await
+        .unwrap();
         assert_eq!(report.balance, 123.45);
         assert_eq!(report.source.as_deref(), Some("credits-api"));
         let _ = take_hypercredit_balance();
@@ -2482,9 +2512,11 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
-        let report = charm_hyper_credits_report("key").await.unwrap();
-        unsafe { std::env::remove_var("HYPER_URL") };
+        let report = with_env_set("HYPER_URL", &mock_server.uri(), || {
+            charm_hyper_credits_report("key")
+        })
+        .await
+        .unwrap();
         assert_eq!(report.balance, 99.0);
         assert_eq!(report.source.as_deref(), Some("stream-usage"));
         let _ = take_hypercredit_balance();
@@ -2502,9 +2534,10 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
-        let result = charm_hyper_credits_report("key").await;
-        unsafe { std::env::remove_var("HYPER_URL") };
+        let result = with_env_set("HYPER_URL", &mock_server.uri(), || {
+            charm_hyper_credits_report("key")
+        })
+        .await;
         assert!(result.is_err());
     }
 
@@ -2517,11 +2550,128 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
-        let result = fetch_hyper_credits_http("key").await;
-        unsafe { std::env::remove_var("HYPER_URL") };
+        let result = with_env_set("HYPER_URL", &mock_server.uri(), || {
+            fetch_hyper_credits_http("key")
+        })
+        .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("unauthorized"));
+    }
+
+    #[tokio::test]
+    async fn openai_usage_report_errors_on_non_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("bad"))
+            .mount(&mock_server)
+            .await;
+
+        let url = format!("{}/usage", mock_server.uri());
+        let result = with_env_set("NAVI_OPENAI_USAGE_URL", &url, || {
+            openai_usage_report("token")
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("500"));
+    }
+
+    #[tokio::test]
+    async fn openrouter_usage_report_fetches_and_reports() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "label": "personal",
+                    "is_free_tier": true,
+                    "usage": 1.5,
+                    "usage_daily": 0.5,
+                    "usage_weekly": 1.0,
+                    "usage_monthly": 1.5,
+                    "limit": 10.0,
+                    "limit_remaining": 8.5,
+                    "limit_reset": "2026-08-01"
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let report = with_env_set("NAVI_OPENROUTER_BASE_URL", &mock_server.uri(), || {
+            openrouter_usage_report("key")
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.label.as_deref(), Some("personal"));
+        assert_eq!(report.is_free_tier, Some(true));
+        assert_eq!(report.usage, Some(1.5));
+        assert_eq!(report.limit_remaining, Some(8.5));
+        assert_eq!(report.limit_reset.as_deref(), Some("2026-08-01"));
+    }
+
+    #[tokio::test]
+    async fn openrouter_usage_report_errors_on_non_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/key"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let result = with_env_set("NAVI_OPENROUTER_BASE_URL", &mock_server.uri(), || {
+            openrouter_usage_report("key")
+        })
+        .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn xai_usage_report_fetches_and_reports() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/billing"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "config": {
+                    "creditUsagePercent": 42.5,
+                    "currentPeriod": { "type": "monthly", "start": "2026-07-01", "end": "2026-07-31" },
+                    "productUsage": [{ "product": "grok", "usagePercent": 10.0 }],
+                    "prepaidBalance": { "val": 100.0 },
+                    "onDemandUsed": { "val": 5.0 },
+                    "onDemandCap": { "val": 50.0 },
+                    "isUnifiedBillingUser": true
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let report = with_env_set("NAVI_XAI_GROK_BASE_URL", &mock_server.uri(), || {
+            xai_usage_report("token")
+        })
+        .await
+        .unwrap();
+        assert_eq!(report.credit_usage_percent, Some(42.5));
+        assert_eq!(report.period_type.as_deref(), Some("monthly"));
+        assert_eq!(report.prepaid_balance, Some(100.0));
+        assert_eq!(report.on_demand_used, Some(5.0));
+        assert_eq!(report.on_demand_cap, Some(50.0));
+        assert_eq!(report.is_unified_billing, Some(true));
+        assert_eq!(report.product_usage.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn xai_usage_report_errors_on_non_success() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/billing"))
+            .respond_with(ResponseTemplate::new(426))
+            .mount(&mock_server)
+            .await;
+
+        let result = with_env_set("NAVI_XAI_GROK_BASE_URL", &mock_server.uri(), || {
+            xai_usage_report("token")
+        })
+        .await;
+        assert!(result.is_err());
     }
 
     fn connected_tcp_pair() -> (TcpStream, TcpStream) {
