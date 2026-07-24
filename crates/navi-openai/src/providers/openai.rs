@@ -1530,3 +1530,284 @@ mod request_options_tests {
         assert!(!headers.contains_key("Good-Name"));
     }
 }
+
+#[cfg(test)]
+mod responses_sse_tests {
+    use super::parse_openai_responses_sse;
+    use navi_core::ModelStreamEvent;
+
+    fn first_event(data: &str) -> Option<ModelStreamEvent> {
+        parse_openai_responses_sse(data)
+            .into_iter()
+            .next()
+            .and_then(|r| r.ok())
+    }
+
+    #[test]
+    fn done_sentinel_emits_done() {
+        let events = parse_openai_responses_sse("[DONE]");
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            ModelStreamEvent::Done
+        ));
+    }
+
+    #[test]
+    fn malformed_json_returns_error() {
+        let events = parse_openai_responses_sse("not-json");
+        assert!(events[0].is_err());
+    }
+
+    #[test]
+    fn response_output_text_delta_emits_text() {
+        let event =
+            first_event(r#"{"type":"response.output_text.delta","delta":"hello"}"#).unwrap();
+        assert!(matches!(event, ModelStreamEvent::TextDelta { text } if text == "hello"));
+    }
+
+    #[test]
+    fn response_reasoning_text_delta_emits_thinking() {
+        let event =
+            first_event(r#"{"type":"response.reasoning_text.delta","delta":"think"}"#).unwrap();
+        assert!(matches!(event, ModelStreamEvent::ThinkingDelta { text } if text == "think"));
+    }
+
+    #[test]
+    fn response_reasoning_text_delta_without_text_emits_status() {
+        let event = first_event(r#"{"type":"response.reasoning_text.delta"}"#).unwrap();
+        assert!(matches!(event, ModelStreamEvent::Status { label } if label == "thinking"));
+    }
+
+    #[test]
+    fn response_reasoning_summary_text_delta_emits_thinking() {
+        let event =
+            first_event(r#"{"type":"response.reasoning_summary_text.delta","delta":"summary"}"#)
+                .unwrap();
+        assert!(matches!(event, ModelStreamEvent::ThinkingDelta { text } if text == "summary"));
+    }
+
+    #[test]
+    fn response_output_item_added_emits_tool_progress() {
+        let event = first_event(r#"{"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}"#).unwrap();
+        assert!(matches!(
+            event,
+            ModelStreamEvent::ToolCallProgress { id, tool_name, arguments_chars }
+                if id.as_deref() == Some("call_1") && tool_name == "read_file" && arguments_chars > 0
+        ));
+    }
+
+    #[test]
+    fn response_output_item_done_emits_tool_call() {
+        let event = first_event(r#"{"type":"response.output_item.done","item":{"type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"Cargo.toml\"}"}}"#).unwrap();
+        assert!(matches!(
+            event,
+            ModelStreamEvent::ToolCall(inv) if inv.id == "call_1" && inv.tool_name == "read_file"
+        ));
+    }
+
+    #[test]
+    fn response_function_call_arguments_delta_emits_progress() {
+        let event = first_event(r#"{"type":"response.function_call_arguments.delta","item_id":"call_1","name":"read_file","delta":"abc"}"#).unwrap();
+        assert!(matches!(
+            event,
+            ModelStreamEvent::ToolCallProgress { id, tool_name, arguments_chars }
+                if id.as_deref() == Some("call_1") && tool_name == "read_file" && arguments_chars == 3
+        ));
+    }
+
+    #[test]
+    fn response_function_call_arguments_delta_with_empty_name_and_delta_is_ignored() {
+        let events = parse_openai_responses_sse(
+            r#"{"type":"response.function_call_arguments.delta","item_id":"call_1","name":"","delta":""}"#,
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn response_completed_emits_done_and_usage() {
+        let events = parse_openai_responses_sse(
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5}}}"#,
+        );
+        let last = events.last().unwrap().as_ref().unwrap();
+        assert!(matches!(last, ModelStreamEvent::Done));
+    }
+
+    #[test]
+    fn response_incomplete_emits_done() {
+        let events = parse_openai_responses_sse(
+            r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_tokens"}}}"#,
+        );
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            ModelStreamEvent::Done
+        ));
+    }
+
+    #[test]
+    fn response_failed_returns_error() {
+        let events =
+            parse_openai_responses_sse(r#"{"type":"response.failed","error":{"message":"boom"}}"#);
+        assert!(events[0].is_err());
+    }
+
+    #[test]
+    fn unknown_response_type_is_ignored() {
+        let events = parse_openai_responses_sse(r#"{"type":"response.unknown","delta":"x"}"#);
+        assert!(events.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tool_helpers_tests {
+    use super::*;
+
+    #[test]
+    fn peek_text_tool_name_handles_variants() {
+        assert_eq!(
+            peek_text_tool_name("read_file<tool_sep>"),
+            Some("read_file".into())
+        );
+        assert_eq!(
+            peek_text_tool_name(r#"{"name":"write_file","args":{}}"#),
+            Some("write_file".into())
+        );
+        assert_eq!(
+            peek_text_tool_name("read_file<tool_sep:opensource>"),
+            Some("read_file".into())
+        );
+        assert_eq!(peek_text_tool_name("valid_name"), Some("valid_name".into()));
+        assert_eq!(peek_text_tool_name("true"), None);
+        assert_eq!(peek_text_tool_name("null"), None);
+        assert_eq!(peek_text_tool_name("  "), None);
+    }
+
+    #[test]
+    fn parse_tool_call_values_handles_array_and_invalid() {
+        let values = parse_tool_call_values(r#"[{"name":"a"},{"name":"b"}]"#);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[1]["name"], "b");
+
+        let values = parse_tool_call_values(r#"{"name":"a"}{"name":"b"}garbage"#);
+        assert_eq!(values.len(), 2);
+
+        assert!(parse_tool_call_values("").is_empty());
+    }
+
+    #[test]
+    fn parse_hy_arg_value_coerces_types() {
+        assert_eq!(parse_hy_arg_value("1"), serde_json::json!(1));
+        assert_eq!(parse_hy_arg_value("1.5"), serde_json::json!(1.5));
+        assert_eq!(parse_hy_arg_value("true"), serde_json::json!(true));
+        assert_eq!(parse_hy_arg_value("null"), serde_json::json!(null));
+        assert_eq!(
+            parse_hy_arg_value(r#""quoted""#),
+            serde_json::json!("quoted")
+        );
+        assert_eq!(parse_hy_arg_value("plain"), serde_json::json!("plain"));
+        assert_eq!(parse_hy_arg_value(""), serde_json::json!(""));
+    }
+
+    #[test]
+    fn parse_hy_v3_tool_call_handles_name_only_and_arguments() {
+        assert_eq!(
+            parse_hy_v3_tool_call("read_file<tool_sep>").unwrap(),
+            serde_json::json!({"name": "read_file", "arguments": {}})
+        );
+        assert_eq!(
+            parse_hy_v3_tool_call(
+                "read_file<tool_sep><arg_key>path</arg_key><arg_value>/tmp</arg_value>"
+            )
+            .unwrap(),
+            serde_json::json!({"name": "read_file", "arguments": {"path": "/tmp"}})
+        );
+        assert!(parse_hy_v3_tool_call("plain-json-not-hy").is_none());
+        assert!(parse_hy_v3_tool_call("").is_none());
+    }
+
+    #[test]
+    fn find_generic_bracket_tool_call_prefix_detects_bracketed_tags() {
+        assert!(
+            find_generic_bracket_tool_call_prefix("]x>[<tool_call>read_file</tool_call>]")
+                .is_some()
+        );
+        assert!(
+            find_generic_bracket_tool_call_prefix(
+                "]x>[<tool_call:opensource>read_file</tool_call>]"
+            )
+            .is_some()
+        );
+        assert!(
+            find_generic_bracket_tool_call_prefix("<tool_call>read_file</tool_call>").is_none()
+        );
+    }
+
+    #[test]
+    fn partial_generic_bracket_suffix_len_returns_partial_lengths() {
+        assert_eq!(partial_generic_bracket_suffix_len(">[<tool_c"), 9);
+        assert_eq!(partial_generic_bracket_suffix_len(">[<tool_c"), 9);
+        assert_eq!(partial_generic_bracket_suffix_len("x"), 0);
+        assert_eq!(partial_generic_bracket_suffix_len(""), 0);
+    }
+
+    #[test]
+    fn partial_tag_suffix_len_and_is_partial_tag_prefix() {
+        assert_eq!(partial_tag_suffix_len("</thin", "</think>"), 6);
+        assert_eq!(partial_tag_suffix_len("", "</think>"), 0);
+        assert!(is_partial_tag_prefix("</thin", "</think>"));
+        assert!(!is_partial_tag_prefix("xyz", "</think>"));
+    }
+
+    #[test]
+    fn think_tag_splitter_drains_partial_tag() {
+        let mut splitter = ThinkTagSplitter::default();
+        let events = splitter.push("<think>text</think");
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Ok(ModelStreamEvent::ThinkingDelta { text }) if text == "text")
+        );
+        // Pending "</think" is a partial close tag prefix while in_think=true, so drain is empty.
+        let events = splitter.drain_pending();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn model_supports_extended_cache_and_retention_gate() {
+        assert!(model_supports_extended_cache("gpt-5-foo"));
+        assert!(model_supports_extended_cache("gpt-4.1"));
+        assert!(model_supports_extended_cache("o4-mini"));
+        assert!(model_supports_extended_cache("o3"));
+        assert!(!model_supports_extended_cache("gpt-4o"));
+
+        assert!(should_send_prompt_cache_retention("gpt-4o", "1h"));
+        assert!(should_send_prompt_cache_retention("gpt-5", "24h"));
+        assert!(!should_send_prompt_cache_retention("gpt-4o", "24h"));
+    }
+
+    #[test]
+    fn requires_initial_session_title_detects_tool_availability() {
+        use navi_core::{ModelMessage, ThinkingConfig, ToolDefinition};
+        let mut set_title = ToolDefinition::default();
+        set_title.name = "set_session_title".into();
+        set_title.description = "set title".into();
+        let mut request = ModelRequest {
+            model: "gpt-5".into(),
+            instructions: None,
+            messages: vec![ModelMessage::user("hi")],
+            thinking: ThinkingConfig::Off,
+            tools: vec![set_title],
+            session_id: None,
+        };
+        assert!(requires_initial_session_title(&request));
+        request.messages.push(ModelMessage {
+            role: navi_core::ModelRole::Tool,
+            content: "ok".into(),
+            tool_name: Some("set_session_title".into()),
+            tool_call_id: Some("call_1".into()),
+            content_parts: vec![],
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        });
+        assert!(!requires_initial_session_title(&request));
+    }
+}
