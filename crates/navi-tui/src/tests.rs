@@ -43,7 +43,7 @@ use navi_sdk::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Rect};
+use ratatui::layout::Rect;
 use ratatui::prelude::Line;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,7 +82,6 @@ pub(crate) fn test_app(input: &str) -> TuiApp {
         engine,
     )
     .expect("test app");
-    let _ = app.credential_store().delete_api_key("commandcode");
     // UI unit tests assume a configured provider (matches Harness default).
     app.provider_configured = true;
     app.input = input.to_string();
@@ -1913,117 +1912,6 @@ fn ctrl_o_on_provider_header_resolves_xai_for_oauth() {
         app.is_loading || app.notification().is_some(),
         "Ctrl+O on xAI should start OAuth or show a status notification"
     );
-}
-
-#[test]
-fn oauth_started_opens_modal_without_chat_message() {
-    let mut app = test_app("");
-
-    handle_async_event(
-        &mut app,
-        AsyncEvent::OAuthDeviceStarted {
-            provider_id: "commandcode".to_string(),
-            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
-            user_code: String::new(),
-            paste_slot: None,
-        },
-    );
-
-    assert_eq!(app.mode, Mode::OAuth);
-    assert!(app.oauth_state.is_some());
-    assert!(app.messages.is_empty());
-}
-
-#[test]
-fn oauth_modal_copy_shortcut_copies_link() {
-    let mut app = test_app("");
-    handle_async_event(
-        &mut app,
-        AsyncEvent::OAuthDeviceStarted {
-            provider_id: "commandcode".to_string(),
-            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
-            user_code: String::new(),
-            paste_slot: None,
-        },
-    );
-
-    handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::NONE);
-
-    assert_eq!(app.mode, Mode::OAuth);
-    assert!(
-        app.notification()
-            .is_some_and(|notification| notification.title == "Clipboard")
-    );
-}
-
-#[test]
-fn oauth_modal_registers_clickable_link_hit_region() {
-    let mut app = test_app("");
-    handle_async_event(
-        &mut app,
-        AsyncEvent::OAuthDeviceStarted {
-            provider_id: "commandcode".to_string(),
-            verification_uri: "https://commandcode.ai/studio/auth/cli?state=test".to_string(),
-            user_code: String::new(),
-            paste_slot: None,
-        },
-    );
-    let backend = TestBackend::new(80, 24);
-    let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal
-        .draw(|frame| crate::view::render(frame, &mut app))
-        .expect("draw");
-
-    let hit = app
-        .hit_test(4, 10)
-        .or_else(|| app.hit_test(6, 10))
-        .or_else(|| app.hit_test(8, 10));
-    assert!(matches!(
-        hit.map(|hit| hit.action),
-        Some(HitAction::OAuthOpen)
-    ));
-}
-
-#[test]
-fn oauth_completion_clears_modal_text_from_next_frame() {
-    let mut app = test_app("");
-    let mut terminal = Terminal::new(TestBackend::new(96, 24)).expect("terminal");
-    handle_async_event(
-        &mut app,
-        AsyncEvent::OAuthDeviceStarted {
-            provider_id: "commandcode".to_string(),
-            verification_uri: "https://example.test/stale-oauth-marker".to_string(),
-            user_code: String::new(),
-            paste_slot: None,
-        },
-    );
-    terminal
-        .draw(|frame| crate::view::render(frame, &mut app))
-        .expect("draw oauth");
-    let oauth_frame = terminal_buffer_text(&terminal);
-    assert!(oauth_frame.contains("OAuth Login"));
-    assert!(oauth_frame.contains("stale-oauth-marker"));
-
-    handle_async_event(
-        &mut app,
-        AsyncEvent::OAuthCompleted {
-            provider_id: "commandcode".to_string(),
-            result: Ok(()),
-        },
-    );
-    let notification = app.notification().expect("oauth notification");
-    assert_eq!(notification.title, "OAuth");
-    assert!(notification.message.contains("credentials saved"));
-    assert!(notification.message.contains("provider plan"));
-    app.clear_notification();
-    terminal
-        .draw(|frame| crate::view::render(frame, &mut app))
-        .expect("draw normal");
-
-    let normal_frame = terminal_buffer_text(&terminal);
-    assert_eq!(app.mode, Mode::Normal);
-    assert!(!normal_frame.contains("OAuth Login"));
-    assert!(!normal_frame.contains("stale-oauth-marker"));
 }
 
 #[test]

@@ -8,6 +8,7 @@
     │ Model:    gpt-5.5 via OpenAI                                         │
     │ API key:  Mock                                                       │
     │ State:    idle                                                       │
+    │ Terminal: Kitty progressive enhancement · free-motion off            │
     │                                                                      │
     │ Recent diagnostics                                                   │
     │ none                                                                 │
@@ -17,8 +18,7 @@
     │                                                                      │
     │                                                                      │
     │                                                                      │
-    │                                                                      │
   ╭─╰──────────────────────────────────────────────────────────────────────╯─╮
   │ ›                                                                        │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                    gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                         gpt-5.5 (max) · 0 / 200k · restricted

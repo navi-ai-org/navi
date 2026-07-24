@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn short_model_label_strips_org_path() {
         assert_eq!(
-            short_model_label("commandcode", "xiaomi/mimo-v2.5-pro"),
+            short_model_label("test-provider", "xiaomi/mimo-v2.5-pro"),
             "mimo-v2.5-pro"
         );
         assert_eq!(short_model_label("openai", "gpt-5.5"), "gpt-5.5");
@@ -311,7 +311,7 @@ mod tests {
 
         let model = format_setting_line("Model", "mimo-v2.5-pro", SettingValueKind::Link, 16);
         assert!(model.contains("mimo-v2.5-pro"), "{model}");
-        assert!(!model.contains("commandcode"), "{model}");
+        assert!(!model.contains("test-provider"), "{model}");
         assert!(!model.contains("Routing"), "{model}");
     }
 }

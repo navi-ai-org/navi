@@ -27,12 +27,23 @@
       "url": "https://platform.openai.com/docs/models",
       "verified_at": "2026-07-14",
       "note": "verified output token limit from official documentation"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/openai/gpt-5.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/openai/gpt-5.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   },
   "reasoning_levels": [
+    "off",
     "low",
     "medium",
     "high"
   ],
-  "default_reasoning_effort": "medium"
+  "default_reasoning_effort": "off"
 }

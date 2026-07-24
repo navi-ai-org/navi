@@ -392,7 +392,7 @@ pub(crate) fn start_provider_oauth(app: &mut TuiApp, provider: &ProviderConfig) 
             app,
             "OAuth",
             format!(
-                "{} uses API key setup (OAuth: openai, xai, commandcode, github-copilot).",
+                "{} uses API key setup (OAuth: openai, xai, github-copilot).",
                 provider.label
             ),
         );

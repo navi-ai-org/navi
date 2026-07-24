@@ -5,7 +5,7 @@
   "context_window_tokens": 256000,
   "max_output_tokens": 16384,
   "recommended_temperature": 1.0,
-  "supports_thinking": false,
+  "supports_thinking": true,
   "attachments": {
     "images": true,
     "documents": true,
@@ -22,6 +22,16 @@
       "url": "https://docs.x.ai/api/models",
       "verified_at": "2026-07-14",
       "note": "from official docs"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/x-ai/grok-build-0.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/x-ai/grok-build-0.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   }
 }

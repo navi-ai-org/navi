@@ -52,7 +52,7 @@ fn open_url_blocking(url: &str) -> std::io::Result<()> {
 mod tests {
     #[test]
     fn open_url_blocking_accepts_non_empty_input_type() {
-        let url = "https://commandcode.ai/studio/auth/cli";
+        let url = "https://example.test/oauth";
         assert!(!url.is_empty());
     }
 }

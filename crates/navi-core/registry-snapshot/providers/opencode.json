@@ -22,6 +22,7 @@
       "pricing": {
         "input_per_1m": 10.0,
         "output_per_1m": 50.0,
+        "cached_input_per_1m": 1.0,
         "currency": "USD"
       }
     },
@@ -33,6 +34,7 @@
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 25.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
@@ -44,6 +46,7 @@
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 25.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
@@ -52,6 +55,7 @@
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 25.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
@@ -60,14 +64,17 @@
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 25.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
     {
       "ref": "claude-opus-4-1",
+      "status": "deprecated",
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 25.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
@@ -76,6 +83,7 @@
       "pricing": {
         "input_per_1m": 2.0,
         "output_per_1m": 10.0,
+        "cached_input_per_1m": 0.2,
         "currency": "USD"
       }
     },
@@ -87,6 +95,7 @@
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.3,
         "currency": "USD"
       }
     },
@@ -95,15 +104,18 @@
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.3,
         "currency": "USD"
       }
     },
     {
       "ref": "claude-sonnet-4",
+      "status": "deprecated",
       "max_output_tokens": 16384,
       "pricing": {
         "input_per_1m": 3.0,
         "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.3,
         "currency": "USD"
       }
     },
@@ -112,6 +124,40 @@
       "pricing": {
         "input_per_1m": 1.0,
         "output_per_1m": 5.0,
+        "cached_input_per_1m": 0.1,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "gpt-5.6-sol",
+      "context_window_tokens": 272000,
+      "max_output_tokens": 16384,
+      "pricing": {
+        "input_per_1m": 5.0,
+        "output_per_1m": 30.0,
+        "cached_input_per_1m": 0.5,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "gpt-5.6-terra",
+      "context_window_tokens": 272000,
+      "max_output_tokens": 16384,
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.25,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "gpt-5.6-luna",
+      "context_window_tokens": 272000,
+      "max_output_tokens": 16384,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 6.0,
+        "cached_input_per_1m": 0.1,
         "currency": "USD"
       }
     },
@@ -122,6 +168,7 @@
       "pricing": {
         "input_per_1m": 5.0,
         "output_per_1m": 30.0,
+        "cached_input_per_1m": 0.5,
         "currency": "USD"
       }
     },
@@ -130,6 +177,7 @@
       "pricing": {
         "input_per_1m": 30.0,
         "output_per_1m": 180.0,
+        "cached_input_per_1m": 30.0,
         "currency": "USD"
       }
     },
@@ -140,6 +188,7 @@
       "pricing": {
         "input_per_1m": 2.5,
         "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.25,
         "currency": "USD"
       }
     },
@@ -148,6 +197,7 @@
       "pricing": {
         "input_per_1m": 30.0,
         "output_per_1m": 180.0,
+        "cached_input_per_1m": 30.0,
         "currency": "USD"
       }
     },
@@ -158,6 +208,7 @@
       "pricing": {
         "input_per_1m": 0.75,
         "output_per_1m": 4.5,
+        "cached_input_per_1m": 0.075,
         "currency": "USD"
       }
     },
@@ -169,6 +220,7 @@
       "pricing": {
         "input_per_1m": 0.2,
         "output_per_1m": 1.25,
+        "cached_input_per_1m": 0.02,
         "currency": "USD"
       }
     },
@@ -177,6 +229,7 @@
       "pricing": {
         "input_per_1m": 1.75,
         "output_per_1m": 14.0,
+        "cached_input_per_1m": 0.175,
         "currency": "USD"
       }
     },
@@ -186,6 +239,7 @@
       "pricing": {
         "input_per_1m": 1.75,
         "output_per_1m": 14.0,
+        "cached_input_per_1m": 0.175,
         "currency": "USD"
       }
     },
@@ -195,14 +249,17 @@
       "pricing": {
         "input_per_1m": 1.75,
         "output_per_1m": 14.0,
+        "cached_input_per_1m": 0.175,
         "currency": "USD"
       }
     },
     {
       "ref": "gpt-5.2-codex",
+      "status": "deprecated",
       "pricing": {
         "input_per_1m": 1.75,
         "output_per_1m": 14.0,
+        "cached_input_per_1m": 0.175,
         "currency": "USD"
       }
     },
@@ -212,19 +269,23 @@
       "pricing": {
         "input_per_1m": 1.07,
         "output_per_1m": 8.5,
+        "cached_input_per_1m": 0.107,
         "currency": "USD"
       }
     },
     {
       "ref": "gpt-5.1-codex-max",
+      "status": "deprecated",
       "pricing": {
         "input_per_1m": 1.25,
         "output_per_1m": 10.0,
+        "cached_input_per_1m": 0.125,
         "currency": "USD"
       }
     },
     {
       "ref": "gpt-5.1-codex",
+      "status": "deprecated",
       "max_output_tokens": 16384,
       "attachments": {
         "images": true,
@@ -233,15 +294,18 @@
       "pricing": {
         "input_per_1m": 1.07,
         "output_per_1m": 8.5,
+        "cached_input_per_1m": 0.107,
         "currency": "USD"
       }
     },
     {
       "ref": "gpt-5.1-codex-mini",
+      "status": "deprecated",
       "max_output_tokens": 16384,
       "pricing": {
         "input_per_1m": 0.25,
         "output_per_1m": 2.0,
+        "cached_input_per_1m": 0.025,
         "currency": "USD"
       }
     },
@@ -251,14 +315,17 @@
       "pricing": {
         "input_per_1m": 1.07,
         "output_per_1m": 8.5,
+        "cached_input_per_1m": 0.107,
         "currency": "USD"
       }
     },
     {
       "ref": "gpt-5-codex",
+      "status": "deprecated",
       "pricing": {
         "input_per_1m": 1.07,
         "output_per_1m": 8.5,
+        "cached_input_per_1m": 0.107,
         "currency": "USD"
       }
     },
@@ -269,49 +336,17 @@
       "pricing": {
         "input_per_1m": 0.05,
         "output_per_1m": 0.4,
+        "cached_input_per_1m": 0.005,
         "currency": "USD"
       }
     },
     {
-      "ref": "gpt-oss-120b",
-      "max_output_tokens": 16384,
-      "supports_thinking": true,
-      "pricing": {
-        "input_per_1m": 0.178,
-        "output_per_1m": 0.68,
-        "cached_input_per_1m": 0.089,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "gemma-4-26b-a4b",
-      "pricing": {
-        "input_per_1m": 0.116,
-        "output_per_1m": 0.408,
-        "cached_input_per_1m": 0.058,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "llama-3.3-70b-instruct",
-      "context_window_tokens": 128000,
-      "max_output_tokens": 16384,
+      "ref": "gemini-3.6-flash",
       "recommended_temperature": 1.0,
-      "supports_thinking": true,
       "pricing": {
-        "input_per_1m": 0.6066,
-        "output_per_1m": 1.0386,
-        "cached_input_per_1m": 0.3033,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "llama-4-maverick-17b-128e-instruct-fp8",
-      "max_output_tokens": 16384,
-      "pricing": {
-        "input_per_1m": 0.274,
-        "output_per_1m": 0.894,
-        "cached_input_per_1m": 0.137,
+        "input_per_1m": 1.5,
+        "output_per_1m": 7.5,
+        "cached_input_per_1m": 0.15,
         "currency": "USD"
       }
     },
@@ -321,6 +356,17 @@
       "pricing": {
         "input_per_1m": 1.5,
         "output_per_1m": 9.0,
+        "cached_input_per_1m": 0.15,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "gemini-3.5-flash-lite",
+      "recommended_temperature": 1.0,
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 2.5,
+        "cached_input_per_1m": 0.03,
         "currency": "USD"
       }
     },
@@ -329,6 +375,7 @@
       "pricing": {
         "input_per_1m": 2.0,
         "output_per_1m": 12.0,
+        "cached_input_per_1m": 0.2,
         "currency": "USD"
       }
     },
@@ -337,61 +384,26 @@
       "pricing": {
         "input_per_1m": 0.5,
         "output_per_1m": 3.0,
+        "cached_input_per_1m": 0.05,
         "currency": "USD"
       }
     },
     {
-      "ref": "qwen3.7-max",
-      "max_output_tokens": 16384,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "pricing": {
-        "input_per_1m": 2.5,
-        "output_per_1m": 7.5,
-        "cached_input_per_1m": 3.125,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "qwen3.7-plus",
-      "max_output_tokens": 16384,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "pricing": {
-        "input_per_1m": 1.2,
-        "output_per_1m": 4.8,
-        "cached_input_per_1m": 1.5,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "qwen3.6-flash",
-      "max_output_tokens": 16384,
-      "attachments": {
-        "images": true,
-        "documents": true,
-        "video": true
-      },
-      "pricing": {
-        "input_per_1m": 1.0,
-        "output_per_1m": 4.0,
-        "cached_input_per_1m": 1.25,
-        "cached_output_per_1m": 0.1,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "qwen3.6-max",
-      "max_output_tokens": 16384,
+      "ref": "grok-4.5",
       "pricing": {
         "input_per_1m": 2.0,
-        "output_per_1m": 12.0,
-        "cached_input_per_1m": 2.5,
-        "cached_output_per_1m": 0.2,
+        "output_per_1m": 6.0,
+        "cached_input_per_1m": 0.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "grok-build-0.1",
+      "max_output_tokens": 8192,
+      "pricing": {
+        "input_per_1m": 1.0,
+        "output_per_1m": 2.0,
+        "cached_input_per_1m": 0.2,
         "currency": "USD"
       }
     },
@@ -404,10 +416,9 @@
         "video": true
       },
       "pricing": {
-        "input_per_1m": 2.0,
-        "output_per_1m": 6.0,
-        "cached_input_per_1m": 2.5,
-        "cached_output_per_1m": 0.2,
+        "input_per_1m": 0.5,
+        "output_per_1m": 3.0,
+        "cached_input_per_1m": 0.05,
         "currency": "USD"
       }
     },
@@ -416,27 +427,7 @@
       "pricing": {
         "input_per_1m": 0.2,
         "output_per_1m": 1.2,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "qwen3-coder-480b-a35b-instruct-int4-mixed-ar",
-      "max_output_tokens": 16384,
-      "pricing": {
-        "input_per_1m": 0.601,
-        "output_per_1m": 2.085,
-        "cached_input_per_1m": 0.3005,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "qwen3-next-80b-a3b-instruct",
-      "context_window_tokens": 262000,
-      "max_output_tokens": 16384,
-      "pricing": {
-        "input_per_1m": 0.1175,
-        "output_per_1m": 1.136,
-        "cached_input_per_1m": 0.0587,
+        "cached_input_per_1m": 0.02,
         "currency": "USD"
       }
     },
@@ -446,7 +437,7 @@
       "pricing": {
         "input_per_1m": 1.74,
         "output_per_1m": 3.48,
-        "cached_input_per_1m": 0.15,
+        "cached_input_per_1m": 0.145,
         "currency": "USD"
       }
     },
@@ -456,7 +447,7 @@
       "pricing": {
         "input_per_1m": 0.14,
         "output_per_1m": 0.28,
-        "cached_input_per_1m": 0.03,
+        "cached_input_per_1m": 0.028,
         "currency": "USD"
       }
     },
@@ -491,15 +482,16 @@
     },
     {
       "ref": "kimi-k2.5",
+      "status": "deprecated",
       "max_output_tokens": 16384,
       "attachments": {
         "images": true,
         "documents": true
       },
       "pricing": {
-        "input_per_1m": 0.51,
-        "output_per_1m": 2.67,
-        "cached_input_per_1m": 0.255,
+        "input_per_1m": 0.6,
+        "output_per_1m": 3.0,
+        "cached_input_per_1m": 0.1,
         "currency": "USD"
       }
     },
@@ -522,20 +514,21 @@
       "context_window_tokens": 202000,
       "max_output_tokens": 16384,
       "pricing": {
-        "input_per_1m": 1.3,
-        "output_per_1m": 4.3,
-        "cached_output_per_1m": 0.26,
+        "input_per_1m": 1.4,
+        "output_per_1m": 4.4,
+        "cached_input_per_1m": 0.26,
         "currency": "USD"
       }
     },
     {
       "ref": "glm-5",
+      "status": "deprecated",
       "context_window_tokens": 202000,
       "max_output_tokens": 16384,
       "pricing": {
-        "input_per_1m": 0.91,
-        "output_per_1m": 2.836,
-        "cached_input_per_1m": 0.455,
+        "input_per_1m": 1.0,
+        "output_per_1m": 3.2,
+        "cached_input_per_1m": 0.2,
         "currency": "USD"
       }
     },
@@ -552,6 +545,7 @@
       "pricing": {
         "input_per_1m": 0.3,
         "output_per_1m": 1.2,
+        "cached_input_per_1m": 0.06,
         "currency": "USD"
       }
     },
@@ -561,25 +555,17 @@
       "pricing": {
         "input_per_1m": 0.3,
         "output_per_1m": 1.2,
-        "cached_input_per_1m": 0.375,
-        "cached_output_per_1m": 0.06,
+        "cached_input_per_1m": 0.06,
         "currency": "USD"
       }
     },
     {
       "ref": "minimax-m2.5",
+      "status": "deprecated",
       "pricing": {
         "input_per_1m": 0.3,
         "output_per_1m": 1.2,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "grok-build-0.1",
-      "max_output_tokens": 8192,
-      "pricing": {
-        "input_per_1m": 1.0,
-        "output_per_1m": 2.0,
+        "cached_input_per_1m": 0.06,
         "currency": "USD"
       }
     },
@@ -608,15 +594,7 @@
       }
     },
     {
-      "ref": "hy3-free",
-      "pricing": {
-        "input_per_1m": 0.0,
-        "output_per_1m": 0.0,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "nemotron-3-ultra-free",
+      "ref": "laguna-s-2.1-free",
       "pricing": {
         "input_per_1m": 0.0,
         "output_per_1m": 0.0,
@@ -625,6 +603,14 @@
     },
     {
       "ref": "north-mini-code-free",
+      "pricing": {
+        "input_per_1m": 0.0,
+        "output_per_1m": 0.0,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "nemotron-3-ultra-free",
       "pricing": {
         "input_per_1m": 0.0,
         "output_per_1m": 0.0,

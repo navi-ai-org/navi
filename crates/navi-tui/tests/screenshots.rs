@@ -127,6 +127,7 @@ fn sessions_picker_open_via_palette() {
     h.type_text("sessions");
     h.press(KeyCode::Enter, KeyModifiers::NONE);
     assert_eq!(h.mode(), Mode::Sessions);
+    h.clear_sessions();
     h.render();
     h.assert_screen("modal_sessions_80x24");
 }

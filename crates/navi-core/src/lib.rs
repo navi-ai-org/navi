@@ -81,8 +81,8 @@ pub use config::{
 };
 pub use context::{ContextPacket, ContextSource};
 pub use credentials::{
-    CommandCodeCredentialMetadata, CredentialAccountInfo, CredentialSource, CredentialStatus,
-    CredentialStore, XAI_GROK_CLI_OAUTH_KIND, is_model_usable_oauth_kind, resolve_provider_api_key,
+    CredentialAccountInfo, CredentialSource, CredentialStatus, CredentialStore,
+    XAI_GROK_CLI_OAUTH_KIND, is_model_usable_oauth_kind, resolve_provider_api_key,
     resolve_provider_api_key_for_project, resolve_provider_credential_status,
 };
 pub use dataset::{

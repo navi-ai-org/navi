@@ -4,12 +4,22 @@
   "family": "nemotron",
   "context_window_tokens": 1000000,
   "max_output_tokens": 16384,
-  "supports_thinking": false,
+  "supports_thinking": true,
   "sources": {
     "context_window_tokens": {
       "url": "https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b",
       "verified_at": "2026-07-14",
       "note": "from official NVIDIA Build docs"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/nvidia/nemotron-3-ultra-550b-a55b",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   },
   "aliases": [
@@ -20,5 +30,11 @@
     "audio": false,
     "video": false,
     "documents": false
-  }
+  },
+  "reasoning_levels": [
+    "off",
+    "medium",
+    "high"
+  ],
+  "default_reasoning_effort": "high"
 }

@@ -1048,6 +1048,7 @@ fn next_boundary(value: &str, index: usize) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThinkingLevel {
     Max,
+    XHigh,
     High,
     Medium,
     Low,
@@ -1058,6 +1059,7 @@ impl From<ThinkingLevel> for ThinkingConfig {
     fn from(value: ThinkingLevel) -> Self {
         match value {
             ThinkingLevel::Max => Self::Max,
+            ThinkingLevel::XHigh => Self::XHigh,
             ThinkingLevel::High => Self::High,
             ThinkingLevel::Medium => Self::Medium,
             ThinkingLevel::Low => Self::Low,
@@ -1070,6 +1072,7 @@ impl From<ThinkingConfig> for ThinkingLevel {
     fn from(value: ThinkingConfig) -> Self {
         match value {
             ThinkingConfig::Max => Self::Max,
+            ThinkingConfig::XHigh => Self::XHigh,
             ThinkingConfig::High => Self::High,
             ThinkingConfig::Medium => Self::Medium,
             ThinkingConfig::Low => Self::Low,
@@ -1082,6 +1085,7 @@ impl ThinkingLevel {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Max => "max",
+            Self::XHigh => "xhigh",
             Self::High => "high",
             Self::Medium => "medium",
             Self::Low => "low",
@@ -1112,10 +1116,11 @@ impl ThinkingLevel {
     pub(crate) fn index(self) -> usize {
         match self {
             Self::Max => 0,
-            Self::High => 1,
-            Self::Medium => 2,
-            Self::Low => 3,
-            Self::Off => 4,
+            Self::XHigh => 1,
+            Self::High => 2,
+            Self::Medium => 3,
+            Self::Low => 4,
+            Self::Off => 5,
         }
     }
 

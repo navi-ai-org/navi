@@ -11,7 +11,6 @@ const OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 const GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
 const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
-const COMMANDCODE_BASE_URL: &str = "https://api.commandcode.ai";
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const OPENROUTER_REFERER: &str = "https://github.com/enrell/navi";
@@ -19,7 +18,6 @@ const OPENROUTER_TITLE: &str = "Navi";
 const COPILOT_USER_AGENT: &str = "navi/0.1.0";
 const COPILOT_INTENT: &str = "conversation-edits";
 const COPILOT_INITIATOR: &str = "user";
-const COMMANDCODE_CLI_VERSION: &str = "0.38.2";
 
 /// Endpoint category — used to select auth headers per provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -420,30 +418,37 @@ impl ProviderBehavior for OpencodeGoBehavior {
 
 pub(crate) struct CommandCodeBehavior;
 
+const COMMANDCODE_BASE_URL: &str = "https://api.commandcode.ai/provider/v1";
+
 impl ProviderBehavior for CommandCodeBehavior {
     fn default_base_url(&self) -> Option<&str> {
         Some(COMMANDCODE_BASE_URL)
     }
 
-    fn stream_route(&self, _model: &str, _configured_kind: OpenAiApiKind) -> StreamRoute {
-        StreamRoute::CommandCodeAlphaGenerate
+    fn stream_route(&self, model: &str, _configured_kind: OpenAiApiKind) -> StreamRoute {
+        // Command Code's Provider API exposes an OpenAI-compatible /chat/completions
+        // endpoint and an Anthropic-compatible /messages endpoint. Claude-family
+        // models must use /messages; everything else uses /chat/completions.
+        if model.to_ascii_lowercase().starts_with("claude-") {
+            StreamRoute::AnthropicMessages
+        } else {
+            StreamRoute::ChatCompletions
+        }
     }
 
-    fn build_headers(
-        &self,
-        api_key: &str,
-        _endpoint: Endpoint,
-    ) -> Result<HeaderMap, ProviderError> {
-        let mut headers = standard_bearer_headers(api_key, true)?;
-        headers.insert(
-            USER_AGENT,
-            HeaderValue::from_static("command-code/0.38.2 navi"),
+    fn build_headers(&self, api_key: &str, endpoint: Endpoint) -> Result<HeaderMap, ProviderError> {
+        let content_type = matches!(
+            endpoint,
+            Endpoint::ChatCompletions | Endpoint::AnthropicMessages
         );
-        headers.insert(
-            "x-command-code-version",
-            HeaderValue::from_static(COMMANDCODE_CLI_VERSION),
-        );
-        Ok(headers)
+        standard_bearer_headers(api_key, content_type)
+    }
+
+    fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
+        matches!(
+            endpoint,
+            Endpoint::ChatCompletions | Endpoint::AnthropicMessages
+        )
     }
 }
 
@@ -962,20 +967,20 @@ mod tests {
     }
 
     #[test]
-    fn commandcode_routes_all_models_to_alpha_generate() {
+    fn commandcode_routes_claude_to_messages_and_openai_models_to_chat_completions() {
         let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::COMMANDCODE));
 
         assert!(matches!(
             behavior.stream_route("claude-sonnet-4-6", OpenAiApiKind::ChatCompletions),
-            StreamRoute::CommandCodeAlphaGenerate
+            StreamRoute::AnthropicMessages
         ));
         assert!(matches!(
             behavior.stream_route("xiaomi/mimo-v2.5-pro", OpenAiApiKind::ChatCompletions),
-            StreamRoute::CommandCodeAlphaGenerate
+            StreamRoute::ChatCompletions
         ));
         assert!(matches!(
             behavior.stream_route("deepseek/deepseek-v4-flash", OpenAiApiKind::ChatCompletions),
-            StreamRoute::CommandCodeAlphaGenerate
+            StreamRoute::ChatCompletions
         ));
     }
 

@@ -16,9 +16,9 @@
     │                                                                      │
     │                                                                      │
     ╰──────────────────────────────────────────────────────────────────────╯
-    ◆ Waiting for approval: tool · 0s
+    ◆ Waiting for approval: tool · 0s (esc to interrupt)
 
   ╭──────────────────────────────────────────────────────────────────────────╮
-  │ ›                                                                        │
+  │ › Type to queue (ctrl+enter) · esc cancels turn                          │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                   gpt-5.5 (adaptive) · 18 / 200k · restricted
+                                        gpt-5.5 (max) · 18 / 200k · restricted

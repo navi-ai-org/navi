@@ -1510,6 +1510,16 @@ mod tests {
     use navi_sdk::{ApprovalRequest, ModelRole, ToolInvocation, ToolResult};
     use std::time::Instant;
 
+    // Process-wide Hypercredit cache is shared with navi-openai — serialize
+    // tests that touch it to avoid flaky races.
+    static HYPERCREDIT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn hypercredit_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        HYPERCREDIT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
     fn sample_invocation(id: &str) -> ToolInvocation {
         ToolInvocation {
             id: id.to_string(),
@@ -1868,6 +1878,7 @@ mod tests {
 
     #[test]
     fn usage_reported_estimates_hypercredits_for_charm_hyper() {
+        let _guard = hypercredit_test_lock();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
         app.loaded_config.config.model.name = "glm-5.2".into();
@@ -1902,6 +1913,7 @@ mod tests {
 
     #[test]
     fn usage_reported_cache_hit_does_not_bill_full_hyper_input() {
+        let _guard = hypercredit_test_lock();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
         app.loaded_config.config.model.name = "glm-5.2".into();
@@ -1931,6 +1943,7 @@ mod tests {
 
     #[test]
     fn usage_loaded_parses_hypercredit_balance_from_report() {
+        let _guard = hypercredit_test_lock();
         let _ = navi_sdk::take_hypercredit_balance();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
@@ -1962,6 +1975,7 @@ mod tests {
 
     #[test]
     fn usage_reported_applies_live_hypercredit_balance_from_stream_cache() {
+        let _guard = hypercredit_test_lock();
         let _ = navi_sdk::take_hypercredit_balance();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
@@ -1997,6 +2011,7 @@ mod tests {
 
     #[test]
     fn usage_reported_stream_zero_does_not_wipe_positive_remaining() {
+        let _guard = hypercredit_test_lock();
         let _ = navi_sdk::take_hypercredit_balance();
         let mut app = test_app("");
         app.loaded_config.config.model.provider = "charm-hyper".into();
@@ -2021,6 +2036,7 @@ mod tests {
 
     #[test]
     fn usage_loaded_hollow_error_does_not_clobber_good_report() {
+        let _guard = hypercredit_test_lock();
         let _ = navi_sdk::take_hypercredit_balance();
         // Seed cache to the same value as the good report so live apply keeps it.
         navi_sdk::set_hypercredit_balance_authoritative(9999.0);

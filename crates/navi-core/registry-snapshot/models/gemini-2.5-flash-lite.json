@@ -12,12 +12,6 @@
     "video": true,
     "documents": true
   },
-  "reasoning_levels": [
-    "low",
-    "medium",
-    "high"
-  ],
-  "default_reasoning_effort": "medium",
   "sources": {
     "context_window_tokens": {
       "url": "https://ai.google.dev/gemini-api/docs/models/gemini",
@@ -28,6 +22,16 @@
       "url": "https://ai.google.dev/gemini-api/docs/models/gemini",
       "verified_at": "2026-07-14",
       "note": "from official Google documentation"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/google/gemini-2.5-flash-lite",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/google/gemini-2.5-flash-lite",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   }
 }

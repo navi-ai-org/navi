@@ -500,7 +500,6 @@ fn list_dir_brief(path: &Path, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
     fn active_mention_query_basic() {

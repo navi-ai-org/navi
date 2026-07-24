@@ -116,7 +116,6 @@ impl Harness {
             engine,
         )
         .expect("test app");
-        let _ = app.credential_store().delete_api_key("commandcode");
         Self::from_app(config, app)
     }
 
@@ -370,6 +369,13 @@ impl Harness {
         self.app.models.clear();
         self.app.authenticated_providers.clear();
         self.app.loaded_config.config.tui.recent_model_ids.clear();
+        self
+    }
+
+    /// Clear saved sessions so session-picker snapshots are independent of
+    /// integration-test state left behind in the shared temp data directory.
+    pub fn clear_sessions(&mut self) -> &mut Self {
+        self.app.saved_sessions.clear();
         self
     }
 

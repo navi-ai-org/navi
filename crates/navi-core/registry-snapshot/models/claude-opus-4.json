@@ -13,13 +13,6 @@
   "aliases": [
     "anthropic/claude-opus-4"
   ],
-  "reasoning_levels": [
-    "low",
-    "medium",
-    "high",
-    "xhigh"
-  ],
-  "default_reasoning_effort": "high",
   "sources": {
     "context_window_tokens": {
       "url": "https://docs.anthropic.com/en/docs/about-claude/models",
@@ -30,6 +23,16 @@
       "url": "https://docs.anthropic.com/en/docs/about-claude/models",
       "verified_at": "2026-07-14",
       "note": "from official docs"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/anthropic/claude-opus-4",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/anthropic/claude-opus-4",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   }
 }

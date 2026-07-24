@@ -23,8 +23,6 @@ struct CredentialsFile {
 struct ProviderCredentials {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     api_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    commandcode: Option<CommandCodeCredentialMetadata>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     accounts: BTreeMap<String, CredentialAccount>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,8 +35,6 @@ struct CredentialAccount {
     api_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    commandcode: Option<CommandCodeCredentialMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authenticated_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,21 +57,11 @@ pub fn is_model_usable_oauth_kind(kind: &str) -> bool {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CommandCodeCredentialMetadata {
-    pub user_id: String,
-    pub user_name: String,
-    pub key_name: String,
-    pub authenticated_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CredentialAccountInfo {
     pub account_id: String,
     pub label: String,
     pub is_default: bool,
     pub is_project_selected: bool,
-    pub commandcode: Option<CommandCodeCredentialMetadata>,
 }
 
 const DEFAULT_ACCOUNT_ID: &str = "default";
@@ -170,16 +156,6 @@ impl ProviderCredentials {
         self.default_account_id()
             .and_then(|account_id| self.accounts.get(&account_id))
             .and_then(|account| account.oauth_expires_at)
-    }
-
-    fn default_commandcode_metadata(&self) -> Option<CommandCodeCredentialMetadata> {
-        self.default_account_id()
-            .and_then(|account_id| {
-                self.accounts
-                    .get(&account_id)
-                    .and_then(|account| account.commandcode.clone())
-            })
-            .or_else(|| self.commandcode.clone())
     }
 }
 
@@ -373,11 +349,7 @@ impl CredentialStore {
                 CredentialAccount {
                     api_key: credentials.api_key.clone(),
                     label: Some("Default".to_string()),
-                    commandcode: credentials.commandcode.clone(),
-                    authenticated_at: credentials
-                        .commandcode
-                        .as_ref()
-                        .map(|metadata| metadata.authenticated_at.clone()),
+                    authenticated_at: None,
                     oauth_api_kind: None,
                     oauth_refresh_token: None,
                     oauth_expires_at: None,
@@ -390,7 +362,6 @@ impl CredentialStore {
                 label: account.label.unwrap_or_else(|| account_id.clone()),
                 is_default: default_account.as_deref() == Some(account_id.as_str()),
                 is_project_selected: selected_account == Some(account_id.as_str()),
-                commandcode: account.commandcode,
                 account_id,
             })
             .collect())
@@ -446,13 +417,11 @@ impl CredentialStore {
             provider_id,
             ProviderCredentials {
                 api_key: api_key.to_string(),
-                commandcode: None,
                 accounts: BTreeMap::from([(
                     DEFAULT_ACCOUNT_ID.to_string(),
                     CredentialAccount {
                         api_key: api_key.to_string(),
                         label: Some("Default".to_string()),
-                        commandcode: None,
                         authenticated_at: None,
                         oauth_api_kind: None,
                         oauth_refresh_token: None,
@@ -523,7 +492,6 @@ impl CredentialStore {
             CredentialAccount {
                 api_key: api_key.to_string(),
                 label: Some(display),
-                commandcode: None,
                 authenticated_at: Some(current_unix_timestamp_string()),
                 oauth_api_kind: None,
                 oauth_refresh_token: None,
@@ -602,13 +570,11 @@ impl CredentialStore {
             provider_id,
             ProviderCredentials {
                 api_key: api_key.to_string(),
-                commandcode: None,
                 accounts: BTreeMap::from([(
                     DEFAULT_ACCOUNT_ID.to_string(),
                     CredentialAccount {
                         api_key: api_key.to_string(),
                         label: Some(label),
-                        commandcode: None,
                         authenticated_at: Some(current_unix_timestamp_string()),
                         oauth_api_kind: Some(oauth_api_kind.to_string()),
                         oauth_refresh_token: refresh_token
@@ -645,53 +611,6 @@ impl CredentialStore {
         file.providers
             .get(&provider_id)
             .and_then(ProviderCredentials::default_oauth_expires_at)
-    }
-
-    /// Stores a Command Code OAuth-created API key and callback metadata.
-    pub fn set_commandcode_credential(
-        &self,
-        provider_id: &str,
-        api_key: &str,
-        metadata: CommandCodeCredentialMetadata,
-    ) -> Result<String> {
-        let provider_id = credential_provider_key(provider_id);
-        ensure_private_parent_dir(&self.path)?;
-
-        let mut file = self.load_file()?;
-        file.ignored_providers.retain(|p| p != &provider_id);
-        let account_id = commandcode_account_id(&metadata);
-        let credentials = file.providers.entry(provider_id).or_default();
-        credentials.accounts.insert(
-            account_id.clone(),
-            CredentialAccount {
-                api_key: api_key.to_string(),
-                label: Some(commandcode_account_label(&metadata)),
-                authenticated_at: Some(metadata.authenticated_at.clone()),
-                commandcode: Some(metadata),
-                oauth_api_kind: None,
-                oauth_refresh_token: None,
-                oauth_expires_at: None,
-            },
-        );
-        if credentials.default_account.is_none() && credentials.api_key.is_empty() {
-            credentials.default_account = Some(account_id.clone());
-        }
-
-        let content = toml::to_string_pretty(&file).context("failed to serialize credentials")?;
-        self.write_content(&content)?;
-        Ok(account_id)
-    }
-
-    pub fn get_commandcode_metadata(
-        &self,
-        provider_id: &str,
-    ) -> Option<CommandCodeCredentialMetadata> {
-        let provider_id = credential_provider_key(provider_id);
-        let content = fs::read_to_string(&self.path).ok()?;
-        let file: CredentialsFile = toml::from_str(&content).ok()?;
-        file.providers
-            .get(&provider_id)
-            .and_then(ProviderCredentials::default_commandcode_metadata)
     }
 
     pub fn delete_credential_account(&self, provider_id: &str, account_id: &str) -> Result<bool> {
@@ -1152,45 +1071,6 @@ fn credential_provider_key(provider_id: &str) -> String {
     canonical_provider_id(provider_id).to_string()
 }
 
-fn commandcode_account_id(metadata: &CommandCodeCredentialMetadata) -> String {
-    let base = if metadata.user_name.trim().is_empty() {
-        format!("{}-{}", metadata.user_id, metadata.key_name)
-    } else {
-        format!("{}-{}", metadata.user_name, metadata.key_name)
-    };
-    slugify_account_id(&base)
-}
-
-fn commandcode_account_label(metadata: &CommandCodeCredentialMetadata) -> String {
-    if metadata.key_name.trim().is_empty() {
-        metadata.user_name.clone()
-    } else if metadata.user_name.trim().is_empty() {
-        metadata.key_name.clone()
-    } else {
-        format!("{} ({})", metadata.user_name, metadata.key_name)
-    }
-}
-
-fn slugify_account_id(value: &str) -> String {
-    let mut slug = String::new();
-    let mut last_dash = false;
-    for ch in value.chars().flat_map(char::to_lowercase) {
-        if ch.is_ascii_alphanumeric() {
-            slug.push(ch);
-            last_dash = false;
-        } else if !last_dash {
-            slug.push('-');
-            last_dash = true;
-        }
-    }
-    let slug = slug.trim_matches('-').to_string();
-    if slug.is_empty() {
-        DEFAULT_ACCOUNT_ID.to_string()
-    } else {
-        slug
-    }
-}
-
 fn provider_env_api_key(env_var: &str) -> Option<String> {
     let key = std::env::var(env_var).ok()?;
     let key = key.trim();
@@ -1600,233 +1480,6 @@ mod tests {
         }"#;
 
         assert!(opencode_key_from_auth_content(content).is_none());
-    }
-
-    #[test]
-    fn stores_commandcode_oauth_metadata_in_navi_credentials() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let store = CredentialStore::new(tempdir.path().to_path_buf());
-        let metadata = CommandCodeCredentialMetadata {
-            user_id: "user-1".to_string(),
-            user_name: "test-user".to_string(),
-            key_name: "NAVI".to_string(),
-            authenticated_at: "123".to_string(),
-        };
-
-        store
-            .set_commandcode_credential(ProviderId::COMMANDCODE, "cmd-key", metadata.clone())
-            .expect("save commandcode credential");
-
-        assert_eq!(
-            store.get_api_key(ProviderId::COMMANDCODE).as_deref(),
-            Some("cmd-key")
-        );
-        assert_eq!(
-            store.get_commandcode_metadata(ProviderId::COMMANDCODE),
-            Some(metadata)
-        );
-    }
-
-    #[test]
-    fn commandcode_provider_checks_cli_env_aliases() {
-        let provider = ProviderConfig {
-            id: ProviderId::COMMANDCODE.to_string(),
-            label: "Command Code".to_string(),
-            description: String::new(),
-            kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "CMD_API_KEY".to_string(),
-            base_url: Some("https://api.commandcode.ai".to_string()),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            provider_env_vars_for_config(&provider),
-            vec![
-                "COMMAND_CODE_API_KEY".to_string(),
-                "CMD_API_KEY".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn commandcode_placeholder_env_does_not_shadow_store_oauth() {
-        // Benchmarks / local Claude Code proxy set `CMD_API_KEY=cc-proxy`, which
-        // must not win over a real OAuth key in the credential store.
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let store = CredentialStore::new(tempdir.path().to_path_buf());
-        let provider = ProviderConfig {
-            id: ProviderId::COMMANDCODE.to_string(),
-            label: "Command Code".to_string(),
-            description: String::new(),
-            kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "CMD_API_KEY".to_string(),
-            base_url: Some("https://api.commandcode.ai".to_string()),
-            ..Default::default()
-        };
-
-        store
-            .set_commandcode_credential(
-                ProviderId::COMMANDCODE,
-                "user_real_oauth_key",
-                CommandCodeCredentialMetadata {
-                    user_id: "user-1".to_string(),
-                    user_name: "test-user".to_string(),
-                    key_name: "cli-test".to_string(),
-                    authenticated_at: "123".to_string(),
-                },
-            )
-            .expect("save commandcode credential");
-
-        let prev = std::env::var("CMD_API_KEY").ok();
-        let prev_alias = std::env::var("COMMAND_CODE_API_KEY").ok();
-        unsafe {
-            std::env::set_var("CMD_API_KEY", "cc-proxy");
-            std::env::remove_var("COMMAND_CODE_API_KEY");
-        }
-
-        let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
-        assert_eq!(
-            result.as_deref(),
-            Some("user_real_oauth_key"),
-            "placeholder env must fall through to store OAuth key"
-        );
-
-        // restore env
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("CMD_API_KEY", v),
-                None => std::env::remove_var("CMD_API_KEY"),
-            }
-            match prev_alias {
-                Some(v) => std::env::set_var("COMMAND_CODE_API_KEY", v),
-                None => std::env::remove_var("COMMAND_CODE_API_KEY"),
-            }
-        }
-    }
-
-    #[test]
-    fn provider_resolver_uses_stored_commandcode_oauth_key() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let store = CredentialStore::new(tempdir.path().to_path_buf());
-        let provider = ProviderConfig {
-            id: ProviderId::COMMANDCODE.to_string(),
-            label: "Command Code".to_string(),
-            description: String::new(),
-            kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_98770".to_string(),
-            base_url: Some("https://api.commandcode.ai".to_string()),
-            ..Default::default()
-        };
-
-        store
-            .set_commandcode_credential(
-                ProviderId::COMMANDCODE,
-                "cmd-stored-key",
-                CommandCodeCredentialMetadata {
-                    user_id: "user-1".to_string(),
-                    user_name: "test-user".to_string(),
-                    key_name: "NAVI".to_string(),
-                    authenticated_at: "123".to_string(),
-                },
-            )
-            .expect("save commandcode credential");
-        let result = resolve_provider_api_key(&store, &provider, ProviderId::COMMANDCODE);
-        let expected = std::env::var("COMMAND_CODE_API_KEY")
-            .ok()
-            .filter(|key| !key.is_empty() && !is_placeholder_api_key(key))
-            .or_else(|| {
-                std::env::var("CMD_API_KEY")
-                    .ok()
-                    .filter(|key| !key.is_empty() && !is_placeholder_api_key(key))
-            })
-            .unwrap_or_else(|| "cmd-stored-key".to_string());
-
-        assert_eq!(result.as_deref(), Some(expected.as_str()));
-    }
-
-    #[test]
-    fn selected_provider_account_persists_as_project_and_default_account() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let data_dir = tempdir.path().join("data");
-        let project_dir = tempdir.path().join("project");
-        fs::create_dir_all(&project_dir).expect("project dir");
-        let store = CredentialStore::new(data_dir.clone());
-        let provider = ProviderConfig {
-            id: ProviderId::COMMANDCODE.to_string(),
-            label: "Command Code".to_string(),
-            description: String::new(),
-            kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "NAVI_NONEXISTENT_ENV_VAR_98772".to_string(),
-            base_url: Some("https://api.commandcode.ai".to_string()),
-            ..Default::default()
-        };
-
-        let first = store
-            .set_commandcode_credential(
-                ProviderId::COMMANDCODE,
-                "cmd-first-key",
-                CommandCodeCredentialMetadata {
-                    user_id: "user-1".to_string(),
-                    user_name: "first-user".to_string(),
-                    key_name: "NAVI".to_string(),
-                    authenticated_at: "123".to_string(),
-                },
-            )
-            .expect("save first commandcode credential");
-        let second = store
-            .set_commandcode_credential(
-                ProviderId::COMMANDCODE,
-                "cmd-second-key",
-                CommandCodeCredentialMetadata {
-                    user_id: "user-2".to_string(),
-                    user_name: "second-user".to_string(),
-                    key_name: "NAVI".to_string(),
-                    authenticated_at: "456".to_string(),
-                },
-            )
-            .expect("save second commandcode credential");
-
-        assert_ne!(first, second);
-        store
-            .set_project_account(&project_dir, ProviderId::COMMANDCODE, &second)
-            .expect("select project account");
-
-        let reopened = CredentialStore::new(data_dir);
-        assert_eq!(
-            reopened.get_project_account(&project_dir, ProviderId::COMMANDCODE),
-            Some(second.clone())
-        );
-        assert_eq!(
-            reopened.get_api_key(ProviderId::COMMANDCODE).as_deref(),
-            Some("cmd-second-key")
-        );
-        assert_eq!(
-            resolve_provider_api_key_for_project(
-                &reopened,
-                &provider,
-                ProviderId::COMMANDCODE,
-                &project_dir
-            )
-            .as_deref(),
-            Some("cmd-second-key")
-        );
-
-        let accounts = reopened
-            .list_credential_accounts(ProviderId::COMMANDCODE, Some(&project_dir))
-            .expect("list accounts");
-        assert!(
-            accounts
-                .iter()
-                .any(|account| account.account_id == second && account.is_project_selected)
-        );
-        let accounts_without_project = reopened
-            .list_credential_accounts(ProviderId::COMMANDCODE, None)
-            .expect("list accounts without project");
-        assert!(
-            accounts_without_project
-                .iter()
-                .any(|account| account.account_id == second && account.is_project_selected)
-        );
     }
 
     #[cfg(unix)]

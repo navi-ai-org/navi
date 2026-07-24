@@ -16,9 +16,9 @@
 
 
 
-    ◆ Streaming response · 0s
+    ◆ Streaming response · 0s (esc to interrupt)
 
   ╭──────────────────────────────────────────────────────────────────────────╮
-  │ ›                                                                        │
+  │ › Type to queue (ctrl+enter) · esc cancels turn                          │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                    gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                         gpt-5.5 (max) · 0 / 200k · restricted

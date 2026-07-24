@@ -294,27 +294,6 @@ deny_tool_regex = ["^danger_"]
             !opencode.models.is_empty(),
             "opencode models should come from the embedded registry snapshot"
         );
-        let commandcode = providers
-            .iter()
-            .find(|provider| provider.id == "commandcode")
-            .expect("commandcode provider");
-        assert_eq!(commandcode.api_key_env, "CMD_API_KEY");
-        assert_eq!(
-            commandcode.base_url.as_deref(),
-            Some("https://api.commandcode.ai")
-        );
-        assert!(
-            commandcode
-                .models
-                .iter()
-                .any(|model| model.name == "deepseek/deepseek-v4-flash")
-        );
-        assert!(
-            commandcode
-                .models
-                .iter()
-                .any(|model| model.name == "claude-sonnet-4-6")
-        );
         let nvidia = providers
             .iter()
             .find(|provider| provider.id == "nvidia")
@@ -692,11 +671,11 @@ deny_tool_regex = ["^danger_"]
     fn model_supports_attachment_matches_aliases_and_cross_provider() {
         let mut config = NaviConfig::default();
         config.providers.push(ProviderConfig {
-            id: "commandcode".to_string(),
-            label: "Command Code".to_string(),
+            id: "test-provider".to_string(),
+            label: "Test Provider".to_string(),
             description: String::new(),
             kind: ProviderKind::OpenAiChatCompletions,
-            api_key_env: "COMMANDCODE_KEY".to_string(),
+            api_key_env: "TEST_PROVIDER_KEY".to_string(),
             base_url: Some("https://example.test/v1".to_string()),
             models: vec![ProviderModelConfig {
                 name: "MiniMaxAI/MiniMax-M3".to_string(),
@@ -774,14 +753,14 @@ deny_tool_regex = ["^danger_"]
 
         assert!(model_supports_attachment(
             &config,
-            "commandcode",
+            "test-provider",
             "MiniMaxAI/MiniMax-M3",
             crate::AttachmentKind::Image
         ));
         // Leaf / case-normalized match against the same provider entry.
         assert!(model_supports_attachment(
             &config,
-            "commandcode",
+            "test-provider",
             "minimax-m3",
             crate::AttachmentKind::Image
         ));

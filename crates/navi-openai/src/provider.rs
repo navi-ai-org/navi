@@ -154,9 +154,6 @@ impl OpenAiProvider {
             StreamRoute::ChatCompletions => self.stream_chat_completions(request),
             StreamRoute::AnthropicMessages => self.stream_anthropic_messages(request),
             StreamRoute::GeminiGenerateContent => self.stream_gemini_generate_content(request),
-            StreamRoute::CommandCodeAlphaGenerate => {
-                self.stream_commandcode_alpha_generate(request)
-            }
         }
     }
 
@@ -407,15 +404,7 @@ impl ModelProvider for OpenAiProvider {
         if base_url.ends_with("/anthropic") {
             base_url = base_url.replace("/anthropic", "/v1");
         }
-        let url = if self.provider_identity.as_str() == navi_core::ProviderId::COMMANDCODE {
-            if base_url.ends_with("/provider/v1") {
-                format!("{}/models", base_url)
-            } else {
-                format!("{}/provider/v1/models", base_url)
-            }
-        } else {
-            format!("{}/models", base_url)
-        };
+        let url = format!("{}/models", base_url);
         tracing::info!(provider = %self.provider_id, "provider model list request started");
 
         let headers = self
