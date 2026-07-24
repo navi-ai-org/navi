@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -89,7 +89,7 @@ jobs:
       CARGO_BUILD_JOBS: "2"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -124,10 +124,10 @@ jobs:
           set -eu
           apk add --no-cache \
             build-base clang lld make protoc pkgconfig \
-            git curl ca-certificates file
+            git curl ca-certificates file tar
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -173,7 +173,7 @@ jobs:
           done
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: navi-linux-x64
           path: |
@@ -187,7 +187,7 @@ jobs:
           set -eu
           cp target/release/navi npm/navi/npm/linux-x64/navi
           chmod +x npm/navi/npm/linux-x64/navi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: npm-linux-x64
           path: npm/navi/npm/linux-x64/
@@ -202,7 +202,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -219,7 +219,7 @@ jobs:
               set -eu
               apk add --no-cache \
                 build-base clang lld make protoc pkgconfig \
-                git curl ca-certificates file
+                git curl ca-certificates file tar
               cargo build -p navi-cli -p navi-lite --locked --release
               strip /tmp/target-musl/release/navi || true
               strip /tmp/target-musl/release/navi-lite || true
@@ -250,7 +250,7 @@ jobs:
           done
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: navi-linux-arm64
           path: |
@@ -264,7 +264,7 @@ jobs:
           set -euo pipefail
           cp target/release/navi npm/navi/npm/linux-arm64/navi
           chmod +x npm/navi/npm/linux-arm64/navi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: npm-linux-arm64
           path: npm/navi/npm/linux-arm64/
@@ -298,7 +298,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -374,7 +374,7 @@ jobs:
           Get-Item "dist/navi-lite-win32-x64.zip" | Format-List Name, Length
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.archive }}
           path: dist/*
@@ -395,7 +395,7 @@ jobs:
             "npm/navi/npm/${{ matrix.npm_platform }}/navi.exe" -Force
 
       - name: Upload npm package tree
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: npm-${{ matrix.npm_platform }}
           path: npm/navi/npm/${{ matrix.npm_platform }}/
@@ -410,7 +410,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_TAG }}
 
@@ -441,7 +441,7 @@ jobs:
           fi
 
       - name: Download archives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: navi-*
           path: artifacts/
@@ -547,7 +547,7 @@ jobs:
           echo "----- end preview -----"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: NAVI ${{ env.RELEASE_TAG }}

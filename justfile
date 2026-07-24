@@ -251,6 +251,18 @@ sync-registry-snapshot:
             cp -a "$src/$dir" "$dest/$dir"
         fi
     done
+
+    # Normalize canonical model filenames so the repo clones on Windows.
+    # Model ids may contain ':' (Ollama tags); store them as '__' on disk.
+    # The Rust loader (build.rs / fetcher.rs) maps '__' back to ':'.
+    while IFS= read -r -d '' path; do
+        old_name=$(basename "$path")
+        new_name=${old_name//:/__}
+        mv "$dest/models/$old_name" "$dest/models/$new_name"
+        sed "s|\"file\": \"models/$old_name\"|\"file\": \"models/$new_name\"|g" "$dest/manifest.json" > "$dest/manifest.json.tmp"
+        mv "$dest/manifest.json.tmp" "$dest/manifest.json"
+    done < <(find "$dest/models" -maxdepth 1 -type f -name '*:*.json' -print0)
+
     echo "Registry snapshot updated (providers + canonical models + schemas). Rebuild navi to embed it."
     echo "  cargo check -p navi-core"
 
