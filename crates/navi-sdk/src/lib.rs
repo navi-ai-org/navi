@@ -73,12 +73,13 @@ pub use navi_core::session::{
 pub use navi_core::{model_messages_from_agent_events, rehydrate_tool_content_parts};
 // Event/session types
 pub use navi_core::{
-    AgentEvent, AgentRunState, Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger,
-    CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage, ModelRole,
-    PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption, QuestionRequest,
-    QuestionResponse, RuntimeEvent, RuntimeEventKind, SessionGoal, SessionId, SessionSnapshot,
-    SessionSnapshotInfo, SessionUsageSnapshot, SubagentTranscriptItem, SubagentTranscriptKind,
-    SudoPasswordRequest, SudoPasswordResponse, TaskStatus, build_host_set_goal_user_prompt,
+    AgentEvent, AgentRunState, ApiMeta, Capability, CapabilityDecision, CapabilityGrant,
+    CapabilityLedger, CapabilityLedgerEntry, CapabilityScope, GoalStatus, GoalTask, ModelMessage,
+    ModelRole, PlanReviewDecision, PlanReviewRequest, PlanReviewResponse, QuestionOption,
+    QuestionRequest, QuestionResponse, RateLimits, RuntimeEvent, RuntimeEventKind, SessionGoal,
+    SessionId, SessionSnapshot, SessionSnapshotInfo, SessionUsageSnapshot, SubagentTranscriptItem,
+    SubagentTranscriptKind, SudoPasswordRequest, SudoPasswordResponse, TaskStatus,
+    build_host_set_goal_user_prompt,
 };
 // Event auxiliary types
 pub use navi_core::event::RepetitionWarningKind;

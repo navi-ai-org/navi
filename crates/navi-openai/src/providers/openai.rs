@@ -104,6 +104,9 @@ impl crate::provider::OpenAiProvider {
 
         tracing::debug!(provider = %provider_id, model = %model, status = %response.status(), "provider stream response received");
         let response = ensure_success(response).await?;
+        if let Some(event) = behavior.parse_response_headers(response.headers()) {
+            yield event;
+        }
         let mut decoder = SseDecoder::default();
         let mut chunks = response.bytes_stream();
 
@@ -224,6 +227,9 @@ impl crate::provider::OpenAiProvider {
 
         tracing::debug!(provider = %provider_id, model = %model, status = %response.status(), "provider stream response received");
         let response = ensure_success(response).await?;
+        if let Some(event) = behavior.parse_response_headers(response.headers()) {
+            yield event;
+        }
         let mut decoder = SseDecoder::default();
         let mut tool_calls = ChatToolCallAccumulator::default();
         let mut chunks = response.bytes_stream();
