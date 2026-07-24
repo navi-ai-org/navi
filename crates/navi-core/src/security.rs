@@ -172,7 +172,7 @@ impl SecurityPolicy {
 
         if self.is_data_dir_private_path(&path) {
             return SecurityDecision::Deny(format!(
-                "path {} is inside NAVI private storage; use skill_list / skill_get / load_skill / skill_save for skills (not raw FS under data_dir)",
+                "path {} is inside NAVI private storage; use skill_list / skill_get / load_skill to browse skills, and write SKILL.md files under the proper skill path (not raw FS under data_dir)",
                 path.display()
             ));
         }
@@ -294,7 +294,7 @@ impl SecurityPolicy {
             };
             if self.is_data_dir_private_path(&path) {
                 return SecurityDecision::Deny(format!(
-                    "command references NAVI private storage: {}; use skill tools (skill_list / skill_get / load_skill / skill_save), not bash under data_dir",
+                    "command references NAVI private storage: {}; use skill tools (skill_list / skill_get / load_skill) to browse skills, not bash under data_dir",
                     path.display()
                 ));
             }

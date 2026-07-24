@@ -55,16 +55,18 @@ fn create_skill_manifest() -> SkillManifest {
         CREATE_SKILL_ID,
         "Create NAVI Skill",
         "Author a durable NAVI skill as markdown on disk (optionally inside a skill pool). Load this when the user asks to add/create a skill.",
-        "1.3.0",
+        "1.4.0",
         &["navi", "builtin", "skills", "authoring", "harness"],
         &[
             "skill_list",
             "skill_get",
-            "skill_save",
             "skill_delete",
             "load_skill",
             "question",
             "read_file",
+            "write_file",
+            "edit",
+            "bash",
         ],
         CREATE_SKILL_INSTRUCTIONS,
     )
@@ -75,15 +77,17 @@ fn harness_author_manifest() -> SkillManifest {
         HARNESS_AUTHOR_ID,
         "Author NAVI Harness Pack",
         "How to author SKILL.md + harness packs (materialize, soft graph allow_tools, loop caps). Load when the user wants a multi-step harness.",
-        "1.0.0",
+        "1.1.0",
         &["navi", "builtin", "harness", "authoring"],
         &[
             "skill_list",
             "skill_get",
-            "skill_save",
             "load_skill",
             "question",
             "read_file",
+            "write_file",
+            "edit",
+            "bash",
         ],
         HARNESS_AUTHOR_INSTRUCTIONS,
     )
@@ -103,37 +107,20 @@ fn skill_pools_manifest() -> SkillManifest {
 
 const CREATE_SKILL_INSTRUCTIONS: &str = r#"# Create a NAVI Skill
 
-You help the user design and **save** a durable skill as markdown on disk.
+You help the user design and **save** a durable NAVI skill as a markdown (`.md`) or TOML (`.toml`) file on disk.
 
-When the user says things like "adicione uma skill", "create a skill for X", or
-"add a skill that…", **load this skill first** (you may already have it open),
-then use `skill_save` — do not invent a private file format under random paths.
-
-## Skill pools (folders)
-
-Skills are organized like a filesystem:
+Skills live in the filesystem skill store:
 
 | Path | Meaning |
 |------|---------|
-| `{data_dir}/skills/<id>/SKILL.md` | Root-level skill (top catalog) |
+| `{data_dir}/skills/<id>/SKILL.md` | Root-level user skill |
 | `{data_dir}/skills/<pool>/<id>/SKILL.md` | Skill inside a **pool** (folder) |
-| `{project}/.navi/skills/…` | Same layout for project scope |
+| `{project}/.navi/skills/<id>/SKILL.md` | Project-scoped skill |
 
-The **Available Skills** catalog and bare `skill_list` show only:
-- root skills (metadata), and
-- **pools** as folders (id, name, skill_count) — **not** every nested skill.
-
-To work with pool members (e.g. NAVI authoring skills under `navi`):
-
-1. `skill_list` with `{ "pool": "navi" }` — catalog of skills in that folder.
-2. `load_skill` / `skill_get` with `{ "id": "navi-create-skill", "pool": "navi" }`
-   or `{ "id": "navi/navi-create-skill" }` — full instructions.
-3. `skill_save` with `"pool": "navi"` (or another pool id) to place a new skill
-   inside a folder; omit `pool` for root-level skills.
-
-Example: user asks to add a skill for NAVI itself → open pool `navi`, read the
-create-skill skill, then `skill_save` (often with `pool: "navi"` if it is a
-NAVI-product skill).
+When the user says things like "adicione uma skill", "create a skill for X", or
+"add a skill that…", **load this skill first** (you may already have it open),
+then write the skill file to `{data_dir}/skills/<id>/SKILL.md` — do not invent a
+private file format under random paths.
 
 ## What a skill is
 
@@ -144,37 +131,32 @@ NAVI-product skill).
 | `description` | One line for pickers / catalogs. |
 | `instructions` | Markdown the agent follows when the skill is active. |
 | `pool` | Optional folder id (e.g. `navi`). Empty = root catalog. |
-| `allow_tools` | Hint / focused authoring list. Does **not** lock the root session by itself. |
+| `allow_tools` | **Required for focused skills.** Only these tools are offered to the model while this skill is active (intersection if several skills set allow lists). |
 | `deny_tools` | Optional extra denylist metadata. |
 | `tags` / `requires` | Optional metadata. `requires` lists skill ids for harness chains. |
 | `scope` | `user` (shared Desktop + TUI) or `project` (this repo only). |
 | `harness` | When `true`, NAVI materializes a harness pack (`loop.toml` + `graph.toml`). |
 
-## Tool policy rules (important)
+## Tool policy rules
 
-1. **Catalog / discovery never soft-locks tools.** Builtins like this one may list
-   `allow_tools` for documentation; that does **not** restrict the main session.
-2. **Soft session allowlist** applies only when a **harness** skill is
-   **session-active** (`harness: true` and/or a materialized pack under
-   `{data_dir}/harnesses/<id>/` with entry-node `allow_tools`).
+1. A skill that only injects prose without `allow_tools` does **not** lock tools.
+2. If **any** active skill sets non-empty `allow_tools`, the session tool set is the **intersection** of those lists.
 3. Host security (permission mode, path guards) still applies on top.
-4. For authoring skills, keep recommended `allow_tools` tight — only what that job needs.
-5. **Never** browse `{data_dir}` with `search` / `bash` / raw `read_file` for skills —
-   use `skill_list` / `skill_get` / `load_skill` / `skill_save`. Private storage is jailed.
+4. For authoring skills, keep `allow_tools` tight — only what that job needs.
+5. **Never** browse `{data_dir}` with `search` / raw filesystem tools for skills. Use `skill_list` / `skill_get` / `load_skill` to inspect, and `write_file` / `edit` to mutate skill files.
 
 ## Harness skills
 
-A **harness** is a multi-step, multi-skill workflow that NAVI materializes into a
-pack under `{data_dir}/harnesses/<skill-id>/`. When you create a harness:
+A **harness** is a multi-step, multi-skill workflow that NAVI materializes into a pack under `{data_dir}/harnesses/<skill-id>/`. When you create a harness:
 
 1. Ask the user whether this is a **single skill** or a **harness (multi-node workflow)**.
 2. If harness:
-   - Set `harness = true` in `skill_save`.
-   - Use `requires` to declare the ordered chain of sub-skills (e.g. `analyst, ideator, critic`).
-   - Ensure each sub-skill already exists via `skill_save` first (or create them as part of the same turn).
-   - After saving the main harness skill, NAVI materializes `loop.toml` and `graph.toml` automatically.
-   - Soft graph `allow_tools` and loop caps apply only when that harness skill is session-active
-     (CLI `--skill` / host activate / config), not merely because it is installed.
+   - Set `harness = true` and `requires: [sub-skill-ids…]` in the main skill frontmatter.
+   - Write each sub-skill's `SKILL.md` first.
+   - Write the main harness `SKILL.md` to `{data_dir}/skills/<id>/SKILL.md`.
+   - Run `navi harness materialize <id>` (via `bash`) to generate `loop.toml`, `graph.toml`, etc.
+   - Verify with `navi harness show <id>` or by reading `{data_dir}/harnesses/<id>/graph.toml`.
+   - Soft graph `allow_tools` and loop caps apply only when that harness skill is session-active (CLI `--skill` / host activate / config), not merely because it is installed.
 3. Hard graph edge execution is still MVP-soft — do not promise automatic routing between nodes.
 
 Also load `navi-harness-author` (pool `navi`) for pack layout details.
@@ -185,9 +167,10 @@ Also load `navi-harness-author` (pool `navi`) for pack layout details.
 2. If the skill belongs to a product area (e.g. NAVI), `skill_list` that pool first.
 3. If ambiguous, use `question` before saving.
 4. Draft a **template** (below) with the user.
-5. Choose a **minimal** recommended `allow_tools` list from real tool names.
-6. Call `skill_save` with the structured fields (set `pool` when appropriate). For harnesses, set `harness: true`.
-7. Call `skill_get` to verify; offer to refine.
+5. Choose a **minimal** `allow_tools` list from real tool names.
+6. Write the skill file with `write_file`. For pools, include `pool: "<pool>"` in the frontmatter.
+7. If the skill is a harness, run `navi harness materialize <id>` via `bash`.
+8. Call `skill_get` to verify; offer to refine.
 
 ## Skill template (copy into `instructions`)
 
@@ -214,30 +197,38 @@ Also load `navi-harness-author` (pool `navi`) for pack layout details.
 
 ## Saving
 
-Use **`skill_save`** with JSON fields:
+Write the skill as a `SKILL.md` file. Example frontmatter:
 
-```json
-{
-  "name": "…",
-  "description": "…",
-  "instructions": "…",
-  "allow_tools": ["read_file", "…"],
-  "tags": ["…"],
-  "pool": "navi",
-  "scope": "user",
-  "harness": false
-}
+```markdown
+---
+name: My Skill
+id: my-skill
+description: "One-line summary."
+tags: [example]
+allow_tools: [read_file, write_file]
+requires: []
+scope: user
+harness: false
+---
+
+# My Skill
+
+## When to use
+- …
 ```
 
-- **`skill_list`** — catalog (no pool) or open a pool (`pool` set).
-- **`skill_get`** / **`load_skill`** — full body.
-- **`skill_delete`** — only if the user confirms removing a skill.
+- User-scope root skills go to `{data_dir}/skills/<id>/SKILL.md`.
+- User-scope pool skills go to `{data_dir}/skills/<pool>/<id>/SKILL.md`.
+- Project-scoped skills go to `{project}/.navi/skills/<id>/SKILL.md`.
+
+You can also run `navi skill install path/to/SKILL.md` via `bash` when the user provides a local skill file.
+
+Use **`skill_list`** / **`skill_get`** / **`load_skill`** to inspect existing skills.
+Use **`skill_delete`** only if the user confirms removing a skill.
 
 ## Anti-patterns
 
-- Do **not** dump every skill into the root catalog when a pool fits better.
-- Do **not** write skills into random config trees outside `data_dir/skills` or `.navi/skills`.
-- Do **not** grant `bash` / `edit` / `write_file` unless the skill truly needs them.
+- Do **not** write skills into random config trees outside `{data_dir}/skills/` or `{project}/.navi/skills/`.
 - Do **not** save empty instructions or empty names.
 - Do **not** set `harness = true` without defining `requires` or writing a clear multi-step procedure; a vague harness is just a slow prompt.
 - Do **not** assume marketplace skills match the current engine harness API — engine essentials stay builtin.
@@ -251,8 +242,8 @@ Teach the user (and yourself) how harness packs work on this engine version.
 
 | Path | What happens |
 |------|----------------|
-| **CLI / install** | `navi skill install` / `skill_save` with `harness: true` → materialize under `{data_dir}/harnesses/<id>/`. Soft apply when the skill is **session-active**. |
-| **Chat** | User says "use the design harness" / "roda o design-loop" → activate that skill id for the session; model may `load_skill` + `skill_save` without dumping `graph.toml` by hand. |
+| **CLI / install** | Write the skill `SKILL.md` to `{data_dir}/skills/<id>/SKILL.md` with `harness: true` and `requires`, then run `navi harness materialize <id>` to generate the pack under `{data_dir}/harnesses/<id>/`. Soft apply when the skill is **session-active**. |
+| **Chat** | User says "use the design harness" / "roda o design-loop" → activate that skill id for the session; model may `load_skill` and then write `SKILL.md` / run `navi harness materialize` without dumping `graph.toml` by hand. |
 
 ## What materialize writes
 
@@ -271,9 +262,9 @@ Teach the user (and yourself) how harness packs work on this engine version.
 
 ## Workflow
 
-1. Create leaf skills with `skill_save` (focused instructions + recommended tools).
-2. Create the main skill with `harness: true` and `requires: [leaf ids…]`.
-3. Confirm pack path in the `skill_save` response (`harness_pack`) or via `navi harness show <id>`.
+1. Create leaf skills by writing their `SKILL.md` files (focused instructions + recommended tools).
+2. Create the main skill file with `harness: true` and `requires: [leaf ids…]`.
+3. Run `navi harness materialize <id>` (via `bash`) and confirm the pack path with `navi harness show <id>`.
 4. Activate with CLI `--skill <id>` / host session skills / chat intent — not by inventing files under project `.navi/`.
 
 Engine essentials (`navi-create-skill`, this skill, `navi-skill-pools`) ship **builtin** so marketplace version skew cannot teach stale harness APIs.
@@ -303,7 +294,7 @@ Open with: `skill_list` → `{ "pool": "navi" }` → `load_skill` with `pool/id`
 
 ## Private storage
 
-Do **not** use `search`, `bash`, or raw filesystem tools on `{data_dir}` (sessions, memory, skills store). That path is jailed. Browse and mutate skills only through skill tools.
+Do **not** use `search` or raw filesystem tools on `{data_dir}` (sessions, memory, skills store). That path is jailed. Browse skills with `skill_list` / `skill_get` / `load_skill`, and mutate them by writing `SKILL.md` files to `{data_dir}/skills/<pool>/<id>/SKILL.md` (or `{project}/.navi/skills/...` for project scope).
 
-Project `.navi/skills` is user-authored project scope — still prefer skill tools over ad-hoc shell.
+Project `.navi/skills` is user-authored project scope — still prefer writing skill files over ad-hoc shell.
 "#;

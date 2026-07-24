@@ -327,9 +327,6 @@ impl ToolExecutor {
             crate::tool::builtin::SkillGetTool::new(project_dir.clone(), data_dir.clone(), config),
         ));
         self.register_tool(std::sync::Arc::new(
-            crate::tool::builtin::SkillSaveTool::new(project_dir.clone(), data_dir.clone()),
-        ));
-        self.register_tool(std::sync::Arc::new(
             crate::tool::builtin::SkillDeleteTool::new(project_dir, data_dir),
         ));
     }

@@ -55,7 +55,7 @@ pub(super) use repo_intelligence::{RepoIntelligenceAction, RepoIntelligenceTool}
 pub(super) use runtime_info::RuntimeInfoTool;
 pub(super) use sandbox_tool::SandboxTool;
 pub(super) use search_tool::SearchTool;
-pub(super) use skill_manage::{SkillDeleteTool, SkillGetTool, SkillListTool, SkillSaveTool};
+pub(super) use skill_manage::{SkillDeleteTool, SkillGetTool, SkillListTool};
 pub(super) use skill_tool::SkillTool;
 pub use subagent::{AgentProfile, ApprovalMode, ProviderBuilderFn, SubagentTool};
 pub use workflow::{

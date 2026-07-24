@@ -243,7 +243,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let create = skill(
             "navi-create-skill",
-            &["skill_list", "skill_save", "load_skill", "read_file"],
+            &["skill_list", "write_file", "load_skill", "read_file"],
         );
         assert!(!create.harness);
         let applied = apply_harness_for_skills(dir.path(), &[create]);

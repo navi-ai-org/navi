@@ -262,6 +262,11 @@ pub fn render_catalog_entries(catalog: &CatalogEntries) -> Option<String> {
     let mut output = String::from(
         "=== Available Skills ===\n\
 Skills and skill pools for this session. Metadata only — no instruction bodies.\n\
+Skill dispatch:\n\
+- Before acting, compare the user's request to the skills and pools below.\n\
+- If any skill or pool is relevant to the task, load it first: call `load_skill` with the skill id (or `pool/id`). For pools, you may call `skill_list` with `pool` to list members, then `load_skill` on the matching member.\n\
+- A loaded skill's instructions override generic workflow for that task; follow them as the primary procedure.\n\
+- If nothing matches, proceed with the default workflow.\n\
 - Use `skill_list` with `pool` to open a pool (like listing a folder).\n\
 - Use `load_skill` with a skill id (or `pool/id`) to read full instructions.\n",
     );
@@ -747,7 +752,7 @@ mod tests {
         assert!(skills.iter().any(|s| s.id == CREATE_SKILL_ID));
         let create = skills.iter().find(|s| s.id == CREATE_SKILL_ID).unwrap();
         assert!(!create.allow_tools.is_empty());
-        assert!(create.allow_tools.iter().any(|t| t == "skill_save"));
+        assert!(create.allow_tools.iter().any(|t| t == "write_file"));
         assert_eq!(create.pool.as_deref(), Some("navi"));
         assert!(
             !create.harness,
@@ -830,7 +835,7 @@ mod tests {
         )
         .expect("load pool path");
         assert_eq!(skill.id, CREATE_SKILL_ID);
-        assert!(skill.instructions.contains("Skill pools"));
+        assert!(skill.instructions.contains("filesystem skill store"));
     }
 
     #[test]
@@ -926,7 +931,7 @@ mod tests {
             author: None,
             tags: vec![],
             requires: vec![],
-            allow_tools: vec!["read_file".into(), "skill_save".into()],
+            allow_tools: vec!["read_file".into(), "write_file".into()],
             deny_tools: vec![],
             harness: false,
             pool: None,

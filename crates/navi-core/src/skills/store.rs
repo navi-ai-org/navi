@@ -748,7 +748,7 @@ mod tests {
                     author: None,
                     tags: vec!["t".into()],
                     requires: vec![],
-                    allow_tools: vec!["read_file".into(), "skill_save".into()],
+                    allow_tools: vec!["read_file".into(), "write_file".into()],
                     deny_tools: vec![],
                     harness: false,
                     pool: None,
@@ -759,7 +759,7 @@ mod tests {
             )
             .expect("upsert");
         assert!(result.created);
-        assert_eq!(result.skill.allow_tools, vec!["read_file", "skill_save"]);
+        assert_eq!(result.skill.allow_tools, vec!["read_file", "write_file"]);
         assert!(result.path.ends_with("SKILL.md"));
         let listed = store.list_for_discovery(None).expect("list");
         assert_eq!(listed.len(), 1);
@@ -779,7 +779,7 @@ mod tests {
                     author: None,
                     tags: vec!["navi".into()],
                     requires: vec![],
-                    allow_tools: vec!["skill_save".into()],
+                    allow_tools: vec!["write_file".into()],
                     deny_tools: vec![],
                     harness: false,
                     pool: Some("navi".into()),

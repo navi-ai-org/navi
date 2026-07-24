@@ -5,7 +5,7 @@
 //! - `skill_list` with no `pool` → root skills + pool folders (catalog)
 //! - `skill_list` with `pool` → skills inside that pool (metadata only)
 //! - `load_skill` / `skill_get` → full body by id or `pool/id`
-//! - `skill_save` with `pool` → write into that pool folder
+//! - Skills are persisted by writing `SKILL.md`/`.toml` files into `{data_dir}/skills/<pool>/<id>/`
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -14,53 +14,14 @@ use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use super::helpers;
-use crate::config::{NaviConfig, SkillsConfig};
-use crate::harness_pack::materialize_after_save;
+use crate::config::NaviConfig;
 use crate::skills::{
-    SkillManifest, SkillPool, SkillStore, SkillWriteRequest, SkillWriteScope, delete_skill,
-    discover_catalog_entries, load_skill_by_id, write_skill,
+    SkillManifest, SkillPool, SkillStore, delete_skill, discover_catalog_entries, load_skill_by_id,
 };
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 fn shared_config(config: &Arc<RwLock<NaviConfig>>) -> NaviConfig {
     config.read().unwrap_or_else(|e| e.into_inner()).clone()
-}
-
-fn parse_string_list(value: &serde_json::Value) -> Vec<String> {
-    match value {
-        serde_json::Value::Array(items) => items
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-            .filter(|s| !s.is_empty())
-            .collect(),
-        serde_json::Value::String(s) => s
-            .split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn parse_scope(value: Option<&serde_json::Value>) -> SkillWriteScope {
-    match value.and_then(|v| v.as_str()).unwrap_or("user") {
-        "project" => SkillWriteScope::Project,
-        _ => SkillWriteScope::User,
-    }
-}
-
-fn parse_bool(value: Option<&serde_json::Value>) -> bool {
-    match value {
-        Some(serde_json::Value::Bool(b)) => *b,
-        Some(serde_json::Value::String(s)) => {
-            matches!(
-                s.trim().to_ascii_lowercase().as_str(),
-                "true" | "yes" | "1" | "on"
-            )
-        }
-        Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(0) != 0,
-        _ => false,
-    }
 }
 
 fn parse_optional_pool(value: Option<&serde_json::Value>) -> Option<String> {
@@ -271,175 +232,6 @@ impl Tool for SkillGetTool {
     }
 }
 
-// ── skill_save ────────────────────────────────────────────────────────────
-
-pub(crate) struct SkillSaveTool {
-    project_dir: PathBuf,
-    data_dir: PathBuf,
-}
-
-impl SkillSaveTool {
-    pub(crate) fn new(project_dir: PathBuf, data_dir: PathBuf) -> Self {
-        Self {
-            project_dir,
-            data_dir,
-        }
-    }
-}
-
-#[async_trait]
-impl Tool for SkillSaveTool {
-    fn definition(&self) -> ToolDefinition {
-        helpers::definition(
-            "skill_save",
-            "Create or update a skill as markdown on disk. Root: `{data_dir}/skills/<id>/SKILL.md`. Inside a pool: `{data_dir}/skills/<pool>/<id>/SKILL.md` (same under `.navi/skills` for project). Set `pool` to place the skill in a folder (creates POOL.md if needed).",
-            ToolKind::Write,
-            helpers::json_schema(
-                &[
-                    ("name", "Human-readable skill name (required)."),
-                    (
-                        "instructions",
-                        "Markdown instructions when the skill is active (required).",
-                    ),
-                    ("id", "Optional stable id; derived from name if omitted."),
-                    ("description", "Short one-line summary."),
-                    ("version", "Optional version string."),
-                    ("author", "Optional author."),
-                    ("tags", "Array or comma-separated tags."),
-                    (
-                        "requires",
-                        "Array or comma-separated skill ids this depends on.",
-                    ),
-                    (
-                        "allow_tools",
-                        "Array of tool names available while this skill is active (recommended).",
-                    ),
-                    ("deny_tools", "Optional tool names to hide while active."),
-                    (
-                        "pool",
-                        "Optional skill pool (folder) id, e.g. `navi`. Empty = root-level skill.",
-                    ),
-                    (
-                        "scope",
-                        "`user` (default, shared Desktop+TUI) or `project`.",
-                    ),
-                    (
-                        "harness",
-                        "When true, materialize a harness pack (loop.toml/graph.toml) after saving.",
-                    ),
-                ],
-                &["name", "instructions"],
-            ),
-        )
-    }
-
-    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-        let name = invocation
-            .input
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("skill_save requires `name`"))?
-            .to_string();
-        let instructions = invocation
-            .input
-            .get("instructions")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("skill_save requires non-empty `instructions`"))?
-            .to_string();
-
-        let request = SkillWriteRequest {
-            id: invocation
-                .input
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            name,
-            description: invocation
-                .input
-                .get("description")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            version: invocation
-                .input
-                .get("version")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            author: invocation
-                .input
-                .get("author")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-            tags: invocation
-                .input
-                .get("tags")
-                .map(parse_string_list)
-                .unwrap_or_default(),
-            requires: invocation
-                .input
-                .get("requires")
-                .map(parse_string_list)
-                .unwrap_or_default(),
-            allow_tools: invocation
-                .input
-                .get("allow_tools")
-                .map(parse_string_list)
-                .unwrap_or_default(),
-            deny_tools: invocation
-                .input
-                .get("deny_tools")
-                .map(parse_string_list)
-                .unwrap_or_default(),
-            harness: parse_bool(invocation.input.get("harness")),
-            pool: parse_optional_pool(invocation.input.get("pool")),
-            instructions,
-            scope: parse_scope(invocation.input.get("scope")),
-        };
-
-        let result = write_skill(&request, &self.project_dir, &self.data_dir)?;
-
-        // Best-effort harness materialize when the skill declares itself a harness
-        // or declares required skills that form a workflow graph.
-        let mut harness_pack: Option<std::path::PathBuf> = None;
-        if result.skill.harness || !result.skill.requires.is_empty() {
-            let mut required = Vec::new();
-            if !result.skill.requires.is_empty() {
-                let mut cfg = SkillsConfig::default();
-                cfg.enabled = true;
-                for req_id in &result.skill.requires {
-                    if let Ok(req) =
-                        load_skill_by_id(&cfg, &self.project_dir, &self.data_dir, req_id)
-                    {
-                        required.push(req);
-                    }
-                }
-            }
-            harness_pack = materialize_after_save(&self.data_dir, &result, &required)
-                .ok()
-                .flatten();
-        }
-
-        Ok(helpers::ok(
-            invocation.id,
-            json!({
-                "created": result.created,
-                "id": result.skill.id,
-                "name": result.skill.name,
-                "pool": result.skill.pool,
-                "allow_tools": result.skill.allow_tools,
-                "harness": result.skill.harness,
-                "path": result.path.display().to_string(),
-                "harness_pack": harness_pack.map(|p| p.display().to_string()),
-                "source": "store",
-            }),
-        ))
-    }
-}
-
 // ── skill_delete ──────────────────────────────────────────────────────────
 
 pub(crate) struct SkillDeleteTool {
@@ -491,16 +283,17 @@ impl Tool for SkillDeleteTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::SkillsConfig;
+    use crate::harness_pack::materialize_after_save;
     use crate::skills::{SkillWriteRequest, SkillWriteScope, write_skill};
 
-    fn tool_config(temp: &std::path::Path) -> (SkillListTool, SkillSaveTool, PathBuf) {
+    fn tool_config(temp: &std::path::Path) -> (SkillListTool, PathBuf) {
         let mut config = NaviConfig::default();
         config.skills.enabled = true;
         let project = temp.to_path_buf();
         let data = temp.to_path_buf();
-        let list = SkillListTool::new(project.clone(), data.clone(), Arc::new(RwLock::new(config)));
-        let save = SkillSaveTool::new(project, data.clone());
-        (list, save, data)
+        let list = SkillListTool::new(project, data.clone(), Arc::new(RwLock::new(config)));
+        (list, data)
     }
 
     #[tokio::test]
@@ -527,7 +320,7 @@ mod tests {
         )
         .expect("write");
 
-        let (list, _, _) = tool_config(tempdir.path());
+        let (list, _) = tool_config(tempdir.path());
         let result = list
             .invoke(ToolInvocation {
                 id: "1".into(),
@@ -574,7 +367,7 @@ mod tests {
         )
         .expect("write");
 
-        let (list, _, _) = tool_config(tempdir.path());
+        let (list, _) = tool_config(tempdir.path());
         let result = list
             .invoke(ToolInvocation {
                 id: "1".into(),
@@ -601,34 +394,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skill_save_writes_into_pool() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let (_, save, _) = tool_config(tempdir.path());
-        let result = save
-            .invoke(ToolInvocation {
-                id: "1".into(),
-                tool_name: "skill_save".into(),
-                input: json!({
-                    "name": "Pool Member",
-                    "instructions": "Do pool work.",
-                    "pool": "navi",
-                    "allow_tools": ["read_file"]
-                }),
-            })
-            .await
-            .expect("save");
-        assert!(result.ok);
-        assert_eq!(result.output["pool"], "navi");
-        assert_eq!(result.output["id"], "pool-member");
-        let path = result.output["path"].as_str().expect("path");
-        assert!(path.contains("navi"), "path should include pool: {path}");
-        assert!(std::path::Path::new(path).is_file());
-    }
-
-    #[tokio::test]
     async fn skill_list_pool_navi_includes_builtin_create_skill() {
         let tempdir = tempfile::tempdir().expect("tempdir");
-        let (list, _, _) = tool_config(tempdir.path());
+        let (list, _) = tool_config(tempdir.path());
         let result = list
             .invoke(ToolInvocation {
                 id: "1".into(),
@@ -655,37 +423,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skill_save_harness_materializes_pack_under_data_dir() {
+    async fn write_skill_and_materialize_creates_harness_pack() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let data = tempdir.path().to_path_buf();
-        let save = SkillSaveTool::new(tempdir.path().to_path_buf(), data.clone());
-        let result = save
-            .invoke(ToolInvocation {
-                id: "1".into(),
-                tool_name: "skill_save".into(),
-                input: json!({
-                    "name": "Design Loop",
-                    "id": "design-loop",
-                    "instructions": "Run design steps.",
-                    "harness": true,
-                    "allow_tools": ["read_file", "search"]
-                }),
-            })
-            .await
-            .expect("save harness");
-        assert!(result.ok, "skill_save failed: {:?}", result.output);
-        assert_eq!(result.output["harness"], true);
-        let pack = result.output["harness_pack"]
-            .as_str()
-            .expect("harness_pack path");
+        let request = SkillWriteRequest {
+            id: "design-loop".into(),
+            name: "Design Loop".into(),
+            description: None,
+            version: None,
+            author: None,
+            tags: vec![],
+            requires: vec![],
+            allow_tools: vec!["read_file".into(), "search".into()],
+            deny_tools: vec![],
+            harness: true,
+            pool: None,
+            instructions: "Run design steps.".into(),
+            scope: SkillWriteScope::User,
+        };
+        let result = write_skill(&request, tempdir.path(), &data).expect("write");
+        let pack = materialize_after_save(&data, &result, &[])
+            .expect("materialize")
+            .expect("pack path");
         assert!(
-            pack.contains("harnesses"),
-            "pack should be under harnesses/: {pack}"
+            pack.to_string_lossy().contains("harnesses"),
+            "pack should be under harnesses/: {pack:?}"
         );
-        assert!(
-            std::path::Path::new(pack).is_dir() || std::path::Path::new(pack).exists(),
-            "pack path missing: {pack}"
-        );
+        assert!(pack.exists(), "pack path missing: {pack:?}");
+
         // Soft apply only when skill is treated as active — pack on disk alone
         // must not lock when active list is empty.
         let idle = crate::harness_pack::apply_harness_for_skills(&data, &[]);
@@ -694,6 +459,7 @@ mod tests {
             "empty active list must not lock after materialize: {:?}",
             idle.allow_tools
         );
+
         let skill = crate::skills::load_skill_by_id(
             &SkillsConfig {
                 enabled: true,
@@ -705,6 +471,7 @@ mod tests {
         )
         .expect("load saved harness skill");
         assert!(skill.harness, "saved skill must retain harness flag");
+
         // Session-active harness with pack → soft allowlist from entry and/or skill.
         let active =
             crate::harness_pack::apply_harness_for_skills(&data, std::slice::from_ref(&skill));

@@ -172,7 +172,7 @@ mod tests {
                 author: None,
                 tags: vec![],
                 requires: vec![],
-                allow_tools: vec!["skill_save".into()],
+                allow_tools: vec!["write_file".into()],
                 deny_tools: vec![],
                 harness: false,
                 pool: Some("navi".into()),

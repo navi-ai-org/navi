@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use navi_core::{
-    LoadedConfig, SkillSource, SkillWriteRequest, SkillWriteScope, list_installed_skills,
-    parse_skill_file, write_skill,
+    LoadedConfig, NaviConfig, SkillSource, SkillWriteRequest, SkillWriteScope,
+    list_installed_skills, parse_skill_file, save_global_config, save_project_config, write_skill,
 };
 use std::fs;
 use std::path::Path;
@@ -95,6 +95,59 @@ fn install_skill(
         tracing::warn!(error = %err, skill = %result.skill.id, "harness materialize after install failed");
         println!("  harness: materialize skipped ({err})");
     }
+
+    // Newly installed skills are catalog-active by default. If the user keeps an
+    // explicit `skills.active` whitelist, append the new skill so it stays visible.
+    if let Err(err) = ensure_skill_active_in_config(&result.skill.id, loaded_config, scope, cwd) {
+        tracing::warn!(error = %err, skill = %result.skill.id, "failed to add skill to active list");
+    }
+    Ok(())
+}
+
+fn ensure_skill_active_in_config(
+    id: &str,
+    loaded_config: &LoadedConfig,
+    scope: SkillWriteScope,
+    cwd: &Path,
+) -> Result<()> {
+    let (path, is_project) = match scope {
+        SkillWriteScope::Project => (
+            loaded_config
+                .project_config_path
+                .clone()
+                .unwrap_or_else(|| cwd.join(".navi").join("config.toml")),
+            true,
+        ),
+        SkillWriteScope::User => match &loaded_config.global_config_path {
+            Some(p) => (p.clone(), false),
+            None => return Ok(()),
+        },
+    };
+
+    let mut config = if path.exists() {
+        let raw = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read config {}", path.display()))?;
+        toml::from_str(&raw)
+            .with_context(|| format!("failed to parse config {}", path.display()))?
+    } else {
+        NaviConfig::default()
+    };
+
+    // Empty active list means "all discovered skills are catalog-active"; keep it.
+    if config.skills.active.is_empty() {
+        return Ok(());
+    }
+    if config.skills.active.iter().any(|s| s == id) {
+        return Ok(());
+    }
+
+    config.skills.active.push(id.to_string());
+    if is_project {
+        save_project_config(cwd, &config)?;
+    } else {
+        save_global_config(&path, &config)?;
+    }
+    println!("  active: added {id} to skills.active");
     Ok(())
 }
 

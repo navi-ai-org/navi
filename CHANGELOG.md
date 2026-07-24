@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-24
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.9...v0.4.0
+
+Harness activation and skill catalog semantics hardening.
+
+### Added
+
+- **Skill install active-list append** — `navi skill install` adds the new skill to `skills.active` when the user maintains an explicit whitelist, while leaving an empty `skills.active` untouched (empty still means "all discovered skills are catalog-active").
+
+### Fixed
+
+- **Main thread no longer auto-enters harness mode** — `config.skills.active` now controls only catalog visibility, not harness soft-apply. Harness activation is strictly per-session (`--skill`, host `set_active_skills`, TUI toggle).
+- **Harness graph allowlist for skill tools** — `load_skill`, `skill_list`, `skill_get`, and `set_session_title` are now included in the default core tools of materialized harness packs, and multi-skill harness graphs now start at the orchestrator node instead of the first sub-skill.
+
+### Changed
+
+- **Workspace crates + npm packages** bumped to **0.4.0**.
+
 ## [0.3.9] - 2026-07-24
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.8...v0.3.9

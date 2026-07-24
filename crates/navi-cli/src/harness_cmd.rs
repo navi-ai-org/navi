@@ -27,6 +27,10 @@ fn default_tool_meta() -> Vec<(String, ToolExposure)> {
         "get_goal",
         "create_goal",
         "update_goal",
+        "load_skill",
+        "skill_list",
+        "skill_get",
+        "skill_delete",
     ];
     let deferred = [
         "browser",

@@ -79,8 +79,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         insert(
             &mut map,
             "load_skill",
-            ToolMetadata::reader("skill", &["read", "skill", "instructions"])
-                .with_exposure(crate::tool::ToolExposure::Deferred),
+            ToolMetadata::reader("skill", &["read", "skill", "instructions"]),
         );
         insert(
             &mut map,

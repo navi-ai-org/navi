@@ -763,18 +763,19 @@ impl AgentRuntime {
     }
 
     /// Skill manifests selected for **session** activation (CLI `--skill`, host
-    /// `set_active_skills`, config `skills.active` when session list is empty).
+    /// `set_active_skills`). Config `[skills].active` controls catalog visibility,
+    /// not harness soft-apply, so the root agent is never locked into a harness
+    /// unless the session explicitly opts in.
     /// Empty selection → no soft harness allowlist.
     fn session_active_skill_manifests(&self) -> Vec<crate::skills::SkillManifest> {
         let available = self.discover_available_skills().unwrap_or_default();
         let session = &self.active_skills;
-        let configured = &self.loaded_config.config.skills.active;
-        // Unlike catalog `active_skills`, an empty selection means **no**
-        // harness soft-apply (do not default to every discovered skill).
-        if session.is_empty() && configured.is_empty() {
+        // Harness activation is strictly per-session; config `skills.active` only
+        // filters the skill catalog (see `load_catalog_skills`).
+        if session.is_empty() {
             return Vec::new();
         }
-        crate::skills::active_skills(&available, configured, session)
+        crate::skills::active_skills(&available, &[], session)
     }
 
     /// Recompute harness soft-apply state from currently active skill manifests.

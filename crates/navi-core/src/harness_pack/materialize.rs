@@ -156,8 +156,8 @@ pub fn materialize_from_skill(
 
 /// Best-effort materialize after a skill is saved. Returns the pack path on success.
 ///
-/// Uses a conservative default capability inventory so this can run inside the
-/// `skill_save` tool without access to a live executor registry.
+/// Uses a conservative default capability inventory so this can run during
+/// skill install/save without access to a live executor registry.
 pub fn materialize_after_save(
     data_dir: &Path,
     result: &SkillWriteResult,
@@ -193,7 +193,6 @@ fn default_capability_inventory() -> CapabilityInventory {
             "get_goal",
             "create_goal",
             "update_goal",
-            "skill_save",
             "skill_list",
             "skill_get",
             "load_skill",
@@ -229,7 +228,9 @@ fn build_multi_skill_graph(
 ) -> GraphSpec {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
-    let entry = ordered[0].id.clone();
+    // The orchestrator skill is the last entry; it must be the graph entry so
+    // it can load required sub-skills via `load_skill` and coordinate the loop.
+    let entry = ordered.last().map(|s| s.id.clone()).unwrap_or_default();
 
     for (i, skill) in ordered.iter().enumerate() {
         let role = if i == ordered.len() - 1 {
@@ -378,6 +379,10 @@ fn default_core_tools(inventory: &CapabilityInventory) -> Vec<String> {
             "question".into(),
             "tool_search".into(),
             "memory".into(),
+            "set_session_title".into(),
+            "load_skill".into(),
+            "skill_list".into(),
+            "skill_get".into(),
         ],
         inventory,
     )
@@ -529,7 +534,7 @@ mod tests {
         opts.required_skills.insert("implementer".into(), node_b);
         let pack = materialize_from_skill(dir.path(), &main, &inv, opts).unwrap();
         let graph = pack.graph.as_ref().unwrap();
-        assert_eq!(graph.entry, "analyst");
+        assert_eq!(graph.entry, "design-loop");
         assert_eq!(graph.nodes.len(), 3);
         assert!(graph.nodes.iter().any(|n| n.id == "analyst"));
         assert!(graph.nodes.iter().any(|n| n.id == "implementer"));
