@@ -781,6 +781,7 @@ pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn Provide
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn xai_oauth_jwt_adds_cli_token_auth_header() {
@@ -1052,5 +1053,200 @@ mod tests {
             .expect("affinity");
         assert!(headers.get("x-session-id").is_none());
         assert!(headers.get("x-session-affinity").is_none());
+    }
+
+    #[test]
+    fn json_u64_value_handles_numeric_variants() {
+        assert_eq!(json_u64_value(&json!(42)), Some(42));
+        assert_eq!(json_u64_value(&json!(-1)), None);
+        assert_eq!(json_u64_value(&json!(1.7)), Some(2));
+        assert_eq!(json_u64_value(&json!(-1.5)), None);
+        assert_eq!(json_u64_value(&json!("3")), Some(3));
+        assert_eq!(json_u64_value(&json!("not a number")), None);
+        assert_eq!(json_u64(None), None);
+    }
+
+    #[test]
+    fn parse_usage_extracts_openai_chat_and_gemini_fields() {
+        let openai = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENAI));
+        let usage = openai.parse_usage(&json!({
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 20,
+            "prompt_tokens_details": { "cached_tokens": 2 }
+        }));
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.output_tokens, Some(5));
+        assert_eq!(usage.cache_read_tokens, Some(2));
+
+        // Falls back to total_tokens when input not present.
+        let usage = openai.parse_usage(&json!({
+            "output_tokens": 5,
+            "total_tokens": 20
+        }));
+        assert_eq!(usage.input_tokens, Some(15));
+
+        let gemini = behavior_for_provider(&ProviderId::from_config_id(ProviderId::GOOGLE_GEMINI));
+        let usage = gemini.parse_usage(&json!({
+            "promptTokenCount": 7,
+            "candidatesTokenCount": 3
+        }));
+        assert_eq!(usage.input_tokens, Some(7));
+        assert_eq!(usage.output_tokens, Some(3));
+    }
+
+    #[test]
+    fn all_provider_behaviors_build_headers_and_route() {
+        let cases: Vec<(&str, Option<&str>, Vec<&str>)> = vec![
+            (
+                ProviderId::OPENAI,
+                Some(OPENAI_BASE_URL),
+                vec!["authorization"],
+            ),
+            (
+                ProviderId::ANTHROPIC,
+                None,
+                vec!["x-api-key", "anthropic-version"],
+            ),
+            (ProviderId::GOOGLE_GEMINI, Some(GEMINI_BASE_URL), vec![]),
+            (
+                ProviderId::OPENROUTER,
+                None,
+                vec!["authorization", "HTTP-Referer", "X-Title"],
+            ),
+            (
+                ProviderId::GITHUB_COPILOT,
+                None,
+                vec![
+                    "authorization",
+                    "user-agent",
+                    "Openai-Intent",
+                    "x-initiator",
+                ],
+            ),
+            (
+                ProviderId::OPENCODE,
+                Some(OPENCODE_ZEN_BASE_URL),
+                vec!["authorization"],
+            ),
+            (
+                ProviderId::OPENCODE_ZEN,
+                Some(OPENCODE_ZEN_BASE_URL),
+                vec!["authorization"],
+            ),
+            (
+                ProviderId::OPENCODE_GO,
+                Some(OPENCODE_GO_BASE_URL),
+                vec!["authorization"],
+            ),
+            (
+                ProviderId::COMMANDCODE,
+                Some(COMMANDCODE_BASE_URL),
+                vec!["authorization"],
+            ),
+            (ProviderId::GROQ, None, vec!["authorization"]),
+            (
+                ProviderId::CHARM_HYPER,
+                Some(HYPER_BASE_URL),
+                vec!["authorization"],
+            ),
+            (ProviderId::NVIDIA, None, vec!["authorization"]),
+            // Mimo Anthropic aliases route to AnthropicBehavior.
+            (
+                ProviderId::MIMO_ANTHROPIC_CN,
+                None,
+                vec!["x-api-key", "anthropic-version"],
+            ),
+            (
+                ProviderId::MIMO_ANTHROPIC_SGP,
+                None,
+                vec!["x-api-key", "anthropic-version"],
+            ),
+            (
+                ProviderId::MIMO_ANTHROPIC_AMS,
+                None,
+                vec!["x-api-key", "anthropic-version"],
+            ),
+        ];
+
+        for (id, expected_base, expected_headers) in cases {
+            let behavior = behavior_for_provider(&ProviderId::from_config_id(id));
+            assert_eq!(
+                behavior.default_base_url(),
+                expected_base,
+                "{id} base url mismatch"
+            );
+            let _ = behavior.stream_route("test-model", OpenAiApiKind::ChatCompletions);
+            let headers = behavior
+                .build_headers("test-key", Endpoint::ChatCompletions)
+                .unwrap();
+            for header in expected_headers {
+                assert!(headers.contains_key(header), "{id} missing {header}");
+            }
+        }
+
+        // Custom fallback for unregistered provider ids.
+        let custom = behavior_for_provider(&ProviderId::from_config_id("unknown-provider"));
+        assert!(custom.default_base_url().is_none());
+        assert!(matches!(
+            custom.stream_route("x", OpenAiApiKind::ChatCompletions),
+            StreamRoute::ChatCompletions
+        ));
+        assert!(custom.build_headers("k", Endpoint::ChatCompletions).is_ok());
+    }
+
+    #[test]
+    fn opencode_routes_by_model_family() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENCODE));
+        assert!(matches!(
+            behavior.stream_route("opencode/gpt-foo", OpenAiApiKind::ChatCompletions),
+            StreamRoute::Responses
+        ));
+        assert!(matches!(
+            behavior.stream_route("opencode/claude-sonnet", OpenAiApiKind::ChatCompletions),
+            StreamRoute::AnthropicMessages
+        ));
+        assert!(matches!(
+            behavior.stream_route("opencode/other", OpenAiApiKind::ChatCompletions),
+            StreamRoute::ChatCompletions
+        ));
+    }
+
+    #[test]
+    fn openai_headers_vary_by_endpoint() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENAI));
+        let chat = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        assert!(chat.contains_key("content-type"));
+        let models = behavior.build_headers("k", Endpoint::Models).unwrap();
+        assert!(!models.contains_key("content-type"));
+        assert!(behavior.supports_parallel_tool_calls(Endpoint::ChatCompletions));
+        assert!(!behavior.supports_parallel_tool_calls(Endpoint::Models));
+    }
+
+    #[test]
+    fn anthropic_models_endpoint_adds_bearer_authorization() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::ANTHROPIC));
+        let headers = behavior.build_headers("k", Endpoint::Models).unwrap();
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer k")
+        );
+    }
+
+    #[test]
+    fn commandcode_supports_parallel_tool_calls_for_openai_and_anthropic() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::COMMANDCODE));
+        assert!(behavior.supports_parallel_tool_calls(Endpoint::ChatCompletions));
+        assert!(behavior.supports_parallel_tool_calls(Endpoint::AnthropicMessages));
+        assert!(!behavior.supports_parallel_tool_calls(Endpoint::Models));
+    }
+
+    #[test]
+    fn charm_hyper_responses_endpoint_has_content_type() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::CHARM_HYPER));
+        let headers = behavior.build_headers("k", Endpoint::Responses).unwrap();
+        assert!(headers.contains_key("content-type"));
     }
 }
