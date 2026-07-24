@@ -838,6 +838,9 @@ async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Resul
                     }
                 }
             }
+            // API metadata/rate-limit headers are surfaced by the provider but
+            // do not affect turn accumulation.
+            ModelStreamEvent::ApiMeta { .. } => {}
         }
     }
 

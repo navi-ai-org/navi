@@ -1,6 +1,6 @@
 use crate::errors::ProviderError;
 use crate::types::{OpenAiApiKind, StreamRoute};
-use navi_core::{ModelRequest, ProviderId};
+use navi_core::{ApiMeta, ModelRequest, ModelStreamEvent, ProviderId, RateLimits};
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use sha2::{Digest, Sha256};
@@ -82,6 +82,16 @@ pub(crate) trait ProviderBehavior: Send + Sync {
         Ok(())
     }
 
+    /// Extract API metadata and rate-limit headers from a successful response.
+    ///
+    /// Default implementation understands OpenAI-compatible response headers
+    /// (`x-request-id`, `openai-organization`, `openai-processing-ms`,
+    /// `openai-version`, `x-ratelimit-*`, `x-ratelimit-*-project-tokens`).
+    /// Providers that emit differently-named headers can override this.
+    fn parse_response_headers(&self, headers: &HeaderMap) -> Option<ModelStreamEvent> {
+        parse_openai_response_headers(headers)
+    }
+
     /// Extract normalized usage from a provider-specific usage JSON object.
     ///
     /// Default implementation handles OpenAI Responses (`input_tokens`/`output_tokens`)
@@ -136,6 +146,66 @@ pub(crate) trait ProviderBehavior: Send + Sync {
     fn supports_parallel_tool_calls(&self, _endpoint: Endpoint) -> bool {
         false
     }
+}
+
+/// Read a response header as a UTF-8 string.
+fn header_str(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(String::from)
+}
+
+/// Parse OpenAI-compatible response headers into a normalized [`ApiMeta`] event.
+///
+/// Returns `None` if none of the recognized headers are present, so providers
+/// that do not emit these headers stay silent.
+pub(crate) fn parse_openai_response_headers(headers: &HeaderMap) -> Option<ModelStreamEvent> {
+    let request_id = header_str(headers, "x-request-id");
+    let organization = header_str(headers, "openai-organization");
+    let processing_ms = headers
+        .get("openai-processing-ms")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse().ok());
+    let api_version = header_str(headers, "openai-version");
+
+    let mut rate_limits = RateLimits::default();
+    rate_limits.limit_requests = header_str(headers, "x-ratelimit-limit-requests");
+    rate_limits.limit_tokens = header_str(headers, "x-ratelimit-limit-tokens");
+    rate_limits.remaining_requests = header_str(headers, "x-ratelimit-remaining-requests");
+    rate_limits.remaining_tokens = header_str(headers, "x-ratelimit-remaining-tokens");
+    rate_limits.reset_requests = header_str(headers, "x-ratelimit-reset-requests");
+    rate_limits.reset_tokens = header_str(headers, "x-ratelimit-reset-tokens");
+    rate_limits.limit_project_tokens = header_str(headers, "x-ratelimit-limit-project-tokens");
+    rate_limits.remaining_project_tokens =
+        header_str(headers, "x-ratelimit-remaining-project-tokens");
+    rate_limits.reset_project_tokens = header_str(headers, "x-ratelimit-reset-project-tokens");
+
+    let has_meta = request_id.is_some()
+        || organization.is_some()
+        || processing_ms.is_some()
+        || api_version.is_some();
+    let has_rate_limits = rate_limits.limit_requests.is_some()
+        || rate_limits.limit_tokens.is_some()
+        || rate_limits.remaining_requests.is_some()
+        || rate_limits.remaining_tokens.is_some()
+        || rate_limits.reset_requests.is_some()
+        || rate_limits.reset_tokens.is_some()
+        || rate_limits.limit_project_tokens.is_some()
+        || rate_limits.remaining_project_tokens.is_some()
+        || rate_limits.reset_project_tokens.is_some();
+
+    if !has_meta && !has_rate_limits {
+        return None;
+    }
+
+    Some(ModelStreamEvent::ApiMeta(ApiMeta {
+        request_id,
+        organization,
+        processing_ms,
+        api_version,
+        rate_limits,
+    }))
 }
 
 /// Helper: create a `Bearer` authorization header value from an API key.
@@ -1248,5 +1318,171 @@ mod tests {
         let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::CHARM_HYPER));
         let headers = behavior.build_headers("k", Endpoint::Responses).unwrap();
         assert!(headers.contains_key("content-type"));
+    }
+
+    // ── Response header parsing ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_openai_response_headers_emits_api_meta() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", HeaderValue::from_static("req_123"));
+        headers.insert("openai-organization", HeaderValue::from_static("org_456"));
+        headers.insert("openai-processing-ms", HeaderValue::from_static("42"));
+        headers.insert("openai-version", HeaderValue::from_static("2020-10-01"));
+        headers.insert(
+            "x-ratelimit-limit-requests",
+            HeaderValue::from_static("100"),
+        );
+        headers.insert(
+            "x-ratelimit-limit-tokens",
+            HeaderValue::from_static("60000"),
+        );
+        headers.insert(
+            "x-ratelimit-remaining-requests",
+            HeaderValue::from_static("99"),
+        );
+        headers.insert(
+            "x-ratelimit-remaining-tokens",
+            HeaderValue::from_static("59999"),
+        );
+        headers.insert(
+            "x-ratelimit-reset-requests",
+            HeaderValue::from_static("2.467s"),
+        );
+        headers.insert(
+            "x-ratelimit-reset-tokens",
+            HeaderValue::from_static("47m40s"),
+        );
+
+        let event = parse_openai_response_headers(&headers).expect("expected ApiMeta event");
+        let ModelStreamEvent::ApiMeta(meta) = event else {
+            panic!("expected ApiMeta, got {event:?}");
+        };
+
+        assert_eq!(meta.request_id, Some("req_123".into()));
+        assert_eq!(meta.organization, Some("org_456".into()));
+        assert_eq!(meta.processing_ms, Some(42));
+        assert_eq!(meta.api_version, Some("2020-10-01".into()));
+        assert_eq!(meta.rate_limits.limit_requests, Some("100".into()));
+        assert_eq!(meta.rate_limits.limit_tokens, Some("60000".into()));
+        assert_eq!(meta.rate_limits.remaining_requests, Some("99".into()));
+        assert_eq!(meta.rate_limits.remaining_tokens, Some("59999".into()));
+        assert_eq!(meta.rate_limits.reset_requests, Some("2.467s".into()));
+        assert_eq!(meta.rate_limits.reset_tokens, Some("47m40s".into()));
+    }
+
+    #[test]
+    fn parse_openai_response_headers_project_rate_limits() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-ratelimit-limit-project-tokens",
+            HeaderValue::from_static("100000"),
+        );
+        headers.insert(
+            "x-ratelimit-remaining-project-tokens",
+            HeaderValue::from_static("99999"),
+        );
+        headers.insert(
+            "x-ratelimit-reset-project-tokens",
+            HeaderValue::from_static("12m"),
+        );
+
+        let event = parse_openai_response_headers(&headers).expect("expected ApiMeta event");
+        let ModelStreamEvent::ApiMeta(meta) = event else {
+            panic!("expected ApiMeta, got {event:?}");
+        };
+
+        assert_eq!(meta.rate_limits.limit_project_tokens, Some("100000".into()));
+        assert_eq!(
+            meta.rate_limits.remaining_project_tokens,
+            Some("99999".into())
+        );
+        assert_eq!(meta.rate_limits.reset_project_tokens, Some("12m".into()));
+        assert!(meta.request_id.is_none());
+        assert!(meta.processing_ms.is_none());
+    }
+
+    #[test]
+    fn parse_openai_response_headers_returns_none_when_empty() {
+        let headers = HeaderMap::new();
+        assert!(parse_openai_response_headers(&headers).is_none());
+    }
+
+    #[test]
+    fn parse_openai_response_headers_ignores_invalid_processing_ms() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", HeaderValue::from_static("req-invalid"));
+        headers.insert(
+            "openai-processing-ms",
+            HeaderValue::from_static("not-a-number"),
+        );
+
+        let event = parse_openai_response_headers(&headers).expect("expected ApiMeta event");
+        let ModelStreamEvent::ApiMeta(meta) = event else {
+            panic!("expected ApiMeta, got {event:?}");
+        };
+        assert_eq!(meta.request_id, Some("req-invalid".into()));
+        assert!(meta.processing_ms.is_none());
+    }
+
+    #[test]
+    fn provider_behaviors_parse_openai_compatible_response_headers() {
+        let ids = vec![
+            ProviderId::OPENAI,
+            ProviderId::OPENROUTER,
+            ProviderId::GROQ,
+            ProviderId::OPENCODE,
+            ProviderId::OPENCODE_ZEN,
+            ProviderId::OPENCODE_GO,
+            ProviderId::COMMANDCODE,
+            ProviderId::CHARM_HYPER,
+            ProviderId::NVIDIA,
+        ];
+
+        for id in ids {
+            let behavior = behavior_for_provider(&ProviderId::from_config_id(id));
+            let mut headers = HeaderMap::new();
+            headers.insert("x-request-id", HeaderValue::from_static("req-abc"));
+            headers.insert("openai-organization", HeaderValue::from_static("org-xyz"));
+            headers.insert("openai-processing-ms", HeaderValue::from_static("15"));
+            headers.insert(
+                "x-ratelimit-remaining-requests",
+                HeaderValue::from_static("8"),
+            );
+
+            let event = behavior
+                .parse_response_headers(&headers)
+                .expect("{id} should parse OpenAI-compatible headers");
+            let ModelStreamEvent::ApiMeta(meta) = event else {
+                panic!("expected ApiMeta from {id}, got {event:?}");
+            };
+            assert_eq!(meta.request_id, Some("req-abc".into()), "{id} request_id");
+            assert_eq!(
+                meta.organization,
+                Some("org-xyz".into()),
+                "{id} organization"
+            );
+            assert_eq!(meta.processing_ms, Some(15), "{id} processing_ms");
+            assert_eq!(
+                meta.rate_limits.remaining_requests,
+                Some("8".into()),
+                "{id} remaining_requests"
+            );
+        }
+    }
+
+    #[test]
+    fn anthropic_and_gemini_return_none_for_unrecognized_headers() {
+        let mut headers = HeaderMap::new();
+        // Anthropic and Gemini do not emit OpenAI-prefixed headers.
+        headers.insert("request-id", HeaderValue::from_static("anthropic-req"));
+
+        for id in [ProviderId::ANTHROPIC, ProviderId::GOOGLE_GEMINI] {
+            let behavior = behavior_for_provider(&ProviderId::from_config_id(id));
+            assert!(
+                behavior.parse_response_headers(&headers).is_none(),
+                "{id} should not emit ApiMeta for unrecognized headers"
+            );
+        }
     }
 }

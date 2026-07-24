@@ -18,6 +18,7 @@ impl crate::provider::OpenAiProvider {
         let api_key = self.api_key.clone();
         let provider_id = self.provider_id.clone();
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
+        let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
             let model_name = request.model.clone();
@@ -68,6 +69,9 @@ impl crate::provider::OpenAiProvider {
 
             tracing::debug!(provider = %provider_id, model = %model_name, status = %response.status(), "provider stream response received");
             let response = ensure_success(response).await?;
+            if let Some(event) = behavior.parse_response_headers(response.headers()) {
+                yield event;
+            }
             let mut decoder = SseDecoder::default();
             let mut chunks = response.bytes_stream();
 

@@ -191,7 +191,8 @@ pub trait ModelProvider: Send + Sync {
                 | ModelStreamEvent::Usage { .. }
                 | ModelStreamEvent::ThinkingDelta { .. }
                 | ModelStreamEvent::ToolCall(_)
-                | ModelStreamEvent::ToolCallProgress { .. } => {}
+                | ModelStreamEvent::ToolCallProgress { .. }
+                | ModelStreamEvent::ApiMeta(_) => {}
             }
         }
 
@@ -297,6 +298,44 @@ pub struct ModelResponse {
     pub text: String,
 }
 
+/// Rate-limit headers returned by a provider.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RateLimits {
+    /// Maximum requests allowed in the current window.
+    pub limit_requests: Option<String>,
+    /// Maximum tokens allowed in the current window.
+    pub limit_tokens: Option<String>,
+    /// Remaining requests in the current window.
+    pub remaining_requests: Option<String>,
+    /// Remaining tokens in the current window.
+    pub remaining_tokens: Option<String>,
+    /// Time until the request window resets.
+    pub reset_requests: Option<String>,
+    /// Time until the token window resets.
+    pub reset_tokens: Option<String>,
+    /// Maximum project tokens allowed in the current window.
+    pub limit_project_tokens: Option<String>,
+    /// Remaining project tokens in the current window.
+    pub remaining_project_tokens: Option<String>,
+    /// Time until the project token window resets.
+    pub reset_project_tokens: Option<String>,
+}
+
+/// API-level metadata returned in HTTP response headers.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ApiMeta {
+    /// Unique identifier for the request (`x-request-id`, `cf-ray`, etc.).
+    pub request_id: Option<String>,
+    /// Organization associated with the request (`openai-organization`).
+    pub organization: Option<String>,
+    /// Time taken processing the request in milliseconds (`openai-processing-ms`).
+    pub processing_ms: Option<u64>,
+    /// API version used for the request (`openai-version`).
+    pub api_version: Option<String>,
+    /// Rate-limit information returned by the provider.
+    pub rate_limits: RateLimits,
+}
+
 /// A single event from a model provider's streaming response.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ModelStreamEvent {
@@ -340,6 +379,8 @@ pub enum ModelStreamEvent {
         /// Total characters of arguments streamed so far for this call.
         arguments_chars: usize,
     },
+    /// API metadata and rate-limit headers from the provider response.
+    ApiMeta(ApiMeta),
     /// The stream has ended.
     Done,
 }
