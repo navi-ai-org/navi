@@ -1,6 +1,6 @@
 {
   "name": "@navi-agent/navi-linux-x64",
-  "version": "0.3.6",
+  "version": "0.3.8",
   "description": "Linux x64 prebuilt binary for @navi-agent/navi.",
   "license": "Apache-2.0",
   "os": [

@@ -1,6 +1,6 @@
 {
   "name": "@navi-agent/napi-darwin-arm64",
-  "version": "0.3.6",
+  "version": "0.3.8",
   "description": "macOS arm64 (Apple Silicon) prebuilt binary for @navi-agent/napi.",
   "license": "Apache-2.0",
   "os": [

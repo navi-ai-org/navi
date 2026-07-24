@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-07-23
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.7...v0.3.8
+
+OpenAI API meta/rate-limit header support, workspace clippy cleanup, and TUI snapshot fixes.
+
+### Added
+
+- **`ApiMeta`/`RateLimits`** — new `ModelStreamEvent::ApiMeta` variant in `navi-core` surfaces request ID, organization, processing time, API version, and all `x-ratelimit-*` / `x-ratelimit-*-project-tokens` headers.
+- **`ProviderBehavior::parse_response_headers`** — OpenAI-compatible parser wired into openai/anthropic/gemini streaming paths and emitted right after `ensure_success`.
+- **Test coverage** for `x-request-id`, `openai-organization`, `openai-processing-ms`, `openai-version`, and every `x-ratelimit-*` header (including project token variants).
+- **`navi-sdk` re-export** of `ApiMeta`/`RateLimits` to keep engine surfaces in sync.
+
+### Fixed
+
+- **TUI snapshot `modal_thinking_80x24`** updated to include the new `xhigh` and `off` effort levels.
+- **Flaky `tool_approval_pending_in_chat`** test by resetting request usage in the test harness so elapsed time is deterministic (`0ms`).
+- **Clippy deny error** `overly_complex_bool_expr` in `navi-openai/src/providers/openai.rs`.
+
+### Changed
+
+- **Boxed `ApiMeta`** inside `ModelStreamEvent` to resolve the `large_enum_variant` clippy warning and shrink stream events.
+- **Applied `cargo clippy --fix --workspace`** for machine-applicable cleanups (93 files, 983 insertions / 1.140 deletions).
+- **Workspace crates + npm packages** bumped to **0.3.8**.
+
 ## [0.3.7] - 2026-07-23
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.6...v0.3.7
