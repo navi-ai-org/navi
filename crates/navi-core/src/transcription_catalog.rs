@@ -2,7 +2,7 @@
 //!
 //! Sources (in order), mirroring the LLM provider catalog:
 //! 1. Process-global SQLite registry cache (seeded from embedded + remote sync)
-//! 2. Embedded registry snapshot (`registry-snapshot/transcription-providers/`)
+//! 2. Embedded registry snapshot (fetched by build.rs)
 
 use crate::config::providers::registry_store_for_catalog;
 use crate::registry::{RegistryTranscriptionProvider, embedded_transcription_providers};

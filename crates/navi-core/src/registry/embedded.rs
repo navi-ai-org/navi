@@ -1,9 +1,9 @@
 //! Embedded provider registry snapshot.
 //!
-//! The registry snapshot is vendored at `registry-snapshot/` and embedded into
-//! the binary at build time by `build.rs`. This module parses the embedded JSON
-//! into [`RegistryProvider`] values and provides a fallback when the SQLite
-//! cache and remote fetch are both unavailable.
+//! The registry snapshot is fetched from `navi-ai-org/navi-registry` at build
+//! time by `build.rs` and embedded into the binary. This module parses the
+//! embedded JSON into [`RegistryProvider`] values and provides a fallback when
+//! the SQLite cache and remote fetch are both unavailable.
 
 use anyhow::{Context, Result};
 

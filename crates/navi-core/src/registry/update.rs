@@ -176,6 +176,20 @@ fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
         Ok(m) => m,
         Err(_) => return false,
     };
+
+    // Never merge an older embedded snapshot over a newer local cache
+    // (e.g. one updated by `navi registry sync`).
+    if let Ok(Some(cached_version)) = store.manifest_version()
+        && cached_version > embedded_manifest.version
+    {
+        tracing::debug!(
+            cached_version,
+            embedded_version = embedded_manifest.version,
+            "skipping embedded merge; local cache is newer"
+        );
+        return false;
+    }
+
     let embedded_providers = match embedded_providers() {
         Ok(p) => p,
         Err(_) => return false,

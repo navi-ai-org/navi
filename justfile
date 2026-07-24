@@ -208,7 +208,7 @@ clippy:
       -- -D clippy::correctness -D clippy::suspicious -D clippy::perf \
       -W clippy::style -A clippy::too_many_arguments -A clippy::collapsible_if
 
-# ─── Registry ────────────────────────────────────────────────────────────────
+# ─── Dart ──────────────────────────────────────────────────────────────────
 
 # Build the navi-dart native library (debug).
 dart-build:
@@ -224,47 +224,49 @@ dart-test:
 
 # ─── Registry ────────────────────────────────────────────────────────────────
 
-# Sync the embedded registry snapshot from the remote navi-registry database repo.
-# After running this, rebuild navi to embed the updated snapshot.
-#
-# Uses the GitHub tarball (not `git archive --remote`, which GitHub rejects with HTTP 422).
-sync-registry-snapshot:
+# Update the pinned commit of navi-ai-org/navi-registry used by navi-core/build.rs.
+# After running this, rebuild navi to embed the updated registry.
+update-registry-lock:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Fetching latest registry from navi-ai-org/navi-registry..."
+    echo "Fetching latest navi-registry commit..."
+    commit="$(git ls-remote https://github.com/navi-ai-org/navi-registry.git refs/heads/main | awk '{print $1}')"
+    lock="crates/navi-core/registry.lock"
+    {
+      echo "# Pinned commit of https://github.com/navi-ai-org/navi-registry."
+      echo "# Update with: just update-registry-lock"
+      echo "$commit"
+    } > "$lock"
+    echo "Updated $lock to $commit"
+    echo "  cargo check -p navi-core"
+
+# Fetch the registry snapshot to a local directory for offline builds.
+# Set NAVI_REGISTRY_DIR to the printed path when running cargo.
+fetch-registry:
+    #!/usr/bin/env bash
+    set -euo pipefail
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    curl -fsSL "https://codeload.github.com/navi-ai-org/navi-registry/tar.gz/refs/heads/main" \
+    lock="crates/navi-core/registry.lock"
+    commit="$(grep -v '^#' "$lock" | head -n1 | tr -d '[:space:]')"
+    if [[ -z "$commit" ]]; then
+        echo "error: no commit found in $lock" >&2
+        exit 1
+    fi
+    echo "Fetching navi-registry commit $commit..."
+    curl -fsSL "https://codeload.github.com/navi-ai-org/navi-registry/tar.gz/$commit" \
         | tar -xz -C "$tmp"
     src="$(find "$tmp" -maxdepth 1 -type d -name 'navi-registry-*' | head -n1)"
     if [[ -z "$src" || ! -f "$src/manifest.json" ]]; then
         echo "error: registry tarball missing manifest.json" >&2
         exit 1
     fi
-    dest="crates/navi-core/registry-snapshot"
-    # Replace tracked snapshot trees so removals (e.g. deleted providers) apply.
-    rm -rf "$dest/providers" "$dest/models" "$dest/bases" "$dest/schemas" "$dest/transcription-providers"
-    mkdir -p "$dest"
-    cp "$src/manifest.json" "$dest/manifest.json"
-    for dir in providers models bases schemas transcription-providers; do
-        if [[ -d "$src/$dir" ]]; then
-            cp -a "$src/$dir" "$dest/$dir"
-        fi
-    done
-
-    # Normalize canonical model filenames so the repo clones on Windows.
-    # Model ids may contain ':' (Ollama tags); store them as '__' on disk.
-    # The Rust loader (build.rs / fetcher.rs) maps '__' back to ':'.
-    while IFS= read -r -d '' path; do
-        old_name=$(basename "$path")
-        new_name=${old_name//:/__}
-        mv "$dest/models/$old_name" "$dest/models/$new_name"
-        sed "s|\"file\": \"models/$old_name\"|\"file\": \"models/$new_name\"|g" "$dest/manifest.json" > "$dest/manifest.json.tmp"
-        mv "$dest/manifest.json.tmp" "$dest/manifest.json"
-    done < <(find "$dest/models" -maxdepth 1 -type f -name '*:*.json' -print0)
-
-    echo "Registry snapshot updated (providers + canonical models + schemas). Rebuild navi to embed it."
-    echo "  cargo check -p navi-core"
+    cache_dir="${NAVI_REGISTRY_CACHE:-$HOME/.cache/navi/registry/local}"
+    rm -rf "$cache_dir"
+    mkdir -p "$cache_dir"
+    cp -a "$src/." "$cache_dir/"
+    echo "Registry fetched to: $cache_dir"
+    echo "Build offline with: NAVI_REGISTRY_DIR=$cache_dir cargo check -p navi-core"
 
 # ─── Brand / demo GIF ─────────────────────────────────────────────────────────
 

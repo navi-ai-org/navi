@@ -52,7 +52,7 @@ Load order: defaults → `~/.config/navi/config.toml` → `.navi/config.toml`.
 - Sessions: `{data_dir}/sessions/` with secret redaction by default.
 - Logs: `{data_dir}/logs/navi.log` — diagnostics only; never secrets, full prompts, or draw-path spam.
 
-Providers: registry DB is [navi-ai-org/navi-registry](https://github.com/navi-ai-org/navi-registry); binary embeds `registry-snapshot/`, caches SQLite, pulls remote. Sync: `just sync-registry-snapshot` / `navi registry sync`. Details in code under `navi-core/src/registry/`.
+Providers: registry DB is [navi-ai-org/navi-registry](https://github.com/navi-ai-org/navi-registry); `navi-core` pins a commit in `crates/navi-core/registry.lock` and `build.rs` fetches/ embeds that snapshot, then caches SQLite and pulls remote. Sync lock: `just update-registry-lock` / `just fetch-registry` (offline cache). Runtime sync: `navi registry sync`. Offline builds set `NAVI_OFFLINE=1` and `NAVI_REGISTRY_DIR=<path>`. Details in code under `navi-core/src/registry/`.
 
 ## Tools & security
 

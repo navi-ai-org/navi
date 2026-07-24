@@ -1,184 +1,144 @@
 //! Build script for navi-core.
 //!
-//! Embeds the provider registry snapshot (`registry-snapshot/`) into the
-//! compiled binary so NAVI works offline and has a fallback when the SQLite
-//! cache and remote fetch both fail.
+//! Fetches the provider registry snapshot from `navi-ai-org/navi-registry` and
+//! embeds it into the compiled binary so NAVI works offline and has a fallback
+//! when the SQLite cache and remote fetch both fail.
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
-fn main() {
-    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+use anyhow::{Context, Result};
+
+const REGISTRY_ORG: &str = "navi-ai-org";
+const REGISTRY_REPO: &str = "navi-registry";
+const REGISTRY_LOCK_FILE: &str = "registry.lock";
+const MAX_TARBALL_SIZE: u64 = 50 * 1024 * 1024; // 50 MiB
+
+fn main() -> Result<()> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").context("OUT_DIR not set")?);
     let manifest_dir =
-        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
-    let snapshot_dir = manifest_dir.join("registry-snapshot");
-    let providers_dir = snapshot_dir.join("providers");
-    let transcription_providers_dir = snapshot_dir.join("transcription-providers");
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").context("CARGO_MANIFEST_DIR not set")?);
+    let lock_file = manifest_dir.join(REGISTRY_LOCK_FILE);
+
+    println!("cargo:rerun-if-changed={}", lock_file.display());
+    println!("cargo:rerun-if-env-changed=NAVI_REGISTRY_DIR");
+    println!("cargo:rerun-if-env-changed=NAVI_OFFLINE");
 
     let embedded_dir = out_dir.join("embedded_registry");
-    fs::create_dir_all(&embedded_dir).expect("failed to create embedded_registry output dir");
-    let embedded_providers_dir = embedded_dir.join("providers");
-    fs::create_dir_all(&embedded_providers_dir).expect("failed to create embedded providers dir");
-    let embedded_transcription_dir = embedded_dir.join("transcription-providers");
-    fs::create_dir_all(&embedded_transcription_dir)
-        .expect("failed to create embedded transcription-providers dir");
+    fs::create_dir_all(&embedded_dir).context("failed to create embedded_registry output dir")?;
 
-    // Copy manifest.json
+    // Resolve the snapshot source: local override, remote tarball pinned by lock.
+    let snapshot_dir = resolve_snapshot_dir(&manifest_dir, &lock_file)?;
+    println!(
+        "cargo:rerun-if-changed={}",
+        snapshot_dir.join("manifest.json").display()
+    );
+
+    // Copy manifest.json into the embedded dir so include_str!("manifest.json") works.
     let manifest_src = snapshot_dir.join("manifest.json");
     let manifest_dst = embedded_dir.join("manifest.json");
-    fs::copy(&manifest_src, &manifest_dst).expect("failed to copy embedded manifest");
-    println!("cargo:rerun-if-changed={}", manifest_src.display());
+    fs::copy(&manifest_src, &manifest_dst).with_context(|| {
+        format!(
+            "failed to copy embedded manifest from {}",
+            manifest_src.display()
+        )
+    })?;
 
-    // Collect and copy LLM provider files, sorted for deterministic output.
-    let mut provider_files: Vec<_> = fs::read_dir(&providers_dir)
-        .expect("failed to read registry-snapshot/providers")
-        .filter_map(|e| {
-            let e = e.expect("dir entry");
-            let path = e.path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                Some(path)
-            } else {
-                None
-            }
-        })
-        .collect();
-    provider_files.sort();
+    let providers_dir = snapshot_dir.join("providers");
+    let transcription_providers_dir = snapshot_dir.join("transcription-providers");
+    let models_dir = snapshot_dir.join("models");
+    let bases_dir = snapshot_dir.join("bases");
+    let schema_src = snapshot_dir.join("schemas");
 
-    let mut entries = Vec::new();
+    // Copy and embed LLM provider files, sorted for deterministic output.
+    let embedded_providers_dir = embedded_dir.join("providers");
+    fs::create_dir_all(&embedded_providers_dir)
+        .context("failed to create embedded providers dir")?;
+    let provider_files =
+        collect_json_files(&providers_dir).context("failed to read providers directory")?;
+    let mut entries = Vec::with_capacity(provider_files.len());
     for path in &provider_files {
-        let id = path
-            .file_stem()
-            .expect("provider file has no stem")
-            .to_str()
-            .expect("provider file name is not valid UTF-8");
+        let id = file_stem(path).context("provider file has invalid name")?;
         let dst = embedded_providers_dir.join(format!("{id}.json"));
-        fs::copy(path, &dst).expect("failed to copy embedded provider");
-        println!("cargo:rerun-if-changed={}", path.display());
-        entries.push((
-            id.to_string(),
-            dst.to_str().expect("path is not valid UTF-8").to_string(),
-        ));
+        fs::copy(path, &dst).with_context(|| format!("failed to copy embedded provider {id}"))?;
+        entries.push((id.to_string(), embedded_path(&dst, &embedded_dir)?));
     }
 
-    // Collect and copy transcription / dictation provider files.
+    // Copy and embed transcription / dictation provider files.
+    let embedded_transcription_dir = embedded_dir.join("transcription-providers");
+    fs::create_dir_all(&embedded_transcription_dir)
+        .context("failed to create embedded transcription-providers dir")?;
     let mut transcription_entries = Vec::new();
     if transcription_providers_dir.is_dir() {
-        let mut files: Vec<_> = fs::read_dir(&transcription_providers_dir)
-            .expect("failed to read registry-snapshot/transcription-providers")
-            .filter_map(|e| {
-                let e = e.expect("dir entry");
-                let path = e.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        files.sort();
+        let files = collect_json_files(&transcription_providers_dir)
+            .context("failed to read transcription-providers directory")?;
         for path in &files {
-            let id = path
-                .file_stem()
-                .expect("transcription provider file has no stem")
-                .to_str()
-                .expect("transcription provider file name is not valid UTF-8");
+            let id = file_stem(path).context("transcription provider file has invalid name")?;
             let dst = embedded_transcription_dir.join(format!("{id}.json"));
-            fs::copy(path, &dst).expect("failed to copy embedded transcription provider");
-            println!("cargo:rerun-if-changed={}", path.display());
-            transcription_entries.push((
-                id.to_string(),
-                dst.to_str().expect("path is not valid UTF-8").to_string(),
-            ));
+            fs::copy(path, &dst)
+                .with_context(|| format!("failed to copy embedded transcription provider {id}"))?;
+            transcription_entries.push((id.to_string(), embedded_path(&dst, &embedded_dir)?));
         }
     }
 
-    // Collect and copy canonical model catalog files.
-    let models_dir = snapshot_dir.join("models");
-    let mut model_catalog_entries = Vec::new();
-    if models_dir.is_dir() {
-        let embedded_models_dir = embedded_dir.join("models");
-        fs::create_dir_all(&embedded_models_dir).expect("failed to create embedded models dir");
-        let mut model_files: Vec<_> = fs::read_dir(&models_dir)
-            .expect("failed to read registry-snapshot/models")
-            .filter_map(|e| {
-                let e = e.expect("dir entry");
-                let path = e.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        model_files.sort();
-        for path in &model_files {
-            // Filenames must stay Windows-safe (no `:`). Model ids may contain
-            // `:` (Ollama tags like `gemma3:12b`); encode as `__` on disk and
-            // restore when embedding the catalog id.
-            let stem = path
-                .file_stem()
-                .expect("model file has no stem")
-                .to_str()
-                .expect("model file name is not valid UTF-8");
-            let id = stem.replace("__", ":");
-            let safe_name = format!("{stem}.json");
-            let dst = embedded_models_dir.join(&safe_name);
-            fs::copy(path, &dst).expect("failed to copy embedded canonical model");
-            println!("cargo:rerun-if-changed={}", path.display());
-            model_catalog_entries.push((
-                id,
-                dst.to_str().expect("path is not valid UTF-8").to_string(),
-            ));
-        }
+    // Copy and embed canonical model catalog files.
+    let embedded_models_dir = embedded_dir.join("models");
+    fs::create_dir_all(&embedded_models_dir).context("failed to create embedded models dir")?;
+    let model_files = if models_dir.is_dir() {
+        collect_json_files(&models_dir).context("failed to read models directory")?
+    } else {
+        Vec::new()
+    };
+    let mut model_catalog_entries = Vec::with_capacity(model_files.len());
+    for path in &model_files {
+        // Filenames must stay Windows-safe (no `:`). Model ids may contain
+        // `:` (Ollama tags like `gemma3:12b`); encode as `__` on disk and
+        // restore when embedding the catalog id.
+        let stem = path
+            .file_stem()
+            .expect("model file has no stem")
+            .to_str()
+            .context("model file name is not valid UTF-8")?;
+        let safe_stem = stem.replace(':', "__");
+        let id = safe_stem.replace("__", ":");
+        let safe_name = format!("{safe_stem}.json");
+        let dst = embedded_models_dir.join(&safe_name);
+        fs::copy(path, &dst)
+            .with_context(|| format!("failed to copy embedded canonical model {id}"))?;
+        model_catalog_entries.push((id, embedded_path(&dst, &embedded_dir)?));
     }
 
-    // Collect and copy provider base definitions (for `extends`).
-    let bases_dir = snapshot_dir.join("bases");
+    // Copy and embed provider base definitions (for `extends`).
+    let embedded_bases_dir = embedded_dir.join("bases");
+    fs::create_dir_all(&embedded_bases_dir).context("failed to create embedded bases dir")?;
     let mut base_entries = Vec::new();
     if bases_dir.is_dir() {
-        let embedded_bases_dir = embedded_dir.join("bases");
-        fs::create_dir_all(&embedded_bases_dir).expect("failed to create embedded bases dir");
-        let mut base_files: Vec<_> = fs::read_dir(&bases_dir)
-            .expect("failed to read registry-snapshot/bases")
-            .filter_map(|e| {
-                let e = e.expect("dir entry");
-                let path = e.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
-                    Some(path)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        base_files.sort();
+        let base_files =
+            collect_json_files(&bases_dir).context("failed to read bases directory")?;
         for path in &base_files {
-            let id = path
-                .file_stem()
-                .expect("base file has no stem")
-                .to_str()
-                .expect("base file name is not valid UTF-8");
+            let id = file_stem(path).context("base file has invalid name")?;
             let dst = embedded_bases_dir.join(format!("{id}.json"));
-            fs::copy(path, &dst).expect("failed to copy embedded base");
-            println!("cargo:rerun-if-changed={}", path.display());
-            base_entries.push((
-                id.to_string(),
-                dst.to_str().expect("path is not valid UTF-8").to_string(),
-            ));
+            fs::copy(path, &dst).with_context(|| format!("failed to copy embedded base {id}"))?;
+            base_entries.push((id.to_string(), embedded_path(&dst, &embedded_dir)?));
         }
     }
 
-    let schema_src = snapshot_dir.join("schemas");
+    // Copy schema files.
     if schema_src.is_dir() {
         let embedded_schema_dir = embedded_dir.join("schemas");
-        fs::create_dir_all(&embedded_schema_dir).expect("failed to create embedded schemas dir");
-        for entry in fs::read_dir(&schema_src).expect("failed to read schemas dir") {
-            let entry = entry.expect("schema dir entry");
+        fs::create_dir_all(&embedded_schema_dir)
+            .context("failed to create embedded schemas dir")?;
+        for entry in fs::read_dir(&schema_src)
+            .with_context(|| format!("failed to read schemas directory {}", schema_src.display()))?
+        {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() {
                 let dst = embedded_schema_dir.join(path.file_name().unwrap());
-                fs::copy(&path, &dst).expect("failed to copy schema");
-                println!("cargo:rerun-if-changed={}", path.display());
+                fs::copy(&path, &dst)
+                    .with_context(|| format!("failed to copy schema {}", path.display()))?;
             }
         }
     }
@@ -210,12 +170,174 @@ fn main() {
     src.push_str("];\n");
 
     let out_file = embedded_dir.join("embedded.rs");
-    fs::write(&out_file, src).expect("failed to write embedded.rs");
-    println!("cargo:rerun-if-changed={}", out_file.display());
+    fs::write(&out_file, src).context("failed to write embedded.rs")?;
 
     // Tell cargo to look in the embedded dir for include_str! paths.
     println!(
         "cargo:rustc-env=NAVI_EMBEDDED_REGISTRY_DIR={}",
         embedded_dir.display()
     );
+
+    Ok(())
+}
+
+fn resolve_snapshot_dir(manifest_dir: &Path, lock_file: &Path) -> Result<PathBuf> {
+    if let Ok(local_dir) = env::var("NAVI_REGISTRY_DIR") {
+        let local_path = PathBuf::from(local_dir);
+        if !local_path.is_dir() {
+            anyhow::bail!(
+                "NAVI_REGISTRY_DIR '{}' is not a directory",
+                local_path.display()
+            );
+        }
+        if !local_path.join("manifest.json").is_file() {
+            anyhow::bail!(
+                "NAVI_REGISTRY_DIR '{}' does not contain manifest.json",
+                local_path.display()
+            );
+        }
+        return Ok(local_path);
+    }
+
+    if env::var_os("NAVI_OFFLINE").is_some() {
+        anyhow::bail!(
+            "NAVI_OFFLINE is set but NAVI_REGISTRY_DIR is not; \
+             provide a local registry directory to build offline"
+        );
+    }
+
+    let lock_text = fs::read_to_string(lock_file).with_context(|| {
+        format!(
+            "failed to read {}. Set NAVI_REGISTRY_DIR to build offline.",
+            lock_file.display()
+        )
+    })?;
+    let commit = lock_text
+        .lines()
+        .map(|l| l.split_once('#').map_or(l, |(before, _)| before).trim())
+        .find(|l| !l.is_empty())
+        .context("registry.lock is empty")?;
+    if commit.len() < 12 {
+        anyhow::bail!("registry.lock does not contain a valid commit hash");
+    }
+
+    fetch_and_extract_registry(commit, manifest_dir)
+}
+
+fn fetch_and_extract_registry(commit: &str, _manifest_dir: &Path) -> Result<PathBuf> {
+    let cache_dir = registry_cache_dir(commit)?;
+    let tar_path = cache_dir.join("registry.tar.gz");
+    let extract_dir = cache_dir.join("extracted");
+
+    // Find an already-extracted source tree.
+    if let Some(source) = find_registry_source(&extract_dir)? {
+        return Ok(source);
+    }
+
+    // Download the tarball if missing.
+    if !tar_path.is_file() {
+        fs::create_dir_all(&cache_dir)
+            .with_context(|| format!("failed to create cache directory {}", cache_dir.display()))?;
+
+        let url =
+            format!("https://codeload.github.com/{REGISTRY_ORG}/{REGISTRY_REPO}/tar.gz/{commit}");
+        eprintln!("navi-core build: fetching registry from {url}");
+
+        let mut response = ureq::get(&url)
+            .call()
+            .with_context(|| format!("failed to fetch registry tarball from {url}"))?;
+
+        let mut reader = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_TARBALL_SIZE)
+            .reader();
+
+        let mut file = fs::File::create(&tar_path)
+            .with_context(|| format!("failed to create {}", tar_path.display()))?;
+        io::copy(&mut reader, &mut file).with_context(|| {
+            format!("failed to write registry tarball to {}", tar_path.display())
+        })?;
+    }
+
+    // Extract.
+    fs::create_dir_all(&extract_dir)
+        .with_context(|| format!("failed to create {}", extract_dir.display()))?;
+    let tar_gz = fs::File::open(&tar_path)
+        .with_context(|| format!("failed to open {}", tar_path.display()))?;
+    let gz = flate2::read::GzDecoder::new(tar_gz);
+    let mut archive = tar::Archive::new(gz);
+    archive.unpack(&extract_dir).with_context(|| {
+        format!(
+            "failed to extract {} into {}",
+            tar_path.display(),
+            extract_dir.display()
+        )
+    })?;
+
+    find_registry_source(&extract_dir)?.with_context(|| {
+        format!(
+            "could not find a valid registry source directory under {}",
+            extract_dir.display()
+        )
+    })
+}
+
+fn registry_cache_dir(commit: &str) -> Result<PathBuf> {
+    // Prefer a user cache directory; fall back to a temporary location if unknown.
+    if let Some(base) = directories::BaseDirs::new() {
+        return Ok(base.cache_dir().join("navi").join("registry").join(commit));
+    }
+    if let Ok(tmp) = env::var("TMPDIR") {
+        return Ok(PathBuf::from(tmp).join("navi-registry").join(commit));
+    }
+    Ok(PathBuf::from("/tmp").join("navi-registry").join(commit))
+}
+
+fn find_registry_source(extract_dir: &Path) -> Result<Option<PathBuf>> {
+    if !extract_dir.is_dir() {
+        return Ok(None);
+    }
+    let mut candidates: Vec<PathBuf> = fs::read_dir(extract_dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+
+    if candidates.len() == 1 {
+        return Ok(Some(candidates.into_iter().next().unwrap()));
+    }
+
+    candidates.retain(|p| p.join("manifest.json").is_file());
+    if candidates.len() == 1 {
+        return Ok(Some(candidates.into_iter().next().unwrap()));
+    }
+
+    Ok(None)
+}
+
+fn collect_json_files(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut files: Vec<_> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+fn file_stem(path: &Path) -> Result<&str> {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("invalid UTF-8 file name: {}", path.display()))
+}
+
+fn embedded_path(path: &Path, embedded_dir: &Path) -> Result<String> {
+    let rel = path.strip_prefix(embedded_dir).with_context(|| {
+        format!(
+            "path {} is not under {}",
+            path.display(),
+            embedded_dir.display()
+        )
+    })?;
+    Ok(rel.to_string_lossy().replace('\\', "/"))
 }

@@ -1,9 +1,0 @@
-{
-  "id": "mimo-anthropic-sgp",
-  "label": "MiMo Singapore",
-  "description": "Xiaomi MiMo series models via Anthropic-compatible API (Singapore region)",
-  "extends": "mimo-anthropic",
-  "kind": "anthropic-messages",
-  "api_key_env": "MIMO_API_KEY",
-  "base_url": "https://token-plan-sgp.xiaomimimo.com/anthropic"
-}

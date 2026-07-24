@@ -55,6 +55,17 @@ embeddings = [
     "dep:hf-hub",
 ]
 
+[build-dependencies]
+anyhow.workspace = true
+directories.workspace = true
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar = "0.4"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
 [dependencies.candle-core]
 version = "0.11"
 optional = true

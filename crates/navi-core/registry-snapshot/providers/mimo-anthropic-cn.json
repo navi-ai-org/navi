@@ -1,9 +1,0 @@
-{
-  "id": "mimo-anthropic-cn",
-  "label": "MiMo (China)",
-  "description": "Xiaomi MiMo series models via Anthropic-compatible API (China region)",
-  "extends": "mimo-anthropic",
-  "kind": "anthropic-messages",
-  "api_key_env": "MIMO_API_KEY",
-  "base_url": "https://token-plan-cn.xiaomimimo.com/anthropic"
-}

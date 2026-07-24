@@ -3342,6 +3342,7 @@ dependencies = [
  "candle-transformers",
  "directories",
  "fastrand",
+ "flate2",
  "futures-util",
  "hex",
  "hf-hub",
@@ -3355,6 +3356,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tar",
  "tempfile",
  "time",
  "tokenizers 0.23.1",
@@ -3363,6 +3365,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "ureq",
 ]
 
 [[package]]
