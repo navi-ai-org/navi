@@ -141,7 +141,7 @@ pub struct VerifierTrace {
 }
 
 /// Aggregated turn metrics.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TurnMetrics {
     /// Total input tokens consumed.
     pub input_tokens: u64,
@@ -165,24 +165,6 @@ pub struct TurnMetrics {
     pub rollback_count: usize,
     /// Wall time in milliseconds.
     pub wall_time_ms: u64,
-}
-
-impl Default for TurnMetrics {
-    fn default() -> Self {
-        Self {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_tokens: 0,
-            cache_read_tokens: 0,
-            tool_call_count: 0,
-            failed_tool_calls: 0,
-            approval_count: 0,
-            verifier_count: 0,
-            retry_count: 0,
-            rollback_count: 0,
-            wall_time_ms: 0,
-        }
-    }
 }
 
 /// Outcome of a turn.
@@ -499,12 +481,11 @@ pub fn turn_traces_from_events(
                         trace.failure_kind = Some(FailureKind::ToolFailure);
                     }
                     trace.record_tool_call(&invocation, result, 0);
-                    if invocation.tool_name == "verifier" {
-                        if let Some(verifier_trace) = verifier_trace_from_tool(&invocation, result)
-                        {
-                            trace.metrics.verifier_count += 1;
-                            trace.verifier_results.push(verifier_trace);
-                        }
+                    if invocation.tool_name == "verifier"
+                        && let Some(verifier_trace) = verifier_trace_from_tool(&invocation, result)
+                    {
+                        trace.metrics.verifier_count += 1;
+                        trace.verifier_results.push(verifier_trace);
                     }
                 }
             }
@@ -633,13 +614,12 @@ fn handle_harness_trace(trace: &mut TurnTrace, value: &serde_json::Value) {
             if let Some(summary) = value.get("summary").and_then(serde_json::Value::as_str) {
                 trace.diagnosis = Some(summary.to_string());
             }
-            if trace.failure_kind.is_none() {
-                if let Some(fk) = value
+            if trace.failure_kind.is_none()
+                && let Some(fk) = value
                     .get("failure_kind")
                     .and_then(|v| serde_json::from_value::<FailureKind>(v.clone()).ok())
-                {
-                    trace.failure_kind = Some(fk);
-                }
+            {
+                trace.failure_kind = Some(fk);
             }
         }
         _ => {}

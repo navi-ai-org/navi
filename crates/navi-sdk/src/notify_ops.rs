@@ -23,10 +23,8 @@ impl NaviEngine {
     /// Prefer emitting via session events when a session is available so
     /// remote clients receive [`navi_core::AgentEvent::NotificationRequested`].
     pub fn notify(&self, request: NotifyRequest, desktop: bool) -> Result<NotifyRequest> {
-        if desktop {
-            if let Err(err) = notify_desktop(&request) {
-                tracing::debug!(%err, "desktop notification failed (best-effort)");
-            }
+        if desktop && let Err(err) = notify_desktop(&request) {
+            tracing::debug!(%err, "desktop notification failed (best-effort)");
         }
         Ok(request)
     }

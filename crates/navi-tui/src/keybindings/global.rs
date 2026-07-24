@@ -77,10 +77,11 @@ pub(super) fn route_global_key(
     }
 
     // Plain Ctrl+C quits (not Ctrl+Shift+C). Bare ETX (0x03) also quits.
-    if is_ctrl_chord(code, modifiers, 'c') && !modifiers.contains(KeyModifiers::SHIFT) {
-        if !is_copy_selection_key(code, modifiers) {
-            return super::apply_ui_effect(app, UiEffect::Quit);
-        }
+    if is_ctrl_chord(code, modifiers, 'c')
+        && !modifiers.contains(KeyModifiers::SHIFT)
+        && !is_copy_selection_key(code, modifiers)
+    {
+        return super::apply_ui_effect(app, UiEffect::Quit);
     }
 
     if is_ctrl_chord(code, modifiers, 'd') {
@@ -147,10 +148,10 @@ pub(super) fn route_global_key(
                 show_notification(app, "Image", "No image found in clipboard.");
             }
             None => {
-                if let Some(text) = crate::clipboard::try_read_clipboard_text() {
-                    if !text.is_empty() {
-                        crate::input::insert_input_text(app, &text);
-                    }
+                if let Some(text) = crate::clipboard::try_read_clipboard_text()
+                    && !text.is_empty()
+                {
+                    crate::input::insert_input_text(app, &text);
                 }
             }
         }

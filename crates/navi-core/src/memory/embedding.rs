@@ -189,11 +189,7 @@ mod candle_embedder {
 
             // Create input_ids tensor [1, seq_len] as u32
             let input_ids_tensor = Tensor::from_slice(
-                input_ids
-                    .iter()
-                    .map(|&v| v as u32)
-                    .collect::<Vec<_>>()
-                    .as_slice(),
+                input_ids.iter().map(|&v| v).collect::<Vec<_>>().as_slice(),
                 (1, input_ids.len()),
                 &self.device,
             )?;
@@ -202,7 +198,7 @@ mod candle_embedder {
             let attention_mask_tensor = Tensor::from_slice(
                 attention_mask
                     .iter()
-                    .map(|&v| v as u32)
+                    .map(|&v| v)
                     .collect::<Vec<_>>()
                     .as_slice(),
                 (1, attention_mask.len()),

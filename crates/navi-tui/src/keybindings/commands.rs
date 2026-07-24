@@ -111,10 +111,10 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
                 .ok()
                 .and_then(|exts| {
                     for ext in exts {
-                        if let Some(panel) = ext.spec.panels.first() {
-                            if ext.spec.commands.iter().any(|c| c.id == cmd.id) {
-                                return Some(panel.body.clone());
-                            }
+                        if let Some(panel) = ext.spec.panels.first()
+                            && ext.spec.commands.iter().any(|c| c.id == cmd.id)
+                        {
+                            return Some(panel.body.clone());
                         }
                     }
                     None

@@ -105,7 +105,7 @@ pub fn load_local_base_map(registry_dir: &Path) -> Result<HashMap<String, Value>
         {
             let entry = entry?;
             let path = entry.path();
-            if !path.extension().is_some_and(|ext| ext == "json") {
+            if path.extension().is_none_or(|ext| ext != "json") {
                 continue;
             }
             let text = std::fs::read_to_string(&path)

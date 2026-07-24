@@ -49,8 +49,10 @@ pub enum AgentProfile {
 /// Controls how the subagent handles tool approvals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ApprovalMode {
     /// Inherit the parent session's approval policy (default).
+    #[default]
     Inherit,
     /// Route approval requests to the parent session for user decision.
     Escalate,
@@ -91,12 +93,6 @@ pub struct SubagentOptions {
     pub create_files: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create_dirs: Option<bool>,
-}
-
-impl Default for ApprovalMode {
-    fn default() -> Self {
-        Self::Inherit
-    }
 }
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
@@ -523,7 +519,7 @@ impl SubagentTool {
         let (instructions, prompt_prefix) = freeze_specialized_prompt(&messages);
 
         // Prefer parent cancel (workflow/tool cancel) so nested turns stop.
-        let cancel_token = parent_cancel.unwrap_or_else(CancelToken::new);
+        let cancel_token = parent_cancel.unwrap_or_default();
 
         let sub_ctx = TurnContext {
             model_provider: Arc::new(RwLock::new(provider)),
@@ -636,7 +632,7 @@ impl SubagentTool {
         let started = Instant::now();
 
         // Link parent cancel into the background task token when provided.
-        let task_cancel = parent_cancel.unwrap_or_else(CancelToken::new);
+        let task_cancel = parent_cancel.unwrap_or_default();
         let task = Arc::new(SubagentBackgroundTask {
             task_id: task_id.clone(),
             prompt: prompt.clone(),

@@ -13,7 +13,6 @@ use navi_plugin_manifest::{
     remove_aggregate_lock_entry, search_catalog, upsert_aggregate_lock_entry, validate,
 };
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 use crate::engine::NaviEngine;
 use crate::types::NaviError;
@@ -577,17 +576,11 @@ pub fn detect_package_kind(path: &Path) -> PluginCatalogKind {
 }
 
 /// Options for kind-specific install side effects.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct KindSideEffectOptions {
     /// When true, merge `mcp.json` into the global MCP config immediately.
     /// When false (default), only report that a merge is pending confirmation.
     pub apply_mcp: bool,
-}
-
-impl Default for KindSideEffectOptions {
-    fn default() -> Self {
-        Self { apply_mcp: false }
-    }
 }
 
 /// Apply kind-specific post-install actions (skill store / MCP config / etc.).

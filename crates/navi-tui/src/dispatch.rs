@@ -838,7 +838,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             show_notification(
                 app,
                 "Dream Completed",
-                &format!(
+                format!(
                     "{} stale, {} duplicates merged, {} active",
                     marked_stale, duplicates_merged, active_count
                 ),
@@ -1074,12 +1074,12 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
             // Esc-cancel already finalized the UI; late "turn cancelled" must not
             // surface as a model error or kick off retry logic.
             if is_turn_cancelled_error(&err) {
-                if let Some(active) = active_assistant_message(app) {
-                    if active.status.as_deref() != Some("cancelled") {
-                        active.status = Some("cancelled".to_string());
-                        if active.content.is_empty() {
-                            active.content = "Cancelled.".to_string();
-                        }
+                if let Some(active) = active_assistant_message(app)
+                    && active.status.as_deref() != Some("cancelled")
+                {
+                    active.status = Some("cancelled".to_string());
+                    if active.content.is_empty() {
+                        active.content = "Cancelled.".to_string();
                     }
                 }
             } else {
@@ -1453,10 +1453,10 @@ fn apply_remaining_credits_from_report(app: &mut TuiApp, report: &NaviUsageRepor
 
 fn parse_hypercredit_balance_from_report(report: &NaviUsageReport) -> Option<f64> {
     for detail in &report.details {
-        if detail.label.eq_ignore_ascii_case("Balance") {
-            if let Some(n) = parse_leading_number(&detail.value) {
-                return Some(n);
-            }
+        if detail.label.eq_ignore_ascii_case("Balance")
+            && let Some(n) = parse_leading_number(&detail.value)
+        {
+            return Some(n);
         }
     }
     None

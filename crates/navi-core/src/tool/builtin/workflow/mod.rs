@@ -25,7 +25,6 @@ use self::journal::WorkflowJournal;
 use self::runtime::{LuaRunInput, run_lua_workflow};
 use self::types::*;
 use super::helpers;
-use crate::cancel::CancelToken;
 use crate::config::WorkflowConfig;
 use crate::security::{SecurityPolicy, redact_secrets};
 use crate::tool::{
@@ -437,10 +436,7 @@ impl Tool for WorkflowTool {
             self.policy.project_root(),
         );
 
-        let cancel_token = context
-            .cancel_token
-            .clone()
-            .unwrap_or_else(CancelToken::new);
+        let cancel_token = context.cancel_token.clone().unwrap_or_default();
         let semaphore = Arc::new(Semaphore::new(max_parallel.max(1)));
         let backend: Arc<dyn AgentBackend> = Arc::new(PolicyAgentBackend {
             inner: self.backend.clone(),
@@ -808,10 +804,9 @@ fn append_journal_line(path: &std::path::Path, value: &Value) {
         .create(true)
         .append(true)
         .open(path)
+        && let Ok(line) = serde_json::to_string(value)
     {
-        if let Ok(line) = serde_json::to_string(value) {
-            let _ = writeln!(f, "{line}");
-        }
+        let _ = writeln!(f, "{line}");
     }
 }
 

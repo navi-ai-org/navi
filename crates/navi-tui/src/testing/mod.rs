@@ -391,6 +391,9 @@ impl Harness {
             status: Some("thinking".to_string()),
             ..ChatMessage::new(ChatRole::Assistant, String::new())
         });
+        // Reset request usage so screenshot tests see deterministic elapsed
+        // times (e.g. `0ms` instead of flaky `0ms`/`1ms`) on fast machines.
+        self.app.usage_state.reset_request_usage();
         self.set_loading(true)
     }
 

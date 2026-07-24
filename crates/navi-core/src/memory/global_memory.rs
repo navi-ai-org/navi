@@ -26,12 +26,12 @@ impl std::fmt::Debug for GlobalMemoryStore {
 impl GlobalMemoryStore {
     /// Opens (or creates) the global memory database.
     pub fn open(db_path: &Path) -> Result<Self> {
-        if let Some(parent) = db_path.parent() {
-            if !parent.exists() {
-                std::fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create global-memory directory: {:?}", parent)
-                })?;
-            }
+        if let Some(parent) = db_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("Failed to create global-memory directory: {:?}", parent)
+            })?;
         }
 
         let conn = Connection::open(db_path)
@@ -121,28 +121,28 @@ impl GlobalMemoryStore {
         for line in markdown.lines() {
             let trimmed = line.trim();
             // Parse lines like "- **Name** (`type`) — description"
-            if let Some(rest) = trimmed.strip_prefix("- **") {
-                if let Some(end_name) = rest.find("**") {
-                    let name = &rest[..end_name];
-                    let after_name = &rest[end_name + 2..];
-                    if let Some(start_type) = after_name.find("(`") {
-                        if let Some(end_type) = after_name[start_type + 2..].find("`)") {
-                            let mem_type = &after_name[start_type + 2..start_type + 2 + end_type];
-                            let description = after_name[start_type + 2 + end_type + 2..]
-                                .trim_start_matches('—')
-                                .trim();
+            if let Some(rest) = trimmed.strip_prefix("- **")
+                && let Some(end_name) = rest.find("**")
+            {
+                let name = &rest[..end_name];
+                let after_name = &rest[end_name + 2..];
+                if let Some(start_type) = after_name.find("(`")
+                    && let Some(end_type) = after_name[start_type + 2..].find("`)")
+                {
+                    let mem_type = &after_name[start_type + 2..start_type + 2 + end_type];
+                    let description = after_name[start_type + 2 + end_type + 2..]
+                        .trim_start_matches('—')
+                        .trim();
 
-                            id_counter += 1;
-                            let id = format!("global_{}", id_counter);
-                            conn.execute(
-                                "INSERT OR REPLACE INTO global_memories
+                    id_counter += 1;
+                    let id = format!("global_{}", id_counter);
+                    conn.execute(
+                        "INSERT OR REPLACE INTO global_memories
                                     (id, type, name, description, body, confidence, status,
                                      created_at, updated_at, last_seen)
                                  VALUES (?1, ?2, ?3, ?4, ?5, 1.0, 'active', ?6, ?6, ?6)",
-                                params![id, mem_type, name, description, description, now,],
-                            )?;
-                        }
-                    }
+                        params![id, mem_type, name, description, description, now,],
+                    )?;
                 }
             }
         }

@@ -111,15 +111,15 @@ impl AutoDreamState {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        if let Some(parent) = self.last_dream_path().parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!(
-                        "Failed to create memory root for last_dream_at: {:?}",
-                        parent
-                    )
-                })?;
-            }
+        if let Some(parent) = self.last_dream_path().parent()
+            && !parent.exists()
+        {
+            fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "Failed to create memory root for last_dream_at: {:?}",
+                    parent
+                )
+            })?;
         }
         fs::write(self.last_dream_path(), now.to_string()).with_context(|| {
             format!(
@@ -178,25 +178,25 @@ impl AutoDreamState {
             }
             Err(_) => {
                 // Lock file exists — check if it's stale (> 1 hour old)
-                if let Ok(content) = fs::read_to_string(&lock_path) {
-                    if let Ok(lock_time) = content.trim().parse::<u64>() {
-                        let now = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        if now.saturating_sub(lock_time) > 3600 {
-                            // Stale lock — steal it
-                            let _ = fs::remove_file(&lock_path);
-                            if fs::OpenOptions::new()
-                                .write(true)
-                                .create_new(true)
-                                .open(&lock_path)
-                                .is_ok()
-                            {
-                                mark_lock_held(lock_path.clone());
-                                let _ = fs::write(&lock_path, now.to_string());
-                                return true;
-                            }
+                if let Ok(content) = fs::read_to_string(&lock_path)
+                    && let Ok(lock_time) = content.trim().parse::<u64>()
+                {
+                    let now = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if now.saturating_sub(lock_time) > 3600 {
+                        // Stale lock — steal it
+                        let _ = fs::remove_file(&lock_path);
+                        if fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&lock_path)
+                            .is_ok()
+                        {
+                            mark_lock_held(lock_path.clone());
+                            let _ = fs::write(&lock_path, now.to_string());
+                            return true;
                         }
                     }
                 }

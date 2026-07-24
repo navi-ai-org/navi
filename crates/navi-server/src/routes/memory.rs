@@ -25,7 +25,7 @@ pub(crate) fn parse_memory_type(s: &str) -> Result<MemoryType, String> {
 pub(crate) fn parse_memory_status(s: &str) -> Result<MemoryStatus, String> {
     let normalized = s.trim().to_ascii_lowercase().replace('-', "_");
     MemoryStatus::from_str(&normalized)
-        .or_else(|| match normalized.as_str() {
+        .or(match normalized.as_str() {
             "active" => Some(MemoryStatus::Active),
             "needs_review" => Some(MemoryStatus::NeedsReview),
             "obsolete" => Some(MemoryStatus::Obsolete),

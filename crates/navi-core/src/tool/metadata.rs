@@ -206,9 +206,10 @@ impl ToolMetadata {
 ///
 /// Used by the policy system to decide whether a tool invocation needs
 /// approval, sandboxing, or rollback capabilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ToolRisk {
     /// Risk not yet classified.
+    #[default]
     Unspecified,
     /// Minimal risk (e.g. read tools, info tools).
     Low,
@@ -220,19 +221,14 @@ pub enum ToolRisk {
     Critical,
 }
 
-impl Default for ToolRisk {
-    fn default() -> Self {
-        Self::Unspecified
-    }
-}
-
 /// Exposure mode for a tool in the registry.
 ///
 /// Controls whether a tool is visible to the model by default or needs to be
 /// discovered through `tool.search`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ToolExposure {
     /// Tool is visible in the main prompt by default.
+    #[default]
     Direct,
     /// Tool is registered but not visible; can be discovered via `tool.search`.
     Deferred,
@@ -243,12 +239,6 @@ pub enum ToolExposure {
     ModelOnly,
     /// Tool is for internal harness use only (not visible to model or user).
     Internal,
-}
-
-impl Default for ToolExposure {
-    fn default() -> Self {
-        Self::Direct
-    }
 }
 
 /// Set of capabilities that a tool may require or provide.

@@ -202,8 +202,7 @@ fn path_matches(pattern: &str, path: &str) -> bool {
     if pattern == "**" || pattern == "*" {
         return true;
     }
-    if pattern.ends_with("/**") {
-        let prefix = &pattern[..pattern.len() - 3];
+    if let Some(prefix) = pattern.strip_suffix("/**") {
         return path == prefix || path.starts_with(&format!("{prefix}/"));
     }
     if let Some(prefix) = pattern.strip_suffix("/**") {

@@ -738,14 +738,14 @@ fn suggest_sed_read(args: &[String]) -> Option<NativeSuggestion> {
             i += 1;
             continue;
         }
-        if arg == "-e" || arg == "--expression" {
-            if let Some(expr) = args.get(i + 1) {
-                if let Some(r) = parse_sed_range(expr) {
-                    range = Some(r);
-                }
-                i += 2;
-                continue;
+        if (arg == "-e" || arg == "--expression")
+            && let Some(expr) = args.get(i + 1)
+        {
+            if let Some(r) = parse_sed_range(expr) {
+                range = Some(r);
             }
+            i += 2;
+            continue;
         }
         if arg == "-f" || arg == "--file" {
             // script file — not a project source dump we can map cleanly
@@ -759,12 +759,12 @@ fn suggest_sed_read(args: &[String]) -> Option<NativeSuggestion> {
             i += 1;
             continue;
         }
-        if range.is_none() {
-            if let Some(r) = parse_sed_range(arg) {
-                range = Some(r);
-                i += 1;
-                continue;
-            }
+        if range.is_none()
+            && let Some(r) = parse_sed_range(arg)
+        {
+            range = Some(r);
+            i += 1;
+            continue;
         }
         if looks_like_path(arg) {
             paths.push(arg.clone());
@@ -820,19 +820,19 @@ fn suggest_head_tail_read(program: &str, args: &[String]) -> Option<NativeSugges
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
-        if arg == "-n" || arg == "--lines" {
-            if let Some(v) = args.get(i + 1) {
-                n = v.trim_start_matches('+').parse().ok();
-                i += 2;
-                continue;
-            }
+        if (arg == "-n" || arg == "--lines")
+            && let Some(v) = args.get(i + 1)
+        {
+            n = v.trim_start_matches('+').parse().ok();
+            i += 2;
+            continue;
         }
-        if let Some(rest) = arg.strip_prefix("-n") {
-            if !rest.is_empty() {
-                n = rest.trim_start_matches('+').parse().ok();
-                i += 1;
-                continue;
-            }
+        if let Some(rest) = arg.strip_prefix("-n")
+            && !rest.is_empty()
+        {
+            n = rest.trim_start_matches('+').parse().ok();
+            i += 1;
+            continue;
         }
         // head -20 file / tail -20 file
         if arg.starts_with('-') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
@@ -1228,10 +1228,7 @@ fn command_likely_needs_sudo(command: &str) -> bool {
         if is_shell_command_separator(token) {
             at_command_position = true;
             // `cmd;sudo` or `cmd|sudo` glued without spaces.
-            if let Some(rest) = token
-                .find(|c| matches!(c, '|' | ';' | '&'))
-                .map(|i| &token[i + 1..])
-            {
+            if let Some(rest) = token.find(['|', ';', '&']).map(|i| &token[i + 1..]) {
                 let rest = rest.trim_start_matches(['|', '&', ';']);
                 if is_sudo_token(rest) {
                     return true;

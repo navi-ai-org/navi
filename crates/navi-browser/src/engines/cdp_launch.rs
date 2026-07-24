@@ -60,14 +60,13 @@ pub fn discover_browser(
 }
 
 fn find_cloakbrowser(explicit: Option<&Path>) -> Option<BrowserBinary> {
-    if let Some(p) = explicit {
-        if p.is_file() {
+    if let Some(p) = explicit
+        && p.is_file() {
             return Some(BrowserBinary {
                 path: p.to_path_buf(),
                 kind: BrowserBackendKind::CloakBrowser,
             });
         }
-    }
     if let Ok(env) = std::env::var("CLOAKBROWSER_BINARY_PATH") {
         let p = PathBuf::from(env);
         if p.is_file() {
@@ -80,8 +79,8 @@ fn find_cloakbrowser(explicit: Option<&Path>) -> Option<BrowserBinary> {
     // Common CloakBrowser cache layouts (~/.cloakbrowser/chromium-*/...)
     let home = dirs_home()?;
     let cache = home.join(".cloakbrowser");
-    if cache.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&cache) {
+    if cache.is_dir()
+        && let Ok(entries) = std::fs::read_dir(&cache) {
             let mut candidates: Vec<PathBuf> = entries
                 .flatten()
                 .map(|e| e.path())
@@ -110,13 +109,12 @@ fn find_cloakbrowser(explicit: Option<&Path>) -> Option<BrowserBinary> {
                 }
             }
         }
-    }
     None
 }
 
 fn find_system_chrome() -> Option<BrowserBinary> {
     for candidate in chrome_candidates() {
-        if which_exists(&candidate) {
+        if which_exists(candidate) {
             return Some(BrowserBinary {
                 path: PathBuf::from(candidate),
                 kind: BrowserBackendKind::Chrome,
@@ -213,11 +211,10 @@ pub async fn launch_browser(binary: &BrowserBinary, opts: LaunchOptions) -> Resu
         args.push("--headless=new".into());
         args.push("--disable-gpu".into());
     }
-    if let Some(proxy) = &opts.proxy {
-        if !proxy.trim().is_empty() {
+    if let Some(proxy) = &opts.proxy
+        && !proxy.trim().is_empty() {
             args.push(format!("--proxy-server={}", proxy.trim()));
         }
-    }
     args.extend(opts.extra_args.iter().cloned());
 
     let mut cmd = Command::new(&binary.path);
@@ -237,12 +234,11 @@ pub async fn launch_browser(binary: &BrowserBinary, opts: LaunchOptions) -> Resu
         .build()?;
     let mut ready = false;
     for _ in 0..50 {
-        if let Ok(resp) = client.get(&http).send().await {
-            if resp.status().is_success() {
+        if let Ok(resp) = client.get(&http).send().await
+            && resp.status().is_success() {
                 ready = true;
                 break;
             }
-        }
         sleep(Duration::from_millis(100)).await;
     }
     if !ready {

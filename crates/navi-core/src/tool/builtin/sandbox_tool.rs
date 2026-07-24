@@ -194,7 +194,7 @@ impl SandboxTool {
                 "rolled_back": had_changes,
                 "files_restored": changes.files_modified.len() + changes.files_deleted.len(),
                 "files_created_and_removed": changes.files_created.len(),
-                "changes": serde_json::to_value(&change_set_summary(&changes)).unwrap_or_default(),
+                "changes": serde_json::to_value(change_set_summary(&changes)).unwrap_or_default(),
             }),
         ))
     }
@@ -226,7 +226,7 @@ impl SandboxTool {
                 "status": "ok",
                 "snapshot_id": snapshot.id,
                 "has_changes": !changes.is_empty(),
-                "changes": serde_json::to_value(&change_set_summary(&changes)).unwrap_or_default(),
+                "changes": serde_json::to_value(change_set_summary(&changes)).unwrap_or_default(),
             }),
         ))
     }

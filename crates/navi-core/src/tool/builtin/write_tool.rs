@@ -239,10 +239,10 @@ impl WriteTool {
             "lines_removed": lines_removed,
             "total_lines": total_lines,
         });
-        if !diff.is_empty() {
-            if let Value::Object(ref mut obj) = output {
-                obj.insert("diff".to_string(), Value::String(diff));
-            }
+        if !diff.is_empty()
+            && let Value::Object(ref mut obj) = output
+        {
+            obj.insert("diff".to_string(), Value::String(diff));
         }
 
         Ok(helpers::ok(invocation.id, output))
@@ -708,18 +708,18 @@ impl WriteTool {
             "lines_added": total_added,
             "lines_removed": total_removed,
         });
-        if !display_diff.is_empty() {
-            if let Value::Object(ref mut obj) = output {
-                obj.insert("diff".to_string(), Value::String(display_diff));
-            }
+        if !display_diff.is_empty()
+            && let Value::Object(ref mut obj) = output
+        {
+            obj.insert("diff".to_string(), Value::String(display_diff));
         }
-        if !errors.is_empty() {
-            if let Value::Object(ref mut obj) = output {
-                obj.insert(
-                    "warnings".to_string(),
-                    Value::Array(errors.into_iter().map(Value::String).collect()),
-                );
-            }
+        if !errors.is_empty()
+            && let Value::Object(ref mut obj) = output
+        {
+            obj.insert(
+                "warnings".to_string(),
+                Value::Array(errors.into_iter().map(Value::String).collect()),
+            );
         }
         Ok(helpers::ok(invocation.id.clone(), output))
     }

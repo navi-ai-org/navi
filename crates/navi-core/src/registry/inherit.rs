@@ -211,10 +211,7 @@ fn bare_model(name: &str) -> RegistryModel {
     }
 }
 
-fn lookup_existing<'a>(
-    name: &str,
-    existing: &'a HashMap<String, RegistryModel>,
-) -> Option<RegistryModel> {
+fn lookup_existing(name: &str, existing: &HashMap<String, RegistryModel>) -> Option<RegistryModel> {
     if let Some(m) = existing.get(name) {
         return Some(m.clone());
     }

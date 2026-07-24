@@ -168,14 +168,14 @@ async fn invoke_multiedit_on_path(
 ) -> Result<ToolResult> {
     let Some(edits) = invocation.input.get("edits").and_then(Value::as_array) else {
         return Ok(error_result(
-            &invocation,
+            invocation,
             "invalid_arguments",
             "`edits` must be a non-empty array of {old_string, new_string, replace_all?} objects",
         ));
     };
     if edits.is_empty() {
         return Ok(error_result(
-            &invocation,
+            invocation,
             "invalid_arguments",
             "`edits` array must contain at least one edit",
         ));
@@ -188,7 +188,7 @@ async fn invoke_multiedit_on_path(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => {
             return Ok(error_result(
-                &invocation,
+                invocation,
                 "io_error",
                 &format!("failed to read {path}: {e}"),
             ));
@@ -205,7 +205,7 @@ async fn invoke_multiedit_on_path(
         if old_string.is_empty() {
             if idx != 0 {
                 return Ok(error_result(
-                    &invocation,
+                    invocation,
                     "edit_failed",
                     &format!(
                         "edit {}: only the first edit can have empty old_string (for file creation)",
@@ -215,7 +215,7 @@ async fn invoke_multiedit_on_path(
             }
             if current.is_some() {
                 return Ok(error_result(
-                    &invocation,
+                    invocation,
                     "edit_failed",
                     &format!("edit {}: file already exists: {path}", idx + 1),
                 ));
@@ -227,7 +227,7 @@ async fn invoke_multiedit_on_path(
 
         let Some(content) = current.as_deref() else {
             return Ok(error_result(
-                &invocation,
+                invocation,
                 "edit_failed",
                 &format!(
                     "edit {}: file does not exist. Use empty old_string on the first edit to create it.",
@@ -245,7 +245,7 @@ async fn invoke_multiedit_on_path(
             }
             Err(msg) => {
                 return Ok(error_result(
-                    &invocation,
+                    invocation,
                     "edit_failed",
                     &format!("edit {}: {msg}", idx + 1),
                 ));
@@ -255,7 +255,7 @@ async fn invoke_multiedit_on_path(
 
     let Some(new_content) = current else {
         return Ok(error_result(
-            &invocation,
+            invocation,
             "edit_failed",
             "no content produced",
         ));
@@ -263,7 +263,7 @@ async fn invoke_multiedit_on_path(
 
     if original.as_deref() == Some(new_content.as_str()) {
         return Ok(error_result(
-            &invocation,
+            invocation,
             "edit_failed",
             "new content is the same as old content. No changes made.",
         ));
@@ -274,14 +274,14 @@ async fn invoke_multiedit_on_path(
     }
     if let Err(e) = fs::write(&full, &new_content) {
         return Ok(error_result(
-            &invocation,
+            invocation,
             "io_error",
             &format!("failed to write {path}: {e}"),
         ));
     }
 
     Ok(success_result(
-        &invocation,
+        invocation,
         path,
         EditOutcome {
             created: original.is_none(),
@@ -418,10 +418,10 @@ fn success_result(
         "lines_removed": lines_removed,
         "created": outcome.created,
     });
-    if !diff.is_empty() {
-        if let Value::Object(ref mut obj) = output {
-            obj.insert("diff".to_string(), Value::String(diff));
-        }
+    if !diff.is_empty()
+        && let Value::Object(ref mut obj) = output
+    {
+        obj.insert("diff".to_string(), Value::String(diff));
     }
     helpers::ok(invocation.id.clone(), output)
 }

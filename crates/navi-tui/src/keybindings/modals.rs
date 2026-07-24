@@ -147,11 +147,9 @@ pub(crate) fn handle_rewind_key(app: &mut TuiApp, code: KeyCode) -> bool {
     let len = checkpoints.len();
     match code {
         KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Down | KeyCode::Tab => {
-            if len > 0 {
-                app.selected_rewind = (app.selected_rewind + 1).min(len.saturating_sub(1));
-                ensure_rewind_visible(app, len);
-            }
+        KeyCode::Down | KeyCode::Tab if len > 0 => {
+            app.selected_rewind = (app.selected_rewind + 1).min(len.saturating_sub(1));
+            ensure_rewind_visible(app, len);
         }
         KeyCode::Up => {
             app.selected_rewind = app.selected_rewind.saturating_sub(1);
@@ -981,11 +979,11 @@ pub(crate) fn handle_sessions_key(
                 .get(app.selected_session)
                 .map(|info| info.id.clone());
             drop(sessions);
-            if let Some(session_id) = session_id {
-                if let Some(snapshot) = load_session_snapshot(&app.session_store, &session_id) {
-                    save_current_session(app);
-                    load_session(app, &snapshot);
-                }
+            if let Some(session_id) = session_id
+                && let Some(snapshot) = load_session_snapshot(&app.session_store, &session_id)
+            {
+                save_current_session(app);
+                load_session(app, &snapshot);
             }
             app.session_filter.clear();
             app.session_filter_cursor = 0;
@@ -1788,39 +1786,34 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
                 super::close_active_modal(app);
             }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if len > 0 {
-                if app.mcp_ui_state.is_focused_on_tools {
-                    let tool_len = app
-                        .mcp_ui_state
-                        .live
-                        .get(app.mcp_ui_state.selected_server)
-                        .map(|s| s.tools.len())
-                        .unwrap_or(0);
-                    if tool_len > 0 {
-                        app.mcp_ui_state.selected_tool =
-                            (app.mcp_ui_state.selected_tool + 1).min(tool_len - 1);
-                    }
-                } else {
-                    app.mcp_ui_state.selected_server = app
-                        .mcp_ui_state
-                        .selected_server
-                        .saturating_add(1)
-                        .min(len - 1);
-                    app.mcp_ui_state.selected_tool = 0;
+        KeyCode::Down | KeyCode::Char('j') if len > 0 => {
+            if app.mcp_ui_state.is_focused_on_tools {
+                let tool_len = app
+                    .mcp_ui_state
+                    .live
+                    .get(app.mcp_ui_state.selected_server)
+                    .map(|s| s.tools.len())
+                    .unwrap_or(0);
+                if tool_len > 0 {
+                    app.mcp_ui_state.selected_tool =
+                        (app.mcp_ui_state.selected_tool + 1).min(tool_len - 1);
                 }
+            } else {
+                app.mcp_ui_state.selected_server = app
+                    .mcp_ui_state
+                    .selected_server
+                    .saturating_add(1)
+                    .min(len - 1);
+                app.mcp_ui_state.selected_tool = 0;
             }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if len > 0 {
-                if app.mcp_ui_state.is_focused_on_tools {
-                    app.mcp_ui_state.selected_tool =
-                        app.mcp_ui_state.selected_tool.saturating_sub(1);
-                } else {
-                    app.mcp_ui_state.selected_server =
-                        app.mcp_ui_state.selected_server.saturating_sub(1);
-                    app.mcp_ui_state.selected_tool = 0;
-                }
+        KeyCode::Up | KeyCode::Char('k') if len > 0 => {
+            if app.mcp_ui_state.is_focused_on_tools {
+                app.mcp_ui_state.selected_tool = app.mcp_ui_state.selected_tool.saturating_sub(1);
+            } else {
+                app.mcp_ui_state.selected_server =
+                    app.mcp_ui_state.selected_server.saturating_sub(1);
+                app.mcp_ui_state.selected_tool = 0;
             }
         }
         KeyCode::Right | KeyCode::Char('l') => {
@@ -1833,23 +1826,21 @@ pub(super) fn handle_mcp_key(app: &mut TuiApp, code: KeyCode, _modifiers: KeyMod
         KeyCode::Char('r') | KeyCode::Char('R') => {
             crate::mcp_status::refresh_mcp_status(app);
         }
-        KeyCode::Enter => {
-            if !app.mcp_ui_state.is_focused_on_tools && len > 0 {
-                let idx = app.mcp_ui_state.selected_server;
-                if let Some(server) = app.loaded_config.config.mcp.servers.get_mut(idx) {
-                    server.enabled = !server.enabled;
-                    // Mirror into live view immediately.
-                    if let Some(live) = app.mcp_ui_state.live.get_mut(idx) {
-                        live.enabled = server.enabled;
-                        if !server.enabled {
-                            live.connected = false;
-                            live.known = true;
-                            live.tools.clear();
-                        } else {
-                            // Re-enabled: status unknown until next probe.
-                            live.known = false;
-                            live.connected = false;
-                        }
+        KeyCode::Enter if !app.mcp_ui_state.is_focused_on_tools && len > 0 => {
+            let idx = app.mcp_ui_state.selected_server;
+            if let Some(server) = app.loaded_config.config.mcp.servers.get_mut(idx) {
+                server.enabled = !server.enabled;
+                // Mirror into live view immediately.
+                if let Some(live) = app.mcp_ui_state.live.get_mut(idx) {
+                    live.enabled = server.enabled;
+                    if !server.enabled {
+                        live.connected = false;
+                        live.known = true;
+                        live.tools.clear();
+                    } else {
+                        // Re-enabled: status unknown until next probe.
+                        live.known = false;
+                        live.connected = false;
                     }
                 }
             }
@@ -2067,15 +2058,11 @@ fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
     ];
     let count = ATTACHMENT_MODALITIES.len();
     match code {
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.selected_attachment_model + 1 < count {
-                app.selected_attachment_model += 1;
-            }
+        KeyCode::Down | KeyCode::Char('j') if app.selected_attachment_model + 1 < count => {
+            app.selected_attachment_model += 1;
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.selected_attachment_model > 0 {
-                app.selected_attachment_model -= 1;
-            }
+        KeyCode::Up | KeyCode::Char('k') if app.selected_attachment_model > 0 => {
+            app.selected_attachment_model -= 1;
         }
         KeyCode::Enter => {
             if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {

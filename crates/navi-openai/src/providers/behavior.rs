@@ -51,10 +51,11 @@ pub(crate) fn json_u64_value(value: &serde_json::Value) -> Option<u64> {
     if let Some(n) = value.as_i64() {
         return u64::try_from(n).ok();
     }
-    if let Some(f) = value.as_f64() {
-        if f.is_finite() && f >= 0.0 {
-            return Some(f.round() as u64);
-        }
+    if let Some(f) = value.as_f64()
+        && f.is_finite()
+        && f >= 0.0
+    {
+        return Some(f.round() as u64);
     }
     value.as_str().and_then(|s| s.trim().parse().ok())
 }
@@ -127,11 +128,11 @@ pub(crate) trait ProviderBehavior: Send + Sync {
             .or_else(|| json_u64(usage.get("prompt_cache_miss_tokens")));
 
         // Some aggregators only put a usable total in `total_tokens`.
-        if input_tokens.is_none() {
-            if let Some(total) = json_u64(usage.get("total_tokens")) {
-                let out = output_tokens.unwrap_or(0);
-                input_tokens = Some(total.saturating_sub(out));
-            }
+        if input_tokens.is_none()
+            && let Some(total) = json_u64(usage.get("total_tokens"))
+        {
+            let out = output_tokens.unwrap_or(0);
+            input_tokens = Some(total.saturating_sub(out));
         }
 
         NormalizedUsage {
@@ -169,17 +170,17 @@ pub(crate) fn parse_openai_response_headers(headers: &HeaderMap) -> Option<Model
         .and_then(|value| value.trim().parse().ok());
     let api_version = header_str(headers, "openai-version");
 
-    let mut rate_limits = RateLimits::default();
-    rate_limits.limit_requests = header_str(headers, "x-ratelimit-limit-requests");
-    rate_limits.limit_tokens = header_str(headers, "x-ratelimit-limit-tokens");
-    rate_limits.remaining_requests = header_str(headers, "x-ratelimit-remaining-requests");
-    rate_limits.remaining_tokens = header_str(headers, "x-ratelimit-remaining-tokens");
-    rate_limits.reset_requests = header_str(headers, "x-ratelimit-reset-requests");
-    rate_limits.reset_tokens = header_str(headers, "x-ratelimit-reset-tokens");
-    rate_limits.limit_project_tokens = header_str(headers, "x-ratelimit-limit-project-tokens");
-    rate_limits.remaining_project_tokens =
-        header_str(headers, "x-ratelimit-remaining-project-tokens");
-    rate_limits.reset_project_tokens = header_str(headers, "x-ratelimit-reset-project-tokens");
+    let rate_limits = RateLimits {
+        limit_requests: header_str(headers, "x-ratelimit-limit-requests"),
+        limit_tokens: header_str(headers, "x-ratelimit-limit-tokens"),
+        remaining_requests: header_str(headers, "x-ratelimit-remaining-requests"),
+        remaining_tokens: header_str(headers, "x-ratelimit-remaining-tokens"),
+        reset_requests: header_str(headers, "x-ratelimit-reset-requests"),
+        reset_tokens: header_str(headers, "x-ratelimit-reset-tokens"),
+        limit_project_tokens: header_str(headers, "x-ratelimit-limit-project-tokens"),
+        remaining_project_tokens: header_str(headers, "x-ratelimit-remaining-project-tokens"),
+        reset_project_tokens: header_str(headers, "x-ratelimit-reset-project-tokens"),
+    };
 
     let has_meta = request_id.is_some()
         || organization.is_some()
@@ -199,13 +200,13 @@ pub(crate) fn parse_openai_response_headers(headers: &HeaderMap) -> Option<Model
         return None;
     }
 
-    Some(ModelStreamEvent::ApiMeta(ApiMeta {
+    Some(ModelStreamEvent::ApiMeta(Box::new(ApiMeta {
         request_id,
         organization,
         processing_ms,
         api_version,
         rate_limits,
-    }))
+    })))
 }
 
 /// Helper: create a `Bearer` authorization header value from an API key.

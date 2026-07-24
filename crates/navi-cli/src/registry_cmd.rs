@@ -55,7 +55,7 @@ async fn list_registry(loaded_config: &LoadedConfig, cwd: &std::path::Path) -> R
         providers.len(),
         total_models
     );
-    println!("{:<25} {:<20} {:>6} {}", "ID", "LABEL", "MODELS", "KIND");
+    println!("{:<25} {:<20} {:>6} KIND", "ID", "LABEL", "MODELS");
     println!("{}", "-".repeat(70));
 
     for provider in &providers {

@@ -71,7 +71,7 @@ pub fn version_is_newer(candidate: &str, current: &str) -> bool {
 
 fn parse_semver(v: &str) -> (u64, u64, u64) {
     let v = normalize_version(v);
-    let mut parts = v.split(|c| c == '.' || c == '-' || c == '+');
+    let mut parts = v.split(['.', '-', '+']);
     let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);

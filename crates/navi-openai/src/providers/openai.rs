@@ -39,11 +39,10 @@ impl crate::provider::OpenAiProvider {
         // Use the `instructions` field for the stable base prompt when
         // available. This lets the provider cache the prefix independently
         // of dynamic developer messages in the input array.
-        if let Some(instructions) = &request.instructions {
-            if !instructions.is_empty() {
+        if let Some(instructions) = &request.instructions
+            && !instructions.is_empty() {
                 body["instructions"] = json!(instructions);
             }
-        }
         if !request.tools.is_empty() {
             // Callers (navi-core turn path) already sort tools for prefix cache.
             // Only re-sort when out of order to avoid redundant clone+sort.
@@ -455,10 +454,10 @@ pub(crate) fn chat_completions_messages(request: &ModelRequest) -> Vec<Value> {
             }
         }
         let mut mapped = message_to_json(message);
-        if message.role == navi_core::ModelRole::Developer {
-            if let Some(obj) = mapped.as_object_mut() {
-                obj.insert("role".into(), Value::String("system".into()));
-            }
+        if message.role == navi_core::ModelRole::Developer
+            && let Some(obj) = mapped.as_object_mut()
+        {
+            obj.insert("role".into(), Value::String("system".into()));
         }
         messages_json.push(mapped);
         // Chat Completions tool messages are text-only; attach view_image
@@ -577,10 +576,10 @@ impl ChatToolCallAccumulator {
                 call.id = Some(id.to_string());
             }
             if let Some(function) = chunk.get("function") {
-                if let Some(name) = function.get("name").and_then(Value::as_str) {
-                    if !name.is_empty() {
-                        call.name = Some(name.to_string());
-                    }
+                if let Some(name) = function.get("name").and_then(Value::as_str)
+                    && !name.is_empty()
+                {
+                    call.name = Some(name.to_string());
                 }
                 if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {
                     call.arguments.push_str(arguments);
@@ -788,8 +787,7 @@ impl TextToolCallExtractor {
         let pending_len = self.pending.len();
         let should_emit = !self.progress_emitted
             || pending_len.saturating_sub(self.last_progress_pending)
-                >= TOOL_CALL_PROGRESS_ARG_STEP
-            || (pending_len > 0 && self.last_progress_pending == 0 && !self.progress_emitted);
+                >= TOOL_CALL_PROGRESS_ARG_STEP;
         if !should_emit {
             return;
         }
@@ -980,23 +978,23 @@ fn parse_hy_arg_value(raw: &str) -> Value {
         return Value::String(String::new());
     }
     // Prefer JSON for objects/arrays/numbers/bools; otherwise keep as string.
-    if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+    if ((trimmed.starts_with('{') && trimmed.ends_with('}'))
         || (trimmed.starts_with('[') && trimmed.ends_with(']'))
         || trimmed == "true"
         || trimmed == "false"
         || trimmed == "null"
         || trimmed.parse::<i64>().is_ok()
-        || trimmed.parse::<f64>().is_ok()
+        || trimmed.parse::<f64>().is_ok())
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
     {
-        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            return value;
-        }
+        return value;
     }
     // Quoted JSON string
-    if trimmed.starts_with('"') && trimmed.ends_with('"') {
-        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
-            return value;
-        }
+    if trimmed.starts_with('"')
+        && trimmed.ends_with('"')
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+    {
+        return value;
     }
     Value::String(raw.to_string())
 }
@@ -1207,11 +1205,11 @@ fn apply_openai_request_options(
     request_options: &navi_core::ProviderRequestOptions,
     api_kind: OpenAiApiKind,
 ) {
-    if let Some(extra_body) = &request_options.extra_body {
-        if let Some(obj) = extra_body.as_object() {
-            for (k, v) in obj {
-                body[k] = v.clone();
-            }
+    if let Some(extra_body) = &request_options.extra_body
+        && let Some(obj) = extra_body.as_object()
+    {
+        for (k, v) in obj {
+            body[k] = v.clone();
         }
     }
 
@@ -1246,10 +1244,10 @@ fn apply_extra_headers(
 ) {
     if let Some(extra_headers) = &request_options.extra_headers {
         for (name, value) in extra_headers {
-            if let Ok(name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) {
-                if let Ok(value) = reqwest::header::HeaderValue::from_str(value) {
-                    headers.insert(name, value);
-                }
+            if let Ok(name) = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                && let Ok(value) = reqwest::header::HeaderValue::from_str(value)
+            {
+                headers.insert(name, value);
             }
         }
     }

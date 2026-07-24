@@ -165,14 +165,13 @@ fn is_chat_block_hit(action: &HitAction) -> bool {
 /// Kept separate from [`dispatch_hit`] so first-click can select without firing them.
 fn run_secondary_chat_click(app: &mut TuiApp, action: &HitAction) {
     match action {
-        HitAction::ChatMessage(index) => {
+        HitAction::ChatMessage(index)
             if app
                 .messages
                 .get(*index)
-                .is_some_and(|message| message.role == crate::state::ChatRole::User)
-            {
-                open_message_actions(app, *index);
-            }
+                .is_some_and(|message| message.role == crate::state::ChatRole::User) =>
+        {
+            open_message_actions(app, *index);
         }
         HitAction::ToolResult(id) => {
             toggle_tool_result(app, id);
@@ -379,10 +378,10 @@ pub(crate) fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 return true;
             }
             let pos = map_mouse_to_text(app, mouse.column, mouse.row);
-            if finish_selection(app, pos) {
-                if let Some(text) = selected_text(app) {
-                    copy_text_to_clipboard(app, &text);
-                }
+            if finish_selection(app, pos)
+                && let Some(text) = selected_text(app)
+            {
+                copy_text_to_clipboard(app, &text);
             }
             true
         }
@@ -429,10 +428,10 @@ fn update_active_text_drag(app: &mut TuiApp, col: u16, row: u16) -> bool {
             app.scroll_offset = app.scroll_offset.saturating_sub(CHAT_WHEEL_LINES);
         }
     }
-    if let Some(pos) = map_mouse_to_text_clamped(app, col, row) {
-        if let Some(selection) = &mut app.selection {
-            selection.end = pos;
-        }
+    if let Some(pos) = map_mouse_to_text_clamped(app, col, row)
+        && let Some(selection) = &mut app.selection
+    {
+        selection.end = pos;
     }
     true
 }
@@ -624,9 +623,7 @@ fn scroll_chat_with_wheel(app: &mut TuiApp, delta_lines: isize, col: u16, row: u
     if delta_lines >= 0 {
         app.scroll_offset = app.scroll_offset.saturating_add(delta_lines as usize);
     } else {
-        app.scroll_offset = app
-            .scroll_offset
-            .saturating_sub(delta_lines.unsigned_abs() as usize);
+        app.scroll_offset = app.scroll_offset.saturating_sub(delta_lines.unsigned_abs());
     }
 
     if !active_drag {
@@ -760,15 +757,14 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
                 .filtered_sessions()
                 .get(index)
                 .map(|info| info.id.clone());
-            if let Some(session_id) = session_id {
-                if let Some(snapshot) =
+            if let Some(session_id) = session_id
+                && let Some(snapshot) =
                     crate::session::load_session_snapshot(&app.session_store, &session_id)
-                {
-                    app.selected_session = index;
-                    crate::persistence::save_current_session(app);
-                    crate::persistence::load_session(app, &snapshot);
-                    crate::keybindings::close_all_modals(app);
-                }
+            {
+                app.selected_session = index;
+                crate::persistence::save_current_session(app);
+                crate::persistence::load_session(app, &snapshot);
+                crate::keybindings::close_all_modals(app);
             }
         }
         HitAction::Skill(index) => {

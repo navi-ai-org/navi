@@ -72,21 +72,12 @@ impl Default for GraphNode {
 /// Directed edge between graph nodes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct GraphEdge {
     pub from: String,
     pub to: String,
     /// Optional condition label (e.g. verify.failed). Soft-only for MVP.
     pub when: Option<String>,
-}
-
-impl Default for GraphEdge {
-    fn default() -> Self {
-        Self {
-            from: String::new(),
-            to: String::new(),
-            when: None,
-        }
-    }
 }
 
 /// Soft graph: entry node + nodes/edges. Hard edge execution is out of MVP scope.
@@ -116,17 +107,13 @@ impl Default for GraphSpec {
 /// Kind of verifier recipe (descriptive for MVP; recipes may be bash stubs).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum VerifierKind {
+    #[default]
     Bash,
     Browser,
     Plugin,
     Other,
-}
-
-impl Default for VerifierKind {
-    fn default() -> Self {
-        Self::Bash
-    }
 }
 
 /// Named verifier recipe referenced by graph nodes.

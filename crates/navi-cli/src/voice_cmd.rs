@@ -133,10 +133,11 @@ pub async fn handle_voice_command(
                     *last = file.to_string();
                     println!("  [..] {file}");
                 }
-                if let Some(t) = total {
-                    if t > 0 && downloaded == t {
-                        println!("       done {:.1} MB", downloaded as f64 / 1_048_576.0);
-                    }
+                if let Some(t) = total
+                    && t > 0
+                    && downloaded == t
+                {
+                    println!("       done {:.1} MB", downloaded as f64 / 1_048_576.0);
                 }
             });
 

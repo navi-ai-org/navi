@@ -18,15 +18,15 @@ impl NaviConfig {
             merge_from_file(&mut config, &project_path, ConfigSource::Project)?;
 
         // Apply environment overrides for memory configuration
-        if let Ok(val) = std::env::var("NAVI_MEMORY_ENABLED") {
-            if let Ok(b) = val.parse::<bool>() {
-                config.memory.enabled = b;
-            }
+        if let Ok(val) = std::env::var("NAVI_MEMORY_ENABLED")
+            && let Ok(b) = val.parse::<bool>()
+        {
+            config.memory.enabled = b;
         }
-        if let Ok(val) = std::env::var("NAVI_MEMORY_REBUILD_THRESHOLD") {
-            if let Ok(f) = val.parse::<f64>() {
-                config.memory.rebuild_threshold = f;
-            }
+        if let Ok(val) = std::env::var("NAVI_MEMORY_REBUILD_THRESHOLD")
+            && let Ok(f) = val.parse::<f64>()
+        {
+            config.memory.rebuild_threshold = f;
         }
         if let Ok(val) = std::env::var("NAVI_MEMORY_CHECKPOINT_THRESHOLDS") {
             let parsed: Vec<f64> = val

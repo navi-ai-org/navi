@@ -250,11 +250,11 @@ pub(crate) fn set_hover_from_action(app: &mut TuiApp, action: &HitAction) -> boo
     if !same {
         app.image_hover_protocol = None;
         if let Some(hover) = app.image_hover.as_mut() {
-            if hover.width.is_none() || hover.height.is_none() {
-                if let Some((w, h)) = terminal_graphics::peek_image_dimensions(&hover.data) {
-                    hover.width = Some(w);
-                    hover.height = Some(h);
-                }
+            if (hover.width.is_none() || hover.height.is_none())
+                && let Some((w, h)) = terminal_graphics::peek_image_dimensions(&hover.data)
+            {
+                hover.width = Some(w);
+                hover.height = Some(h);
             }
             let gfx = terminal_graphics::session_graphics();
             if gfx.supports_image_preview()

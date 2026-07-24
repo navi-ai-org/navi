@@ -339,13 +339,13 @@ fn set_hypercredit_balance_inner(balance: f64, authoritative: bool) {
         return;
     }
     with_hypercredit_balance_lock(|slot| {
-        if !authoritative && balance == 0.0 {
-            if let Some(prev) = *slot
-                && prev > 0.0
-            {
-                // Keep last known positive; ignore stream zero.
-                return;
-            }
+        if !authoritative
+            && balance == 0.0
+            && let Some(prev) = *slot
+            && prev > 0.0
+        {
+            // Keep last known positive; ignore stream zero.
+            return;
         }
         *slot = Some(balance);
     });

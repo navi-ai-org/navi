@@ -103,7 +103,7 @@ impl ProviderCredentials {
                     && self
                         .default_oauth_api_kind()
                         .as_deref()
-                        .is_none_or(|kind| is_model_usable_oauth_kind(kind))
+                        .is_none_or(is_model_usable_oauth_kind)
                 {
                     Some(self.api_key.clone())
                 } else {
@@ -118,7 +118,7 @@ impl ProviderCredentials {
             && self
                 .default_oauth_api_kind()
                 .as_deref()
-                .is_none_or(|kind| is_model_usable_oauth_kind(kind))
+                .is_none_or(is_model_usable_oauth_kind)
         {
             return Some(self.api_key.clone());
         }

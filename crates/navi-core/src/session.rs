@@ -627,10 +627,10 @@ impl SessionStore {
             }
 
             // Atomic write via temp file + rename
-            if let Some(parent) = path.parent() {
-                if !parent.exists() {
-                    fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.exists()
+            {
+                fs::create_dir_all(parent)?;
             }
             let tmp = path.with_extension("json.tmp");
             fs::write(&tmp, data)?;

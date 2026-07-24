@@ -202,7 +202,7 @@ impl ReliabilityIndex {
                 break;
             }
             let path = entry.path();
-            if path.extension().map_or(true, |ext| ext != "jsonl") {
+            if path.extension().is_none_or(|ext| ext != "jsonl") {
                 continue;
             }
             let Ok(content) = std::fs::read_to_string(&path) else {

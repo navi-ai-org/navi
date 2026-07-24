@@ -46,10 +46,11 @@ pub(crate) fn sync_from_plan_tool(
                     }
                 } else {
                     // Preserve completed_at when refreshing the same finished plan.
-                    if let Some(prev) = app.active_plan.as_ref() {
-                        if prev.plan_id == plan.plan_id && prev.completed_at.is_some() {
-                            plan.completed_at = prev.completed_at;
-                        }
+                    if let Some(prev) = app.active_plan.as_ref()
+                        && prev.plan_id == plan.plan_id
+                        && prev.completed_at.is_some()
+                    {
+                        plan.completed_at = prev.completed_at;
                     }
                     plan.note_completed_if_needed();
                     app.active_plan = Some(plan);

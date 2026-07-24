@@ -368,10 +368,10 @@ impl RegistryTranscriptionProvider {
     }
 
     pub fn resolved_path(&self) -> &str {
-        if let Some(p) = self.transcription_path.as_deref() {
-            if !p.is_empty() {
-                return p;
-            }
+        if let Some(p) = self.transcription_path.as_deref()
+            && !p.is_empty()
+        {
+            return p;
         }
         match self.kind_enum() {
             Some(TranscriptionProviderKind::OpenaiAudioTranscriptions) => "/audio/transcriptions",

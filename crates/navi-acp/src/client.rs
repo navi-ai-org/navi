@@ -18,9 +18,10 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
 /// Policy for answering `session/request_permission` from the agent.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum PermissionHandler {
     /// Always pick the first allow_* option, else first option, else cancel.
+    #[default]
     AutoApprove,
     /// Always cancel.
     AutoReject,
@@ -35,12 +36,6 @@ impl std::fmt::Debug for PermissionHandler {
             Self::AutoReject => write!(f, "AutoReject"),
             Self::Custom(_) => write!(f, "Custom(...)"),
         }
-    }
-}
-
-impl Default for PermissionHandler {
-    fn default() -> Self {
-        Self::AutoApprove
     }
 }
 
@@ -183,38 +178,36 @@ impl AcpClient {
             while let Some(msg) = inbound.recv().await {
                 match msg {
                     InboundMessage::Notification { method, params } => {
-                        if method == "session/update" {
-                            if let Ok(note) =
+                        if method == "session/update"
+                            && let Ok(note) =
                                 serde_json::from_value::<SessionNotification>(params.clone())
-                            {
-                                let _ = event_tx.send(AcpEvent::SessionUpdate {
-                                    session_id: note.session_id,
-                                    update: note.update,
-                                });
-                                continue;
-                            }
+                        {
+                            let _ = event_tx.send(AcpEvent::SessionUpdate {
+                                session_id: note.session_id,
+                                update: note.update,
+                            });
+                            continue;
                         }
                         let _ = event_tx.send(AcpEvent::Notification { method, params });
                     }
                     InboundMessage::Request { id, method, params } => {
-                        if method == "session/request_permission" {
-                            if let Ok(req) =
+                        if method == "session/request_permission"
+                            && let Ok(req) =
                                 serde_json::from_value::<RequestPermissionParams>(params.clone())
-                            {
-                                let outcome = resolve_permission(&permission, &req);
-                                let _ = pump_transport
-                                    .respond(
-                                        id.clone(),
-                                        serde_json::to_value(RequestPermissionResult { outcome })
-                                            .unwrap_or(json!({})),
-                                    )
-                                    .await;
-                                let _ = event_tx.send(AcpEvent::PermissionRequired {
-                                    request_id: id,
-                                    params: req,
-                                });
-                                continue;
-                            }
+                        {
+                            let outcome = resolve_permission(&permission, &req);
+                            let _ = pump_transport
+                                .respond(
+                                    id.clone(),
+                                    serde_json::to_value(RequestPermissionResult { outcome })
+                                        .unwrap_or(json!({})),
+                                )
+                                .await;
+                            let _ = event_tx.send(AcpEvent::PermissionRequired {
+                                request_id: id,
+                                params: req,
+                            });
+                            continue;
                         }
                         let _ = pump_transport
                             .respond_error(
@@ -417,11 +410,9 @@ impl AcpClient {
                             update: SessionUpdate::AgentMessageChunk { content, .. },
                             ..
                         } = ev
-                        {
-                            if let Some(t) = content.as_text() {
+                            && let Some(t) = content.as_text() {
                                 collected.push_str(t);
                             }
-                        }
                     }
                     return Ok((result?, collected));
                 }

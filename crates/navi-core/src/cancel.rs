@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,19 +45,17 @@ impl CancelToken {
     /// Completes immediately if cancellation was already requested. The waiter
     /// is registered before the flag is re-checked so a concurrent `cancel()`
     /// cannot be missed between the check and the wait.
-    pub fn notified(&self) -> impl Future<Output = ()> + '_ {
-        async {
-            if self.is_requested() {
-                return;
-            }
-            let mut notified = pin!(self.notify.notified());
-            // Register before re-checking the flag (see method docs).
-            notified.as_mut().enable();
-            if self.is_requested() {
-                return;
-            }
-            notified.await;
+    pub async fn notified(&self) {
+        if self.is_requested() {
+            return;
         }
+        let mut notified = pin!(self.notify.notified());
+        // Register before re-checking the flag (see method docs).
+        notified.as_mut().enable();
+        if self.is_requested() {
+            return;
+        }
+        notified.await;
     }
 }
 

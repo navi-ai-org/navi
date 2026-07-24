@@ -199,12 +199,12 @@ impl GoalRuntimeHandle {
     /// Starts turn accounting for the active goal.
     pub fn start_turn(&self) {
         let goal = self.get_goal();
-        if let Some(goal) = goal {
-            if goal.status.should_auto_continue() {
-                let acct = GoalAccountingState::new(goal);
-                acct.start_turn();
-                *self.accounting.write().unwrap_or_else(|e| e.into_inner()) = Some(acct);
-            }
+        if let Some(goal) = goal
+            && goal.status.should_auto_continue()
+        {
+            let acct = GoalAccountingState::new(goal);
+            acct.start_turn();
+            *self.accounting.write().unwrap_or_else(|e| e.into_inner()) = Some(acct);
         }
     }
 
@@ -231,10 +231,9 @@ impl GoalRuntimeHandle {
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
+            && let Some(goal) = acct.finish_turn()
         {
-            if let Some(goal) = acct.finish_turn() {
-                self.update_goal(goal);
-            }
+            self.update_goal(goal);
         }
         *self.accounting.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
