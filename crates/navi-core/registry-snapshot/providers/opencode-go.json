@@ -1,10 +1,10 @@
 {
   "id": "opencode-go",
   "label": "OpenCode Go",
-  "description": "Low-cost multi-model coding subscription with open-source models from DeepSeek, Qwen, GLM, Kimi, and MiniMax. $10/mo flat rate with generous usage limits.",
+  "description": "Low-cost multi-model coding subscription with open-source models. $5 first month, then $10/mo with generous usage limits.",
   "kind": "openai-chat-completions",
   "api_key_env": "OPENCODE_GO_API_KEY",
-  "base_url": "https://go.opencode.ai/v1",
+  "base_url": "https://opencode.ai/zen/go/v1",
   "defaults": {
     "attachments": {
       "images": false,
@@ -15,11 +15,148 @@
   },
   "models": [
     {
-      "ref": "deepseek-v4-flash",
-      "supports_thinking": false,
+      "ref": "grok-4.5",
       "pricing": {
-        "input_per_1m": 0.09,
-        "output_per_1m": 0.18,
+        "input_per_1m": 2.0,
+        "output_per_1m": 6.0,
+        "cached_input_per_1m": 0.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "glm-5.2",
+      "pricing": {
+        "input_per_1m": 1.4,
+        "output_per_1m": 4.4,
+        "cached_input_per_1m": 0.26,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "glm-5.1",
+      "pricing": {
+        "input_per_1m": 1.4,
+        "output_per_1m": 4.4,
+        "cached_input_per_1m": 0.26,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "kimi-k3",
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "pricing": {
+        "input_per_1m": 3.0,
+        "output_per_1m": 15.0,
+        "cached_input_per_1m": 0.3,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "kimi-k2.7-code",
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "pricing": {
+        "input_per_1m": 0.95,
+        "output_per_1m": 4.0,
+        "cached_input_per_1m": 0.19,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "kimi-k2.6",
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "pricing": {
+        "input_per_1m": 0.95,
+        "output_per_1m": 4.0,
+        "cached_input_per_1m": 0.16,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "mimo-v2.5",
+      "pricing": {
+        "input_per_1m": 0.14,
+        "output_per_1m": 0.28,
+        "cached_input_per_1m": 0.0028,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "mimo-v2.5-pro",
+      "pricing": {
+        "input_per_1m": 0.435,
+        "output_per_1m": 0.87,
+        "cached_input_per_1m": 0.003625,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "minimax-m3",
+      "attachments": {
+        "images": true,
+        "video": true
+      },
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "cached_input_per_1m": 0.06,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "minimax-m2.7",
+      "pricing": {
+        "input_per_1m": 0.3,
+        "output_per_1m": 1.2,
+        "cached_input_per_1m": 0.06,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "qwen3.7-max",
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "pricing": {
+        "input_per_1m": 2.5,
+        "output_per_1m": 7.5,
+        "cached_input_per_1m": 0.5,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "qwen3.7-plus",
+      "attachments": {
+        "images": true,
+        "documents": true
+      },
+      "pricing": {
+        "input_per_1m": 0.4,
+        "output_per_1m": 1.6,
+        "cached_input_per_1m": 0.04,
+        "currency": "USD"
+      }
+    },
+    {
+      "ref": "qwen3.6-plus",
+      "attachments": {
+        "images": true,
+        "documents": true,
+        "video": true
+      },
+      "pricing": {
+        "input_per_1m": 0.5,
+        "output_per_1m": 3.0,
+        "cached_input_per_1m": 0.05,
         "currency": "USD"
       }
     },
@@ -28,50 +165,25 @@
       "pricing": {
         "input_per_1m": 0.435,
         "output_per_1m": 0.87,
+        "cached_input_per_1m": 0.003625,
         "currency": "USD"
       }
     },
     {
-      "ref": "qwen3.6-plus",
-      "max_output_tokens": 65536,
-      "supports_thinking": false,
+      "ref": "deepseek-v4-flash",
       "pricing": {
-        "input_per_1m": 0.325,
-        "output_per_1m": 1.95,
+        "input_per_1m": 0.14,
+        "output_per_1m": 0.28,
+        "cached_input_per_1m": 0.0028,
         "currency": "USD"
       }
     },
     {
-      "ref": "glm-5",
-      "context_window_tokens": 202752,
-      "max_output_tokens": 32768,
-      "supports_thinking": false,
+      "ref": "hy3",
       "pricing": {
-        "input_per_1m": 0.6,
-        "output_per_1m": 1.92,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "kimi-k2.5",
-      "supports_thinking": false,
-      "attachments": {
-        "images": true,
-        "documents": true
-      },
-      "pricing": {
-        "input_per_1m": 0.375,
-        "output_per_1m": 2.025,
-        "currency": "USD"
-      }
-    },
-    {
-      "ref": "minimax-m2.5",
-      "max_output_tokens": 131072,
-      "supports_thinking": false,
-      "pricing": {
-        "input_per_1m": 0.12,
-        "output_per_1m": 0.48,
+        "input_per_1m": 0.14,
+        "output_per_1m": 0.58,
+        "cached_input_per_1m": 0.035,
         "currency": "USD"
       }
     }

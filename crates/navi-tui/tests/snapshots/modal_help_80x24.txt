@@ -3,22 +3,22 @@
     ╭ Help · Keyboard Shortcuts ───────────────────────────────────────────╮
     │ NAVI TUI cheatsheet  ·  bindings are built-in                        │
     │  General ──────────────────────────────────────────────────────────█ │
-    │ ctrl+p                Command palette                              █ │
-    │ ctrl+.  /  ?          Open this help                               █ │
-    │ ctrl+c                Quit NAVI                                    █ │
-    │ esc                   Cancel / close                               █ │
+    │ ctrl+p                           Command palette                   █ │
+    │ ctrl+.  /  ctrl+x  /  ?          Open this help                    █ │
+    │ ctrl+c                           Quit NAVI                         █ │
+    │ esc                              Cancel / close                    █ │
     │                                                                    █ │
     │  Composer ─────────────────────────────────────────────────────────│ │
-    │ ctrl+enter            Send prompt                                  │ │
-    │ enter  /  ctrl+j      Insert newline                               │ │
-    │ ctrl+a                Select all input                             │ │
-    │ ctrl+v  /  ctrl+i     Paste image                                  │ │
-    │ /                     Commands (empty input)                       │ │
-    │ @                     Mention file or folder                       │ │
+    │ ctrl+enter                       Send prompt                       │ │
+    │ enter  /  ctrl+j                 Insert newline                    │ │
+    │ ctrl+a                           Select all input                  │ │
+    │ ctrl+v  /  ctrl+i                Paste image                       │ │
+    │ /                                Commands (empty input)            │ │
+    │ @                                Mention file or folder            │ │
     │                                                                    │ │
     │  Scrollback ───────────────────────────────────────────────────────│ │
     │ Fuzzy-search every action and slash-style command, then run it.      │
   ╭─│ ↑↓/j k select   pgup/pgdn   esc/? close                              │─╮
   │ ╰──────────────────────────────────────────────────────────────────────╯ │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                    gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                         gpt-5.5 (max) · 0 / 200k · restricted

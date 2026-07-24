@@ -2,7 +2,7 @@
 
    › first user block
 
-   │ assistant reply block with markdown.
+  │  assistant reply block with markdown.
 
    ◆ Search "TODO" in src (0 matches)
 
@@ -21,4 +21,4 @@
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ ›                                                                        │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                    gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                         gpt-5.5 (max) · 0 / 200k · restricted

@@ -11,6 +11,16 @@
       "url": "https://github.com/deepseek-ai/DeepSeek-V3",
       "verified_at": "2026-07-14",
       "note": "Official DeepSeek-V3 / V3.2 repository."
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v3.2",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/deepseek/deepseek-v3.2",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
     }
   },
   "attachments": {
@@ -18,11 +28,5 @@
     "audio": false,
     "video": false,
     "documents": false
-  },
-  "reasoning_levels": [
-    "low",
-    "medium",
-    "high"
-  ],
-  "default_reasoning_effort": "medium"
+  }
 }

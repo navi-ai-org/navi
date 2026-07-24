@@ -4,26 +4,25 @@
 
 use anyhow::{Result, bail};
 use navi_core::{
-    CredentialStore, ProviderConfig, ProviderId, canonical_provider_id, resolve_provider_api_key,
+    CredentialStore, ProviderConfig, canonical_provider_id, resolve_provider_api_key,
     resolve_provider_credential_status,
 };
 use std::path::Path;
 
 pub use navi_core::{CredentialAccountInfo, CredentialSource, CredentialStatus};
-pub use navi_providers::CommandCodeUsageData;
 pub use navi_providers::DeviceOAuthStarted;
 
 /// Whether the provider supports browser/device OAuth through the SDK.
 pub fn provider_supports_device_oauth(provider_id: &str) -> bool {
     matches!(
         canonical_provider_id(provider_id),
-        "openai" | "commandcode" | "github-copilot" | "xai"
+        "openai" | "github-copilot" | "xai"
     )
 }
 
 /// Start browser/device OAuth for a supported provider.
 ///
-/// Currently supported: `openai`, `commandcode`, `github-copilot`, `xai`.
+/// Currently supported: `openai`, `github-copilot`, `xai`.
 ///
 /// For `xai`, the default is browser OIDC (PKCE + loopback). Set
 /// `NAVI_XAI_OAUTH_DEVICE=1` to force the device-code flow.
@@ -42,14 +41,6 @@ where
                 .map(|_| None)
                 .map_err(|err| anyhow::anyhow!("openai browser OAuth failed: {err}"))
         }
-        "commandcode" => navi_providers::commandcode_browser_oauth(
-            credential_store.clone(),
-            provider_id,
-            on_started,
-        )
-        .await
-        .map(Some)
-        .map_err(|err| anyhow::anyhow!("commandcode browser OAuth failed: {err}")),
         "github-copilot" => navi_providers::github_copilot_device_oauth(
             credential_store.clone(),
             provider_id,
@@ -96,24 +87,4 @@ pub fn provider_api_key(
     requested_provider_id: &str,
 ) -> Option<String> {
     resolve_provider_api_key(credential_store, provider_config, requested_provider_id)
-}
-
-pub async fn commandcode_usage_data(
-    credential_store: &CredentialStore,
-) -> Result<CommandCodeUsageData> {
-    let api_key = credential_store
-        .get_api_key(ProviderId::COMMANDCODE)
-        .ok_or_else(|| anyhow::anyhow!("missing stored Command Code credential"))?;
-    navi_providers::commandcode_fetch_usage_data(&api_key)
-        .await
-        .map_err(|err| anyhow::anyhow!("fetch Command Code usage data failed: {err}"))
-}
-
-pub async fn commandcode_remote_models(credential_store: &CredentialStore) -> Result<Vec<String>> {
-    let api_key = credential_store
-        .get_api_key(ProviderId::COMMANDCODE)
-        .ok_or_else(|| anyhow::anyhow!("missing stored Command Code credential"))?;
-    navi_providers::commandcode_list_models(&api_key)
-        .await
-        .map_err(|err| anyhow::anyhow!("list Command Code remote models failed: {err}"))
 }

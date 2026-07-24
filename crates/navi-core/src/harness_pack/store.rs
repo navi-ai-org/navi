@@ -1,6 +1,9 @@
 //! Filesystem store for harness packs under `{data_dir}/harnesses/<id>/`.
 
-use super::types::{GraphSpec, HarnessPack, LoopSpec, VerifierKind, VerifierSpec};
+use super::types::{GraphSpec, HarnessPack, LoopSpec, VerifierSpec};
+
+#[cfg(test)]
+use super::types::VerifierKind;
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};

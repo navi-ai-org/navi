@@ -2,8 +2,8 @@
 
    › run tests and keep shell open
 
-   │◆ Run echo keep-me-open
-   │ keep-me-open
+  │◆ Run echo keep-me-open
+  │  keep-me-open
 
 
 
@@ -25,4 +25,4 @@
   ╭──────────────────────────────────────────────────────────────────────────────────────────────╮
   │ ›                                                                                            │
   ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-                                                        gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                                             gpt-5.5 (max) · 0 / 200k · restricted

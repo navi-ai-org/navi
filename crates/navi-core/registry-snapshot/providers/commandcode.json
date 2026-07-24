@@ -1,10 +1,10 @@
 {
   "id": "commandcode",
   "label": "Command Code",
-  "description": "Command Code CLI API (alpha/generate)",
+  "description": "Command Code Provider API (OpenAI/Anthropic-compatible)",
   "kind": "openai-chat-completions",
   "api_key_env": "CMD_API_KEY",
-  "base_url": "https://api.commandcode.ai",
+  "base_url": "https://api.commandcode.ai/provider/v1",
   "tool_calling_mode": "native",
   "defaults": {
     "attachments": {

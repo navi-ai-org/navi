@@ -1,0 +1,36 @@
+{
+  "id": "laguna-s-2.1-free",
+  "vendor": "poolside",
+  "family": "laguna",
+  "context_window_tokens": 1048576,
+  "max_output_tokens": 65536,
+  "recommended_temperature": 1.0,
+  "supports_thinking": true,
+  "attachments": {
+    "images": false,
+    "audio": false,
+    "video": false,
+    "documents": false
+  },
+  "aliases": [
+    "poolside/laguna-s-2.1",
+    "poolside/laguna-s-2.1:free"
+  ],
+  "sources": {
+    "context_window_tokens": {
+      "url": "https://opencode.ai/docs/zen/",
+      "verified_at": "2026-07-22",
+      "note": "OpenCode Zen free Laguna S 2.1; 1M context per OpenCode announcement"
+    },
+    "reasoning_levels": {
+      "url": "https://openrouter.ai/api/v1/models/poolside/laguna-s-2.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    },
+    "default_reasoning_effort": {
+      "url": "https://openrouter.ai/api/v1/models/poolside/laguna-s-2.1",
+      "verified_at": "2026-07-23",
+      "note": "auto-filled from OpenRouter /api/v1/models"
+    }
+  }
+}

@@ -11,7 +11,6 @@ pub use navi_openai::oauth;
 pub use navi_openai::types;
 
 pub use navi_openai::CharmHyperCreditsReport;
-pub use navi_openai::CommandCodeUsageData;
 pub use navi_openai::DeviceOAuthStarted;
 pub use navi_openai::HYPERCREDIT_USD;
 pub use navi_openai::OpenAiApiKind;
@@ -24,9 +23,6 @@ pub use navi_openai::ProviderError;
 pub use navi_openai::XaiProductUsage;
 pub use navi_openai::XaiUsageReport;
 pub use navi_openai::charm_hyper_credits_report;
-pub use navi_openai::commandcode_browser_oauth;
-pub use navi_openai::commandcode_fetch_usage_data;
-pub use navi_openai::commandcode_list_models;
 pub use navi_openai::ensure_xai_access_token;
 pub use navi_openai::extract_hypercredit_balance_from_usage;
 pub use navi_openai::format_hypercredits;

@@ -1280,23 +1280,6 @@ impl NaviEngine {
                     )),
                 }
             }
-            "commandcode" => {
-                let Some(token) = access_token else {
-                    return Ok(empty_usage_report(
-                        &provider,
-                        "session",
-                        Some("No Command Code credential configured.".into()),
-                    ));
-                };
-                match navi_providers::commandcode_fetch_usage_data(&token).await {
-                    Ok(data) => Ok(commandcode_report_to_sdk(&provider, data)),
-                    Err(err) => Ok(empty_usage_report(
-                        &provider,
-                        "commandcode-error",
-                        Some(format!("Command Code usage unavailable: {err}")),
-                    )),
-                }
-            }
             "charm-hyper" => {
                 let Some(token) = access_token else {
                     return Ok(empty_usage_report(
@@ -2507,60 +2490,6 @@ fn charm_hyper_report_to_sdk(
                     .into()
             }
         }),
-        details,
-    }
-}
-
-fn commandcode_report_to_sdk(
-    provider: &navi_core::ProviderConfig,
-    data: navi_providers::CommandCodeUsageData,
-) -> NaviUsageReport {
-    let mut details = Vec::new();
-    if let Some(whoami) = data.whoami.as_object() {
-        if let Some(email) = whoami
-            .get("email")
-            .or_else(|| whoami.get("user").and_then(|u| u.get("email")))
-            .and_then(|v| v.as_str())
-        {
-            details.push(NaviUsageDetail {
-                label: "Account".into(),
-                value: email.to_string(),
-            });
-        }
-    }
-    if let Some(credits) = data.credits.as_ref() {
-        details.push(NaviUsageDetail {
-            label: "Credits".into(),
-            value: credits.to_string(),
-        });
-    }
-    if let Some(sub) = data.subscription.as_ref() {
-        details.push(NaviUsageDetail {
-            label: "Subscription".into(),
-            value: sub.to_string(),
-        });
-    }
-    if let Some(summary) = data.usage_summary.as_ref() {
-        details.push(NaviUsageDetail {
-            label: "Usage summary".into(),
-            value: summary.to_string(),
-        });
-    }
-    if !data.models.is_empty() {
-        details.push(NaviUsageDetail {
-            label: "Models".into(),
-            value: format!("{} available", data.models.len()),
-        });
-    }
-
-    NaviUsageReport {
-        provider_id: provider.id.clone(),
-        provider_label: provider.label.clone(),
-        plan_type: None,
-        limit_reached_kind: None,
-        limits: Vec::new(),
-        source: "commandcode".into(),
-        notes: Some("Command Code account usage.".into()),
         details,
     }
 }

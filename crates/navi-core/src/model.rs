@@ -489,6 +489,8 @@ pub enum ThinkingConfig {
     /// Legacy config/session values `"adaptive"` / `"auto"` deserialize as Max.
     #[serde(alias = "adaptive", alias = "auto")]
     Max,
+    /// Extra-high reasoning effort (one step below Max on providers that distinguish it).
+    XHigh,
     /// High reasoning effort.
     High,
     /// Medium reasoning effort.
@@ -525,10 +527,13 @@ impl ThinkingConfig {
         match self {
             Self::Max => ThinkingRequest {
                 enabled: true,
-                // Prefer xhigh on wire when providers accept it; callers may
-                // remap via [`resolve_effort_label`] using registry levels.
-                effort: Some("xhigh".to_string()),
+                effort: Some("max".to_string()),
                 budget_tokens: Some(32000),
+            },
+            Self::XHigh => ThinkingRequest {
+                enabled: true,
+                effort: Some("xhigh".to_string()),
+                budget_tokens: Some(24000),
             },
             Self::High => ThinkingRequest {
                 enabled: true,
@@ -557,6 +562,7 @@ impl ThinkingConfig {
     pub fn as_config_str(self) -> &'static str {
         match self {
             Self::Max => "max",
+            Self::XHigh => "xhigh",
             Self::High => "high",
             Self::Medium => "medium",
             Self::Low => "low",
@@ -580,7 +586,14 @@ impl ThinkingConfig {
             return self;
         }
         // Prefer maximum effort when the requested level is unavailable.
-        for candidate in [Self::Max, Self::High, Self::Medium, Self::Low, Self::Off] {
+        for candidate in [
+            Self::Max,
+            Self::XHigh,
+            Self::High,
+            Self::Medium,
+            Self::Low,
+            Self::Off,
+        ] {
             if supported.contains(&candidate) {
                 return candidate;
             }
@@ -596,10 +609,10 @@ impl ThinkingConfig {
 /// effort "thinking on").
 pub fn parse_reasoning_level(raw: &str) -> Option<ThinkingConfig> {
     match raw.trim().to_ascii_lowercase().as_str() {
-        // Legacy adaptive/auto maps to Max (highest fixed effort).
-        "adaptive" | "auto" | "max" | "xhigh" | "x-high" | "ultra" | "highest" => {
-            Some(ThinkingConfig::Max)
-        }
+        // Legacy adaptive/auto and "highest" aliases map to Max.
+        "adaptive" | "auto" | "max" | "ultra" | "highest" => Some(ThinkingConfig::Max),
+        // Extra-high effort (one step below Max).
+        "xhigh" | "x-high" => Some(ThinkingConfig::XHigh),
         "high" => Some(ThinkingConfig::High),
         // Binary "thinking on" uses Max so the default highest effort is stable.
         "medium" | "med" | "mid" | "default" => Some(ThinkingConfig::Medium),
@@ -628,6 +641,7 @@ pub fn effort_display_label(level: ThinkingConfig, binary: bool) -> &'static str
 /// Canonical sort order for effort levels in pickers (most → least / off last).
 pub const DEFAULT_REASONING_LEVELS: &[ThinkingConfig] = &[
     ThinkingConfig::Max,
+    ThinkingConfig::XHigh,
     ThinkingConfig::High,
     ThinkingConfig::Medium,
     ThinkingConfig::Low,
@@ -742,16 +756,23 @@ pub fn resolve_effort_label(
         }
     }
 
+    let has_level = |target: &str| {
+        reasoning_levels
+            .iter()
+            .any(|l| l.trim().eq_ignore_ascii_case(target))
+    };
+
     // Provider-specific fallbacks when registry has no levels yet.
     let provider = crate::ProviderId::from_config_id(provider_id);
     if provider.as_str() == crate::ProviderId::OPENROUTER {
         return Some(
             match concrete {
-                ThinkingConfig::Max => "xhigh",
+                ThinkingConfig::Max => "max",
+                ThinkingConfig::XHigh => "xhigh",
                 ThinkingConfig::High => "high",
                 ThinkingConfig::Medium => "medium",
                 ThinkingConfig::Low => "low",
-                ThinkingConfig::Off => "medium",
+                ThinkingConfig::Off => "none",
             }
             .to_string(),
         );
@@ -760,12 +781,19 @@ pub fn resolve_effort_label(
     Some(
         match concrete {
             ThinkingConfig::Max => {
-                // OpenAI-style: xhigh when present in levels else high.
-                if reasoning_levels
-                    .iter()
-                    .any(|l| matches!(l.trim().to_ascii_lowercase().as_str(), "xhigh" | "max"))
-                {
+                if has_level("max") {
+                    "max"
+                } else if has_level("xhigh") {
                     "xhigh"
+                } else {
+                    "high"
+                }
+            }
+            ThinkingConfig::XHigh => {
+                if has_level("xhigh") {
+                    "xhigh"
+                } else if has_level("max") {
+                    "max"
                 } else {
                     "high"
                 }
@@ -797,8 +825,16 @@ mod tests {
     fn regression_thinking_request_max_produces_effort_and_budget() {
         let request = ThinkingConfig::Max.to_thinking_request();
         assert!(request.enabled);
-        assert_eq!(request.effort.as_deref(), Some("xhigh"));
+        assert_eq!(request.effort.as_deref(), Some("max"));
         assert_eq!(request.budget_tokens, Some(32000));
+    }
+
+    #[test]
+    fn regression_thinking_request_xhigh_produces_effort_and_budget() {
+        let request = ThinkingConfig::XHigh.to_thinking_request();
+        assert!(request.enabled);
+        assert_eq!(request.effort.as_deref(), Some("xhigh"));
+        assert_eq!(request.budget_tokens, Some(24000));
     }
 
     #[test]
@@ -835,7 +871,7 @@ mod tests {
         assert_eq!(
             levels,
             vec![
-                ThinkingConfig::Max,
+                ThinkingConfig::XHigh,
                 ThinkingConfig::High,
                 ThinkingConfig::Low,
                 ThinkingConfig::Off,
@@ -971,6 +1007,8 @@ mod tests {
         );
         assert_eq!(parse_reasoning_level("auto"), Some(ThinkingConfig::Max));
         assert_eq!(parse_reasoning_level("on"), Some(ThinkingConfig::Max));
+        assert_eq!(parse_reasoning_level("max"), Some(ThinkingConfig::Max));
+        assert_eq!(parse_reasoning_level("xhigh"), Some(ThinkingConfig::XHigh));
         let deserialized: ThinkingConfig = serde_json::from_str("\"adaptive\"").unwrap();
         assert_eq!(deserialized, ThinkingConfig::Max);
     }
@@ -983,14 +1021,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_defaults_to_max_when_preference_unsupported() {
+    fn resolve_defaults_to_highest_supported_when_preference_unsupported() {
         let resolved = resolve_model_thinking_level(
             ThinkingConfig::Low,
             Some(true),
             &["high".into(), "xhigh".into()],
             None,
         );
-        assert_eq!(resolved, ThinkingConfig::Max);
+        // xhigh maps to XHigh, which is now the highest supported level.
+        assert_eq!(resolved, ThinkingConfig::XHigh);
     }
 
     #[test]

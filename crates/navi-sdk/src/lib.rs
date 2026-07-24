@@ -27,10 +27,9 @@ pub use navi_acp::{
 };
 
 pub use credentials::{
-    CommandCodeUsageData, CredentialAccountInfo, CredentialSource, CredentialStatus,
-    DeviceOAuthStarted, commandcode_remote_models, commandcode_usage_data, provider_api_key,
-    provider_credential_accounts, provider_credential_status, provider_supports_device_oauth,
-    start_provider_device_oauth,
+    CredentialAccountInfo, CredentialSource, CredentialStatus, DeviceOAuthStarted,
+    provider_api_key, provider_credential_accounts, provider_credential_status,
+    provider_supports_device_oauth, start_provider_device_oauth,
 };
 pub use engine::{NaviEngine, NaviEngineBuilder, NaviSession};
 pub use engine_api::{NAVI_ENGINE_API_METHODS, NAVI_NAPI_BOUND_METHODS};

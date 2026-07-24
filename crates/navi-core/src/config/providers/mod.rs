@@ -330,17 +330,13 @@ pub fn model_cache_list_pricing(provider_id: &str) -> Option<(f64, f64)> {
 
 /// Whether this provider bills in prepaid credits (not pure card-to-API).
 pub fn provider_uses_credits(provider_id: &str) -> bool {
-    matches!(
-        canonical_provider_id(provider_id),
-        "charm-hyper" | "commandcode"
-    )
+    matches!(canonical_provider_id(provider_id), "charm-hyper")
 }
 
 /// Credit unit label for prepaid providers.
 pub fn provider_credit_unit(provider_id: &str) -> Option<&'static str> {
     match canonical_provider_id(provider_id) {
         "charm-hyper" => Some("hypercredits"),
-        "commandcode" => Some("credits"),
         _ => None,
     }
 }

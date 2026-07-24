@@ -81,7 +81,7 @@ pub(crate) fn refresh_account_usage_after_turn(app: &mut TuiApp) {
 fn provider_supports_account_usage(app: &TuiApp) -> bool {
     matches!(
         navi_sdk::canonical_provider_id(&app.loaded_config.config.model.provider),
-        "charm-hyper" | "openrouter" | "xai" | "openai" | "commandcode"
+        "charm-hyper" | "openrouter" | "xai" | "openai"
     )
 }
 

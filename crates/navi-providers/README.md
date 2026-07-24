@@ -22,7 +22,7 @@ use navi_providers::{OpenAiProvider, OpenAiApiKind, ProviderError};
 | `OpenAiApiKind` | Protocol selector (Responses / Chat Completions) |
 | `ProviderError` | Error types with retry classification |
 | `ProviderId` | Provider identifier constants |
-| OAuth flows | `openai_browser_oauth`, `github_copilot_device_oauth`, `commandcode_*` |
+| OAuth flows | `openai_browser_oauth`, `github_copilot_device_oauth` |
 | Usage reporting | `OpenAiUsageReport`, `OpenAiUsageWindow`, `OpenAiUsageLimitSnapshot` |
 | Types module | `navi_providers::types::*` |
 

@@ -38,7 +38,7 @@ impl NaviEngine {
     ///
     /// `on_started` is invoked when the verification URI / user code is ready
     /// (desktop should open browser / show code). Blocks until the flow finishes.
-    /// Returns optional secondary token/string some providers yield (e.g. CommandCode).
+    /// Returns optional secondary token/string some providers yield.
     pub async fn start_device_oauth<F>(
         &self,
         provider_id: &str,

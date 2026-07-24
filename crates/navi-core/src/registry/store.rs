@@ -1981,6 +1981,7 @@ mod tests {
                 "type": "ephemeral",
                 "ttl": "1h"
             })),
+            ..Default::default()
         };
 
         store.upsert_provider(&provider).expect("upsert");

@@ -2,23 +2,23 @@
 
 
     ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
-    ██╭ Commands ────────────────────────────────────────────────────────╮
-    ██│ > type to search                                                 │
-    ██│                                                                  │
-    ██│ New Session                                         ctrl+n     █ │
-    ╚═│ Sessions                                            ctrl+s     █ │
-      │ Copy Session                                                   █ │
-      │ Share Session                                                  █ │h
-      │ Models                                              ctrl+m     │ │
-      │ Providers                                                      │ │
-      │ Usage                                                          │ │
-      │ Skills                                                         │ │
-      │ Plugins                                                        │ │
-      │ MCP Servers                                                    │ │
-      │                                                                  │
-      ╰──────────────────────────────────────────────────────────────────╯
+    ████╗  ██║██╔══██╗██║   ██║██║      model   gpt-5.5
+    ██╔█╭ Commands ────────────────────────────────────────────────────╮
+    ██║╚│ > type to search all commands                                │
+    ██║ │                                                              │
+    ╚═╝ │ Model…                                          ctrl+m       │
+        │ Sessions…                                       ctrl+s       │
+        │ New Session                                     ctrl+n       │tch
+        │ Session →                                                    │
+        │ Models →                                                     │
+        │ Tools →                                                      │
+        │ Extensions →                                                 │
+        │ Settings…                                       ctrl+,       │
+        │ Help →                                                       │
+        │ [enter] open  [esc] close  type to search all                │
+        ╰──────────────────────────────────────────────────────────────╯
 
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ ›                                                                        │
   ╰──────────────────────────────────────────────────────────────────────────╯
-                                    gpt-5.5 (adaptive) · 0 / 200k · restricted
+                                         gpt-5.5 (max) · 0 / 200k · restricted
