@@ -580,3 +580,211 @@ fn attachment_placeholder(kind: &str, media_type: &str, name: Option<&str>) -> S
 fn default_anthropic_cache_control() -> Value {
     json!({ "type": "ephemeral" })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_anthropic_sse_returns_error_for_invalid_json() {
+        let events = parse_anthropic_sse("not-json");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_err());
+    }
+
+    #[test]
+    fn parse_anthropic_sse_content_block_start_tool_use_emits_progress() {
+        let data = r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_1","name":"read_file"}}"#;
+        let events = parse_anthropic_sse(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            ModelStreamEvent::ToolCallProgress { id, tool_name, arguments_chars: 0 }
+                if id.as_deref() == Some("tu_1") && tool_name == "read_file"
+        ));
+    }
+
+    #[test]
+    fn parse_anthropic_sse_content_block_start_tool_use_with_empty_name_is_ignored() {
+        let data = r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_1","name":""}}"#;
+        let events = parse_anthropic_sse(data);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_anthropic_sse_thinking_delta_without_text_emits_status() {
+        let data = r#"{"type":"content_block_delta","delta":{"type":"thinking_delta"}}"#;
+        let events = parse_anthropic_sse(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            ModelStreamEvent::Status { label } if label == "thinking"
+        ));
+    }
+
+    #[test]
+    fn parse_anthropic_sse_signature_delta_emits_thinking_status() {
+        let data = r#"{"type":"content_block_delta","delta":{"type":"signature_delta"}}"#;
+        let events = parse_anthropic_sse(data);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].as_ref().unwrap(),
+            ModelStreamEvent::Status { label } if label == "thinking"
+        ));
+    }
+
+    #[test]
+    fn parse_anthropic_sse_unknown_content_block_delta_is_ignored() {
+        let data = r#"{"type":"content_block_delta","delta":{"type":"unknown_delta"}}"#;
+        let events = parse_anthropic_sse(data);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_anthropic_sse_error_returns_error() {
+        let data = r#"{"type":"error","error":{"message":"boom"}}"#;
+        let events = parse_anthropic_sse(data);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_err());
+    }
+
+    #[test]
+    fn anthropic_messages_split_system_with_runtime_context_marker() {
+        use navi_core::{ModelMessage, ModelRole};
+        let messages = vec![ModelMessage {
+            role: ModelRole::System,
+            content: "Stable prefix.\n\n=== Runtime Context ===\nDynamic tail.".into(),
+            content_parts: vec![],
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        }];
+        let cache_control = default_anthropic_cache_control();
+        let (system, converted) =
+            anthropic_messages_with_cache_control(&messages, Some(&cache_control));
+        assert_eq!(system.len(), 2);
+        assert_eq!(system[0]["text"], "Stable prefix.");
+        assert!(system[0]["cache_control"].is_object());
+        assert_eq!(system[1]["text"], "=== Runtime Context ===\nDynamic tail.");
+        assert!(converted.is_empty());
+    }
+
+    #[test]
+    fn anthropic_messages_user_with_audio_video_and_document_parts() {
+        use navi_core::{ContentPart, ModelMessage, ModelRole};
+        let messages = vec![ModelMessage {
+            role: ModelRole::User,
+            content: "analyze".into(),
+            content_parts: vec![
+                ContentPart::Audio {
+                    media_type: "audio/mpeg".into(),
+                    data: "audiodata".into(),
+                    name: Some("clip.mp3".into()),
+                },
+                ContentPart::Video {
+                    media_type: "video/mp4".into(),
+                    data: "videodata".into(),
+                    name: Some("clip.mp4".into()),
+                },
+                ContentPart::Document {
+                    media_type: "application/pdf".into(),
+                    data: "pdfdata".into(),
+                    name: Some("doc.pdf".into()),
+                },
+                ContentPart::Document {
+                    media_type: "text/plain".into(),
+                    data: "textdata".into(),
+                    name: Some("notes.txt".into()),
+                },
+            ],
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        }];
+        let (system, converted) = anthropic_messages(&messages);
+        let content = converted[0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 4);
+        assert_eq!(content[0]["type"], "text");
+        assert!(content[0]["text"].as_str().unwrap().contains("audio"));
+        assert_eq!(content[1]["type"], "text");
+        assert!(content[1]["text"].as_str().unwrap().contains("video"));
+        assert_eq!(content[2]["type"], "document");
+        assert_eq!(content[2]["source"]["media_type"], "application/pdf");
+        assert_eq!(content[3]["type"], "text");
+        assert!(content[3]["text"].as_str().unwrap().contains("document"));
+        assert!(system.is_empty());
+    }
+
+    #[test]
+    fn anthropic_messages_tool_result_with_image() {
+        use navi_core::{ContentPart, ModelMessage, ModelRole};
+        let messages = vec![ModelMessage {
+            role: ModelRole::Tool,
+            content: "image result".into(),
+            tool_name: Some("read_file".into()),
+            tool_call_id: Some("tu_1".into()),
+            content_parts: vec![ContentPart::Image {
+                media_type: "image/png".into(),
+                data: "pngdata".into(),
+            }],
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        }];
+        let cache_control = default_anthropic_cache_control();
+        let (_, converted) = anthropic_messages_with_cache_control(&messages, Some(&cache_control));
+        let content = converted[0]["content"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "text");
+        assert_eq!(content[1]["type"], "image");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+    }
+
+    #[test]
+    fn anthropic_messages_caches_last_stable_user_message() {
+        use navi_core::ModelMessage;
+        let messages = vec![
+            ModelMessage::user("first"),
+            ModelMessage::user("stable"),
+            ModelMessage::assistant("ok"),
+        ];
+        let cache_control = default_anthropic_cache_control();
+        let (_, converted) = anthropic_messages_with_cache_control(&messages, Some(&cache_control));
+        let cached = &converted[1];
+        assert_eq!(cached["role"], "user");
+        let content = cached["content"].as_array().unwrap();
+        assert_eq!(content[0]["text"], "stable");
+        assert!(content[0]["cache_control"].is_object());
+    }
+
+    #[test]
+    fn anthropic_messages_caches_last_tool_result() {
+        use navi_core::ModelMessage;
+        let messages = vec![
+            ModelMessage::user("run"),
+            ModelMessage::assistant("done"),
+            ModelMessage::tool_result("tu_1", "bash", "output"),
+        ];
+        let cache_control = default_anthropic_cache_control();
+        let (_, converted) = anthropic_messages_with_cache_control(&messages, Some(&cache_control));
+        let tool_result = &converted[2]["content"][0];
+        assert_eq!(tool_result["type"], "tool_result");
+        assert!(tool_result["cache_control"].is_object());
+    }
+
+    #[test]
+    fn attachment_placeholder_with_and_without_name() {
+        assert_eq!(
+            attachment_placeholder("audio", "audio/mpeg", Some("clip.mp3")),
+            "[audio attachment omitted from this provider request: clip.mp3 (audio/mpeg)]"
+        );
+        assert_eq!(
+            attachment_placeholder("video", "video/mp4", None),
+            "[video attachment omitted from this provider request: video/mp4]"
+        );
+    }
+}
