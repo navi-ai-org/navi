@@ -30,7 +30,11 @@ struct PlanModeGate {
 }
 
 /// Validates tool invocations against security constraints: path restrictions,
-/// blocked commands, `.git` protection, and NAVI private storage.
+/// blocked commands, `.git` protection, and NAVI private storage writes.
+///
+/// Reads of `data_dir` (logs, sessions, memory) are always allowed so agents
+/// can debug provider issues. Writes to `data_dir` require approval in
+/// Restricted / AcceptEdits / Auto modes and are auto-allowed in Yolo.
 #[derive(Debug, Clone)]
 pub struct SecurityPolicy {
     project_root: PathBuf,
@@ -153,8 +157,7 @@ impl SecurityPolicy {
 
         if self.paths_restricted_to_project()
             && !path.starts_with(&self.project_root)
-            && !path.starts_with(self.data_dir.join("plugins"))
-            && !(is_under_plans_dir(&self.data_dir, &path))
+            && !path.starts_with(&self.data_dir)
         {
             return SecurityDecision::Deny(format!(
                 "path {} is outside project {}",
@@ -170,11 +173,11 @@ impl SecurityPolicy {
             ));
         }
 
-        if self.is_data_dir_private_path(&path) {
-            return SecurityDecision::Deny(format!(
-                "path {} is inside NAVI private storage; use skill_list / skill_get / load_skill to browse skills, and write SKILL.md files under the proper skill path (not raw FS under data_dir)",
-                path.display()
-            ));
+        // Writes to NAVI private storage require approval (auto-allowed in Yolo).
+        // Reads of data_dir are always allowed — agents need to inspect logs,
+        // sessions, memory, etc. for debugging.
+        if write && self.is_data_dir_private_path(&path) {
+            return SecurityDecision::NeedsApproval(SecurityRisk::Write);
         }
 
         if write && self.config.protect_git_metadata && contains_component(&path, ".git") {
@@ -284,21 +287,11 @@ impl SecurityPolicy {
             return SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand);
         }
 
-        for target in extract_shell_path_mentions(program) {
-            if is_dynamic_shell_target(&target) {
-                continue;
-            }
-            let path = self.resolve_project_path(Path::new(&target));
-            let Ok(path) = normalize_existing_or_parent(&path) else {
-                continue;
-            };
-            if self.is_data_dir_private_path(&path) {
-                return SecurityDecision::Deny(format!(
-                    "command references NAVI private storage: {}; use skill tools (skill_list / skill_get / load_skill) to browse skills, not bash under data_dir",
-                    path.display()
-                ));
-            }
-        }
+        // Write-target extraction catches data_dir writes via shell redirections
+        // (>, >>, <, etc.) and routes them through validate_path(path, true),
+        // which gates data_dir writes by approval mode. Read-only mentions of
+        // data_dir paths (e.g. `cat ~/.local/share/navi/logs/navi.log`) are
+        // allowed — agents need to inspect logs and sessions for debugging.
 
         for target in extract_shell_write_targets(program) {
             if is_dynamic_shell_target(&target) {
@@ -2252,7 +2245,7 @@ mod tests {
     }
 
     #[test]
-    fn denies_bash_redirection_to_data_dir_memory() {
+    fn data_dir_write_via_redirection_needs_approval() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -2264,11 +2257,15 @@ mod tests {
         let decision =
             policy.validate_command(&format!("cat >> {} <<'EOF'\ntext\nEOF", target.display()));
 
-        assert!(matches!(decision, SecurityDecision::Deny(_)));
+        // Writes to data_dir via shell redirection now require approval, not deny.
+        assert!(
+            matches!(decision, SecurityDecision::NeedsApproval(_)),
+            "expected NeedsApproval for data_dir write via redirection, got: {decision:?}"
+        );
     }
 
     #[test]
-    fn denies_bash_reference_to_data_dir() {
+    fn allows_bash_reference_to_data_dir() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -2278,7 +2275,11 @@ mod tests {
 
         let decision = policy.validate_command(&format!("ls {}", data.display()));
 
-        assert!(matches!(decision, SecurityDecision::Deny(_)));
+        // Read-only bash commands referencing data_dir are now allowed.
+        assert!(
+            !matches!(decision, SecurityDecision::Deny(_)),
+            "read-only bash referencing data_dir should not be denied, got: {decision:?}"
+        );
     }
 
     #[test]
@@ -2318,7 +2319,7 @@ mod tests {
     }
 
     #[test]
-    fn denies_tee_write_to_data_dir_memory() {
+    fn tee_write_to_data_dir_memory_needs_approval() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -2330,7 +2331,11 @@ mod tests {
         let decision =
             policy.validate_command(&format!("printf text | tee -a {}", target.display()));
 
-        assert!(matches!(decision, SecurityDecision::Deny(_)));
+        // Writes to data_dir via tee now require approval, not deny.
+        assert!(
+            matches!(decision, SecurityDecision::NeedsApproval(_)),
+            "expected NeedsApproval for data_dir write via tee, got: {decision:?}"
+        );
     }
 
     #[test]
@@ -2647,7 +2652,7 @@ mod tests {
     }
 
     #[test]
-    fn regression_data_dir_path_denied() {
+    fn data_dir_read_is_allowed() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         let data = tempdir.path().join("data");
@@ -2656,14 +2661,83 @@ mod tests {
         let policy = policy(project, data.clone());
 
         let decision = policy.validate_path(data.join("sessions/test.json").as_path(), false);
-        assert!(
-            matches!(decision, SecurityDecision::Deny(_)),
-            "NAVI data dir must be denied, got: {decision:?}"
+        assert_eq!(
+            decision,
+            SecurityDecision::Allow,
+            "reads of NAVI data_dir should be allowed, got: {decision:?}"
         );
     }
 
     #[test]
-    fn private_storage_deny_mentions_skill_tools() {
+    fn data_dir_write_needs_approval_in_restricted() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let policy = policy(project, data.clone());
+
+        let decision = policy.validate_path(data.join("sessions/test.json").as_path(), true);
+        assert!(
+            matches!(
+                decision,
+                SecurityDecision::NeedsApproval(SecurityRisk::Write)
+            ),
+            "writes to NAVI data_dir should need approval in Restricted, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn data_dir_write_allowed_in_yolo() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data.clone(), config);
+
+        // Test via validate_tool_invocation so apply_permission_mode (Yolo→Allow) kicks in.
+        let decision = policy.validate_tool_invocation(
+            &tool_def("write_file", ToolKind::Write),
+            &tool_invocation(
+                "write_file",
+                serde_json::json!({ "path": data.join("sessions/test.json"), "content": "{}" }),
+            ),
+        );
+        assert_eq!(
+            decision,
+            SecurityDecision::Allow,
+            "writes to NAVI data_dir should be allowed in Yolo, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn data_dir_read_allowed_in_yolo() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let project = tempdir.path().join("project");
+        let data = tempdir.path().join("data");
+        std::fs::create_dir_all(&project).expect("project");
+        std::fs::create_dir_all(&data).expect("data");
+        let config = SecurityConfig {
+            permission_mode: PermissionMode::Yolo,
+            ..SecurityConfig::default()
+        };
+        let policy = policy_with_config(project, data.clone(), config);
+
+        let decision = policy.validate_path(data.join("logs/navi.log").as_path(), false);
+        assert_eq!(
+            decision,
+            SecurityDecision::Allow,
+            "reads of NAVI data_dir should be allowed in Yolo, got: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn data_dir_skill_read_is_allowed() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let project = tempdir.path().join("project");
         // Nest data_dir under project so path jail does not fire first as "outside project".
@@ -2672,19 +2746,11 @@ mod tests {
         let policy = policy(project, data.clone());
 
         let decision = policy.validate_path(data.join("skills/foo/SKILL.md").as_path(), false);
-        match decision {
-            SecurityDecision::Deny(msg) => {
-                assert!(
-                    msg.contains("private storage"),
-                    "expected private storage wording: {msg}"
-                );
-                assert!(
-                    msg.contains("skill_list") || msg.contains("skill_get"),
-                    "deny should steer agents to skill tools: {msg}"
-                );
-            }
-            other => panic!("expected deny, got {other:?}"),
-        }
+        assert_eq!(
+            decision,
+            SecurityDecision::Allow,
+            "reads of NAVI data_dir skills should be allowed, got: {decision:?}"
+        );
     }
 
     #[test]
@@ -2707,11 +2773,11 @@ mod tests {
             policy.validate_path(project.join("src/main.rs").as_path(), true),
             SecurityDecision::Deny(_)
         ));
-        // Other private data stays denied.
-        assert!(matches!(
+        // Other private data: reads are allowed, writes need approval.
+        assert_eq!(
             policy.validate_path(data.join("sessions/x.json").as_path(), false),
-            SecurityDecision::Deny(_)
-        ));
+            SecurityDecision::Allow
+        );
     }
 
     #[test]
