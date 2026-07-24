@@ -278,3 +278,60 @@ fn uuid_hex() -> String {
         .as_nanos();
     format!("{:016x}", t)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_gemini_sse_returns_error_for_invalid_json() {
+        let events = parse_gemini_sse("not-json");
+        assert_eq!(events.len(), 1);
+        assert!(events[0].is_err());
+    }
+
+    #[test]
+    fn gemini_tool_to_json_maps_fields() {
+        let mut tool = ToolDefinition::default();
+        tool.name = "read_file".into();
+        tool.description = "read a file".into();
+        tool.input_schema = json!({"type": "object"});
+        let value = gemini_tool_to_json(&tool);
+        assert_eq!(value["name"], "read_file");
+        assert_eq!(value["description"], "read a file");
+        assert_eq!(value["parameters"], json!({"type": "object"}));
+    }
+
+    #[test]
+    fn gemini_contents_tool_result_with_image_emits_followup_user_turn() {
+        use navi_core::ContentPart;
+        let message = ModelMessage {
+            role: ModelRole::Tool,
+            content: "{\"result\": \"image\"}".into(),
+            tool_name: Some("read_file".into()),
+            tool_call_id: Some("call-1".into()),
+            content_parts: vec![ContentPart::Image {
+                media_type: "image/png".into(),
+                data: "base64data".into(),
+            }],
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        };
+        let (_, contents) = gemini_contents(&[message]);
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0]["role"], "function");
+        assert_eq!(contents[1]["role"], "user");
+        let parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["text"], "[Image attached by read_file]");
+        assert_eq!(parts[1]["inlineData"]["mimeType"], "image/png");
+    }
+
+    #[test]
+    fn uuid_hex_is_non_empty_and_hex() {
+        let hex = uuid_hex();
+        assert_eq!(hex.len(), 16);
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+}
