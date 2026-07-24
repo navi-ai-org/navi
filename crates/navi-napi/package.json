@@ -1,7 +1,7 @@
 {
   "name": "@navi-agent/napi",
-  "version": "0.3.6",
-  "description": "Node.js native bindings for the NAVI agent runtime SDK \u2014 sessions, turns, tools, events, and context injection.",
+  "version": "0.3.8",
+  "description": "Node.js native bindings for the NAVI agent runtime SDK — sessions, turns, tools, events, and context injection.",
   "license": "Apache-2.0",
   "author": "NAVI Contributors",
   "repository": {
