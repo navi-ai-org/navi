@@ -1813,6 +1813,12 @@ fn write_html_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn device_oauth_started_fields_are_accessible() {
@@ -2204,5 +2210,234 @@ mod tests {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         );
+    }
+
+    #[test]
+    fn read_http_request_parses_get_and_body() {
+        let request = b"GET /callback?code=abc&state=s HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (mut server, mut client) = connected_tcp_pair();
+        client.write_all(request).unwrap();
+        drop(client);
+        let text = read_http_request(&mut server).unwrap();
+        assert!(text.starts_with("GET /callback"));
+
+        let request =
+            b"POST /callback HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello";
+        let (mut server, mut client) = connected_tcp_pair();
+        client.write_all(request).unwrap();
+        drop(client);
+        let text = read_http_request(&mut server).unwrap();
+        assert!(text.contains("hello"));
+    }
+
+    #[test]
+    fn read_http_request_errors_when_connection_closed_early() {
+        let (mut server, client) = connected_tcp_pair();
+        drop(client);
+        assert!(read_http_request(&mut server).is_err());
+    }
+
+    #[test]
+    fn write_html_response_formats_http_response() {
+        let (mut server, mut client) = connected_tcp_pair();
+        thread::spawn(move || {
+            let mut buf = [0u8; 512];
+            let n = client.read(&mut buf).unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        write_html_response(&mut server, 200, "OK").unwrap();
+        // server is dropped after write, closing the connection so the thread returns.
+    }
+
+    #[test]
+    fn handle_openai_callback_stream_extracts_code() {
+        let request =
+            b"GET /auth/callback?code=abc%2B123&state=my-state HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (mut server, mut client) = connected_tcp_pair();
+        thread::spawn(move || {
+            client.write_all(request).unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = client.read(&mut buf);
+        });
+        let code = handle_openai_callback_stream(&mut server, "my-state").unwrap();
+        assert_eq!(code, Some("abc+123".to_string()));
+    }
+
+    #[test]
+    fn handle_openai_callback_stream_rejects_errors_and_bad_state() {
+        let (mut server, client) = connected_tcp_pair();
+        drop(client);
+        assert!(handle_openai_callback_stream(&mut server, "s").is_err());
+
+        let request =
+            b"GET /auth/callback?code=abc&state=wrong HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (mut server, mut client) = connected_tcp_pair();
+        thread::spawn(move || {
+            client.write_all(request).unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = client.read(&mut buf);
+        });
+        assert_eq!(
+            handle_openai_callback_stream(&mut server, "s").unwrap(),
+            None
+        );
+
+        let request = b"GET /not-callback HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (mut server, mut client) = connected_tcp_pair();
+        thread::spawn(move || {
+            client.write_all(request).unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = client.read(&mut buf);
+        });
+        assert_eq!(
+            handle_openai_callback_stream(&mut server, "s").unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn handle_xai_callback_stream_extracts_code() {
+        let request = b"GET /callback?code=abc&state=my-state HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        let (mut server, mut client) = connected_tcp_pair();
+        thread::spawn(move || {
+            client.write_all(request).unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = client.read(&mut buf);
+        });
+        let code = handle_xai_callback_stream(&mut server, "my-state").unwrap();
+        assert_eq!(code, Some("abc".to_string()));
+    }
+
+    #[test]
+    fn wait_for_openai_callback_returns_code_from_listener() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .write_all(b"GET /auth/callback?code=the-code&state=st HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                .unwrap();
+        });
+        let code = wait_for_openai_callback(listener, "st", Duration::from_secs(1)).unwrap();
+        assert_eq!(code, "the-code");
+    }
+
+    #[test]
+    fn wait_for_xai_callback_returns_pasted_code_first() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let paste_slot =
+            std::sync::Arc::new(std::sync::Mutex::new(Some("pasted-code".to_string())));
+        let code =
+            wait_for_xai_callback(listener, "st", paste_slot, Duration::from_millis(100)).unwrap();
+        assert_eq!(code, "pasted-code");
+    }
+
+    #[tokio::test]
+    async fn exchange_openai_code_for_tokens_posts_and_parses() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "openai-token"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let pkce = PkceCodes::generate();
+        let tokens = exchange_openai_code_for_tokens(
+            &mock_server.uri(),
+            "client",
+            "http://localhost/callback",
+            &pkce,
+            "code",
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "openai-token");
+    }
+
+    #[tokio::test]
+    async fn exchange_xai_code_for_tokens_posts_and_parses() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth2/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "xai-token"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let pkce = PkceCodes::generate();
+        let tokens = exchange_xai_code_for_tokens(
+            &mock_server.uri(),
+            "client",
+            "http://localhost/callback",
+            &pkce,
+            "code",
+        )
+        .await
+        .unwrap();
+        assert_eq!(tokens.access_token, "xai-token");
+    }
+
+    #[tokio::test]
+    async fn openai_usage_report_fetches_and_reports() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/usage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "plan_type": "plus",
+                "rate_limit": {
+                    "limit_reached": false,
+                    "primary_window": { "used_percent": 10, "limit_window_seconds": 100, "reset_after_seconds": 10, "reset_at": 1 },
+                    "secondary_window": { "used_percent": 5, "limit_window_seconds": 200, "reset_after_seconds": 20, "reset_at": 2 }
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        unsafe {
+            std::env::set_var(
+                "NAVI_OPENAI_USAGE_URL",
+                format!("{}/usage", mock_server.uri()),
+            )
+        };
+        let report = openai_usage_report("token").await.unwrap();
+        unsafe { std::env::remove_var("NAVI_OPENAI_USAGE_URL") };
+        assert_eq!(report.plan_type.as_deref(), Some("plus"));
+    }
+
+    #[tokio::test]
+    async fn charm_hyper_credits_report_fetches_balance() {
+        let _guard = hypercredit_test_lock();
+        let _ = take_hypercredit_balance();
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/credits"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "balance": 123.45
+            })))
+            .mount(&mock_server)
+            .await;
+
+        unsafe { std::env::set_var("HYPER_URL", mock_server.uri()) };
+        let report = charm_hyper_credits_report("key").await.unwrap();
+        unsafe { std::env::remove_var("HYPER_URL") };
+        assert_eq!(report.balance, 123.45);
+        assert_eq!(report.source.as_deref(), Some("credits-api"));
+        let _ = take_hypercredit_balance();
+    }
+
+    fn connected_tcp_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = thread::spawn(move || TcpStream::connect(("127.0.0.1", port)).unwrap());
+        let (server, _) = listener.accept().unwrap();
+        (server, client.join().unwrap())
     }
 }
