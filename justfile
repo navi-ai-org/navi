@@ -226,6 +226,7 @@ dart-test:
 
 # Update the pinned commit of navi-ai-org/navi-registry used by navi-core/build.rs.
 # After running this, rebuild navi to embed the updated registry.
+# Releases do not need this; they set NAVI_REGISTRY_REF=refs/heads/main.
 update-registry-lock:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -267,6 +268,11 @@ fetch-registry:
     cp -a "$src/." "$cache_dir/"
     echo "Registry fetched to: $cache_dir"
     echo "Build offline with: NAVI_REGISTRY_DIR=$cache_dir cargo check -p navi-core"
+
+# Build navi-core against the latest navi-registry main snapshot.
+# This mirrors how release binaries are built.
+check-latest-registry:
+    NAVI_REGISTRY_REF=refs/heads/main cargo check -p navi-core
 
 # ─── Brand / demo GIF ─────────────────────────────────────────────────────────
 

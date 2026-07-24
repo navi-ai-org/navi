@@ -3,6 +3,11 @@
 //! Fetches the provider registry snapshot from `navi-ai-org/navi-registry` and
 //! embeds it into the compiled binary so NAVI works offline and has a fallback
 //! when the SQLite cache and remote fetch both fail.
+//!
+//! Sources (in order):
+//!   1. `NAVI_REGISTRY_DIR` (offline/local override)
+//!   2. `NAVI_REGISTRY_REF` (branch, tag, or full commit; releases use `refs/heads/main`)
+//!   3. `registry.lock` pinned commit (default for dev/CI builds)
 
 use std::env;
 use std::fs;
@@ -25,12 +30,13 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed={}", lock_file.display());
     println!("cargo:rerun-if-env-changed=NAVI_REGISTRY_DIR");
     println!("cargo:rerun-if-env-changed=NAVI_OFFLINE");
+    println!("cargo:rerun-if-env-changed=NAVI_REGISTRY_REF");
 
     let embedded_dir = out_dir.join("embedded_registry");
     fs::create_dir_all(&embedded_dir).context("failed to create embedded_registry output dir")?;
 
-    // Resolve the snapshot source: local override, remote tarball pinned by lock.
-    let snapshot_dir = resolve_snapshot_dir(&manifest_dir, &lock_file)?;
+    // Resolve the snapshot source: local override, NAVI_REGISTRY_REF, or lock.
+    let snapshot_dir = resolve_snapshot_dir(&manifest_dir, &lock_file, &out_dir)?;
     println!(
         "cargo:rerun-if-changed={}",
         snapshot_dir.join("manifest.json").display()
@@ -181,7 +187,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn resolve_snapshot_dir(manifest_dir: &Path, lock_file: &Path) -> Result<PathBuf> {
+fn resolve_snapshot_dir(_manifest_dir: &Path, lock_file: &Path, out_dir: &Path) -> Result<PathBuf> {
     if let Ok(local_dir) = env::var("NAVI_REGISTRY_DIR") {
         let local_path = PathBuf::from(local_dir);
         if !local_path.is_dir() {
@@ -206,9 +212,20 @@ fn resolve_snapshot_dir(manifest_dir: &Path, lock_file: &Path) -> Result<PathBuf
         );
     }
 
+    // Prefer an explicit ref (branch, tag, or full commit). Releases use
+    // `refs/heads/main` so the binary always ships with the latest snapshot.
+    if let Ok(registry_ref) = env::var("NAVI_REGISTRY_REF") {
+        if registry_ref.is_empty() {
+            anyhow::bail!("NAVI_REGISTRY_REF is empty");
+        }
+        // Cache only when the ref is an unambiguous full git SHA.
+        let use_cache = is_full_git_sha(&registry_ref);
+        return fetch_and_extract_registry(&registry_ref, out_dir, use_cache);
+    }
+
     let lock_text = fs::read_to_string(lock_file).with_context(|| {
         format!(
-            "failed to read {}. Set NAVI_REGISTRY_DIR to build offline.",
+            "failed to read {}. Set NAVI_REGISTRY_DIR or NAVI_REGISTRY_REF to build.",
             lock_file.display()
         )
     })?;
@@ -221,44 +238,72 @@ fn resolve_snapshot_dir(manifest_dir: &Path, lock_file: &Path) -> Result<PathBuf
         anyhow::bail!("registry.lock does not contain a valid commit hash");
     }
 
-    fetch_and_extract_registry(commit, manifest_dir)
+    fetch_and_extract_registry(commit, out_dir, true)
 }
 
-fn fetch_and_extract_registry(commit: &str, _manifest_dir: &Path) -> Result<PathBuf> {
-    let cache_dir = registry_cache_dir(commit)?;
-    let tar_path = cache_dir.join("registry.tar.gz");
-    let extract_dir = cache_dir.join("extracted");
+fn fetch_and_extract_registry(
+    registry_ref: &str,
+    out_dir: &Path,
+    use_cache: bool,
+) -> Result<PathBuf> {
+    let (work_dir, tar_path, extract_dir) = if use_cache {
+        let cache_dir = registry_cache_dir(registry_ref)?;
+        (
+            cache_dir.clone(),
+            cache_dir.join("registry.tar.gz"),
+            cache_dir.join("extracted"),
+        )
+    } else {
+        // Mutable refs (e.g. refs/heads/main) must not be cached. Use a
+        // per-build directory inside OUT_DIR and always re-fetch.
+        let safe_ref = registry_ref.replace(['/', ':', '\\'], "_");
+        let work_dir = out_dir.join(format!("registry-ref-{safe_ref}"));
+        if work_dir.is_dir() {
+            fs::remove_dir_all(&work_dir).with_context(|| {
+                format!(
+                    "failed to remove stale registry work directory {}",
+                    work_dir.display()
+                )
+            })?;
+        }
+        (
+            work_dir.clone(),
+            work_dir.join("registry.tar.gz"),
+            work_dir.join("extracted"),
+        )
+    };
 
-    // Find an already-extracted source tree.
-    if let Some(source) = find_registry_source(&extract_dir)? {
+    // Find an already-extracted source tree (only valid for pinned/cached refs).
+    if use_cache && let Some(source) = find_registry_source(&extract_dir)? {
         return Ok(source);
     }
 
-    // Download the tarball if missing.
-    if !tar_path.is_file() {
-        fs::create_dir_all(&cache_dir)
-            .with_context(|| format!("failed to create cache directory {}", cache_dir.display()))?;
+    // Download the tarball.
+    fs::create_dir_all(&work_dir).with_context(|| {
+        format!(
+            "failed to create registry work directory {}",
+            work_dir.display()
+        )
+    })?;
 
-        let url =
-            format!("https://codeload.github.com/{REGISTRY_ORG}/{REGISTRY_REPO}/tar.gz/{commit}");
-        eprintln!("navi-core build: fetching registry from {url}");
+    let url =
+        format!("https://codeload.github.com/{REGISTRY_ORG}/{REGISTRY_REPO}/tar.gz/{registry_ref}");
+    eprintln!("navi-core build: fetching registry from {url}");
 
-        let mut response = ureq::get(&url)
-            .call()
-            .with_context(|| format!("failed to fetch registry tarball from {url}"))?;
+    let mut response = ureq::get(&url)
+        .call()
+        .with_context(|| format!("failed to fetch registry tarball from {url}"))?;
 
-        let mut reader = response
-            .body_mut()
-            .with_config()
-            .limit(MAX_TARBALL_SIZE)
-            .reader();
+    let mut reader = response
+        .body_mut()
+        .with_config()
+        .limit(MAX_TARBALL_SIZE)
+        .reader();
 
-        let mut file = fs::File::create(&tar_path)
-            .with_context(|| format!("failed to create {}", tar_path.display()))?;
-        io::copy(&mut reader, &mut file).with_context(|| {
-            format!("failed to write registry tarball to {}", tar_path.display())
-        })?;
-    }
+    let mut file = fs::File::create(&tar_path)
+        .with_context(|| format!("failed to create {}", tar_path.display()))?;
+    io::copy(&mut reader, &mut file)
+        .with_context(|| format!("failed to write registry tarball to {}", tar_path.display()))?;
 
     // Extract.
     fs::create_dir_all(&extract_dir)
@@ -281,6 +326,10 @@ fn fetch_and_extract_registry(commit: &str, _manifest_dir: &Path) -> Result<Path
             extract_dir.display()
         )
     })
+}
+
+fn is_full_git_sha(s: &str) -> bool {
+    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 fn registry_cache_dir(commit: &str) -> Result<PathBuf> {
