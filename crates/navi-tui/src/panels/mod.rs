@@ -238,14 +238,6 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         78,
         18,
     )));
-    // Extensions hub
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "extensions",
-        Mode::Extensions,
-        modals::render_extensions_hub,
-        72,
-        12,
-    )));
     // Background models
     pm.add_overlay(Box::new(ModalPanel::new(
         "background-models",

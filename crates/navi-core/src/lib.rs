@@ -1,6 +1,5 @@
 pub mod attachment_store;
 pub mod benchmark;
-pub mod branch_race;
 pub mod cancel;
 pub mod capability;
 pub mod compact;
@@ -22,7 +21,6 @@ pub mod memory;
 pub mod model;
 pub mod model_router;
 pub mod notify;
-pub mod operational_memory;
 pub mod patch;
 pub mod plan_mode;
 pub mod plan_store;
@@ -42,7 +40,6 @@ pub mod session;
 pub mod session_replay;
 pub mod session_title;
 pub mod setup;
-pub mod skill_mining;
 pub mod skills;
 pub mod tool;
 pub mod trace;
@@ -53,10 +50,6 @@ pub mod verifier;
 
 pub mod background_model;
 
-pub use branch_race::{
-    BranchCandidate, BranchHypothesis, BranchRacePlanner, BranchRaceReport, BranchRaceRequest,
-    BranchStrategy, ScoredBranchCandidate,
-};
 pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,
@@ -128,7 +121,6 @@ pub use model::{
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use notify::{NotificationUrgency, NotifyRequest, notify_desktop, open_url};
-pub use operational_memory::{MemoryScope, OperationalMemoryEntry, OperationalMemoryStore};
 pub use patch::PatchProposal;
 pub use plan_mode::{
     AgentMode, ProposedPlan, ProposedPlanParser, is_tool_allowed_in_plan_mode,
@@ -176,9 +168,6 @@ pub use session::{
 pub use session_replay::{model_messages_from_agent_events, rehydrate_tool_content_parts};
 pub use session_title::{SessionTitleHandle, SessionTitleTool};
 pub use setup::{SETUP_INTERVIEW_COMPLETE_MARKER, SETUP_INTERVIEW_PROMPT};
-pub use skill_mining::{
-    SkillDraft, SkillReplayReport, activate_skill_after_replay, draft_skill_from_traces,
-};
 pub use skills::{
     CREATE_SKILL_ID, HARNESS_AUTHOR_ID, ParsedSkillFile, SKILL_POOLS_ID, SkillManifest,
     SkillSource, SkillStore, SkillWriteRequest, SkillWriteResult, SkillWriteScope, active_skills,

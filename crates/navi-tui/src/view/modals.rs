@@ -2467,60 +2467,6 @@ fn render_model_routing_attachments_body(frame: &mut Frame<'_>, app: &TuiApp, ar
     );
 }
 
-pub(crate) fn render_extensions_hub(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
-    clear_modal_area(frame, area);
-    let block = modal_block("Extensions");
-    frame.render_widget(block, area);
-
-    let inner = area.inner(Margin {
-        horizontal: 2,
-        vertical: 1,
-    });
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(6), Constraint::Length(1)])
-        .split(inner);
-
-    let items: Vec<ListItem> = crate::state::ExtensionsHubItem::ALL
-        .iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let selected = index == app.selected_extensions_item;
-            let hovered = app.hover_index == Some(index);
-            let style = if hovered || selected {
-                active_item_style()
-            } else {
-                inactive_item_style()
-            };
-            let line = format!("{}  —  {}", item.label(), item.description());
-            ListItem::new(Span::styled(line, style)).style(style)
-        })
-        .collect();
-
-    frame.render_widget(
-        List::new(items).style(Style::default().bg(modal_bg())),
-        chunks[0],
-    );
-    for (index, item) in crate::state::ExtensionsHubItem::ALL.iter().enumerate() {
-        app.register_hit(
-            line_rect(chunks[0], index),
-            20,
-            format!("extension {}", item.label()),
-            HitAction::ExtensionsItem(index),
-        );
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("[enter]", Style::default().fg(signal())),
-            Span::styled(" open  ", Style::default().fg(muted())),
-            Span::styled("[esc]", Style::default().fg(signal())),
-            Span::styled(" close", Style::default().fg(muted())),
-        ]))
-        .style(Style::default().bg(modal_bg())),
-        chunks[1],
-    );
-}
-
 pub(crate) fn render_usage(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
     frame.render_widget(modal_block("Usage"), area);

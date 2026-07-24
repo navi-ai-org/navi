@@ -183,17 +183,6 @@ pub(crate) fn clamp_background_selection(app: &mut TuiApp) {
         .min(app.background_commands.len().saturating_sub(visible_cards));
 }
 
-/// Stops the background poller task if running.
-///
-/// Kept as a shared teardown helper for session close / future UI controls;
-/// callers may also abort `bg_poll_task` inline (e.g. new session).
-#[allow(dead_code)] // public helper reserved for explicit poller teardown
-pub(crate) fn stop_background_poller(app: &mut TuiApp) {
-    if let Some(task) = app.bg_poll_task.take() {
-        task.abort();
-    }
-}
-
 /// Returns the elapsed time string for a background command.
 pub(crate) fn format_bg_elapsed(snapshot: &BackgroundCommandSnapshot) -> String {
     format_duration_ms(snapshot.elapsed_ms)

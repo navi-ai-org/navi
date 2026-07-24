@@ -1169,7 +1169,7 @@ impl ToolExecutor {
         self.register(SleepTool::new());
         // Thread goals are model tools get_goal/create_goal/update_goal (registered
         // when goals are enabled). Hosts set goals via the SDK, not a deferred alias.
-        self.register(ContextRemainingTool::new(pr.clone()));
+        self.register(ContextRemainingTool::new());
         self.register(RequestUserInputTool::new());
         self.register(SandboxTool::new(pr.clone()));
         let data_dir = self.policy.data_dir().to_path_buf();

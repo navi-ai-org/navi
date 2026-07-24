@@ -1,6 +1,6 @@
 //! Journal under `{data_dir}/workflows/{run_id}/` only.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,6 @@ use super::types::{WorkflowRunStatus, WorkflowStats};
 use crate::security::redact_secrets;
 
 pub struct WorkflowJournal {
-    dir: PathBuf,
     journal_path: PathBuf,
     meta_path: PathBuf,
     phases: Vec<String>,
@@ -26,7 +25,6 @@ impl WorkflowJournal {
         let journal_path = dir.join("journal.jsonl");
         let meta_path = dir.join("meta.json");
         let mut journal = Self {
-            dir: dir.to_path_buf(),
             journal_path,
             meta_path,
             phases: Vec::new(),
@@ -42,10 +40,6 @@ impl WorkflowJournal {
 
     pub fn journal_path(&self) -> &Path {
         &self.journal_path
-    }
-
-    pub fn dir(&self) -> &Path {
-        &self.dir
     }
 
     pub fn write_meta_start(
@@ -126,9 +120,4 @@ fn hex_sha256(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hex::encode(hasher.finalize())
-}
-
-#[allow(dead_code)]
-fn _touch_file(path: &Path) -> Result<File> {
-    File::create(path).with_context(|| format!("create {}", path.display()))
 }

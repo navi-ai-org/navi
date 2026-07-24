@@ -155,16 +155,6 @@ pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRouti
     replace_modal(app, ModalKind::ModelRouting);
 }
 
-/// Open the dedicated Extensions hub modal (Skills / Plugins / MCP).
-///
-/// Palette currently deep-links those items via hubs; this entrypoint stays
-/// for direct open (mouse/panels) and future shortcuts.
-#[allow(dead_code)] // dedicated hub modal entry; palette uses OpenHub for now
-pub(crate) fn open_extensions_hub(app: &mut TuiApp) {
-    app.selected_extensions_item = 0;
-    replace_modal(app, ModalKind::Extensions);
-}
-
 pub(crate) fn open_settings(app: &mut TuiApp) {
     replace_modal(app, ModalKind::Settings);
     app.selected_setting = crate::settings::first_selectable_setting_row();
@@ -201,7 +191,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::BackgroundModels => self::modals::handle_background_models_key(app, code),
         Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code, modifiers),
         Mode::ModelRouting => self::modals::handle_model_routing_key(app, code),
-        Mode::Extensions => self::modals::handle_extensions_hub_key(app, code),
         Mode::Setup => {
             if crate::providers::handle_setup_list_key(app, code) {
                 false // handled; do not quit

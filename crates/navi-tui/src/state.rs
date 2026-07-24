@@ -480,34 +480,6 @@ impl ModelRoutingTab {
     }
 }
 
-/// Row in the Extensions hub modal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ExtensionsHubItem {
-    Skills,
-    Plugins,
-    McpServers,
-}
-
-impl ExtensionsHubItem {
-    pub(crate) const ALL: [Self; 3] = [Self::Skills, Self::Plugins, Self::McpServers];
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Skills => "Skills…",
-            Self::Plugins => "Plugins…",
-            Self::McpServers => "MCP Servers…",
-        }
-    }
-
-    pub(crate) fn description(self) -> &'static str {
-        match self {
-            Self::Skills => "Activate prompt skills for this session",
-            Self::Plugins => "Browse and manage installed plugins",
-            Self::McpServers => "Configure Model Context Protocol servers",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -537,10 +509,6 @@ pub enum Mode {
     BgModelPicker,
     /// Unified model routing (Chat / Agents / Attachments).
     ModelRouting,
-    /// Extensions hub (Skills / Plugins / MCP).
-    /// Constructed via [`ModalKind::Extensions`]; palette often uses OpenHub instead.
-    #[allow(dead_code)] // dedicated hub mode; palette prefers OpenHub deep-links
-    Extensions,
     Setup,
     AttachmentModels,
     MessageQueue,
@@ -589,7 +557,6 @@ pub(crate) enum ModalKind {
     BackgroundModels,
     BgModelPicker,
     ModelRouting,
-    Extensions,
     /// Legacy standalone attachment modal (superseded by [`Self::ModelRouting`]).
     #[allow(dead_code)] // retained for mode map / migration from old attachment UI
     AttachmentModels,
@@ -631,7 +598,6 @@ impl ModalKind {
             Self::BackgroundModels => Mode::BackgroundModels,
             Self::BgModelPicker => Mode::BgModelPicker,
             Self::ModelRouting => Mode::ModelRouting,
-            Self::Extensions => Mode::Extensions,
             Self::AttachmentModels => Mode::AttachmentModels,
             Self::MessageQueue => Mode::MessageQueue,
             Self::QueuedMessageEdit => Mode::QueuedMessageEdit,
@@ -1207,24 +1173,9 @@ pub(crate) enum PluginApprovalKind {
     Update,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct GoalUiState {
-    pub objective: String,
-    pub short_description: Option<String>,
-    pub tokens_used: i64,
-    pub token_budget: Option<i64>,
-}
-
-impl Default for GoalUiState {
-    fn default() -> Self {
-        Self {
-            objective: String::new(),
-            short_description: None,
-            tokens_used: 0,
-            token_budget: None,
-        }
-    }
-}
+/// Marker that a session goal is active (fields rendered from engine events).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct GoalUiState;
 
 /// Live plan checklist shown in the topbar above the chat.
 #[derive(Debug, Clone)]

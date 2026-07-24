@@ -790,10 +790,10 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             session_id: _,
             goal_id: _,
             objective,
-            short_description,
+            short_description: _,
             status,
-            tokens_used,
-            token_budget,
+            tokens_used: _,
+            token_budget: _,
         } => {
             use navi_sdk::GoalStatus;
             match status {
@@ -808,22 +808,12 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                     }
                 }
                 GoalStatus::Blocked => {
-                    app.goal_state = Some(crate::state::GoalUiState {
-                        objective: objective.clone(),
-                        short_description,
-                        tokens_used,
-                        token_budget,
-                    });
+                    app.goal_state = Some(crate::state::GoalUiState);
                     show_notification(app, "Goal Blocked", &objective);
                     notify_job_done_if_unfocused(app, "NAVI goal blocked", &objective);
                 }
                 GoalStatus::Active | GoalStatus::Paused | GoalStatus::UsageLimited => {
-                    app.goal_state = Some(crate::state::GoalUiState {
-                        objective: objective.clone(),
-                        short_description,
-                        tokens_used,
-                        token_budget,
-                    });
+                    app.goal_state = Some(crate::state::GoalUiState);
                 }
             }
         }

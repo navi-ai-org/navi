@@ -2126,38 +2126,6 @@ fn open_bg_model_picker(app: &mut TuiApp) {
     super::replace_modal(app, ModalKind::BgModelPicker);
 }
 
-pub(crate) fn handle_extensions_hub_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    use crate::state::ExtensionsHubItem;
-    let count = ExtensionsHubItem::ALL.len();
-    match code {
-        KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Down | KeyCode::Char('j') | KeyCode::Tab => {
-            app.selected_extensions_item = (app.selected_extensions_item + 1) % count.max(1);
-        }
-        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab => {
-            app.selected_extensions_item = app
-                .selected_extensions_item
-                .checked_sub(1)
-                .unwrap_or(count.saturating_sub(1));
-        }
-        KeyCode::Enter => {
-            match ExtensionsHubItem::ALL
-                .get(app.selected_extensions_item)
-                .copied()
-            {
-                Some(ExtensionsHubItem::Skills) => super::open_skills_picker(app),
-                Some(ExtensionsHubItem::Plugins) => super::open_plugins_picker(app),
-                Some(ExtensionsHubItem::McpServers) => {
-                    crate::mcp_status::open_mcp_modal(app);
-                }
-                None => {}
-            }
-        }
-        _ => {}
-    }
-    false
-}
-
 const BG_MODEL_TASKS: &[(&str, &str)] = &[
     ("memory_extraction", "Automatic durable-memory extraction"),
     ("compaction", "Conversation summarization"),

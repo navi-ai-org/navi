@@ -9,16 +9,8 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+use self::policy::{RunPolicy, clamp_max_agents, clamp_max_parallel, default_run_policy};
 pub use backends::{SubagentBridgeBackend, WorkerProbeBackend};
-pub use policy::{
-    AgentPolicyOpts, EffectiveAgentPolicy, MAX_AGENTS_CEILING, MAX_PARALLEL_CEILING, RunPolicy,
-    clamp_max_agents, clamp_max_parallel, default_run_policy, intersect_agent_policy,
-};
-pub use types::{
-    AGENT_RESULT_MAX_BYTES, AgentBackendResult, AgentRequest, DEFAULT_MAX_AGENTS,
-    DEFAULT_MAX_PARALLEL, DEFAULT_MAX_SCRIPT_BYTES, NESTED_WORKFLOW_TOOLS, WorkflowErrorCode,
-    WorkflowRunStatus, WorkflowStats,
-};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -467,7 +459,6 @@ impl Tool for WorkflowTool {
             args,
             run_policy,
             max_agents,
-            max_parallel,
             job_tx,
             cancel_token: cancel_token.clone(),
         };
