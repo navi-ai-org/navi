@@ -236,12 +236,8 @@ export interface EngineConfig {
   };
   backgroundModels?: {
     default?: BackgroundModelEntry | null;
-    naming?: BackgroundModelEntry | null;
-    memoryExtraction?: BackgroundModelEntry | null;
     repoSearch?: BackgroundModelEntry | null;
-    compaction?: BackgroundModelEntry | null;
     subagentResearch?: BackgroundModelEntry | null;
-    simpleCodeEdit?: BackgroundModelEntry | null;
   };
   tui?: {
     theme: string;

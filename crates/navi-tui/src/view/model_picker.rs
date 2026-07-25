@@ -391,12 +391,8 @@ fn bg_model_is_current_override(app: &TuiApp, model: &navi_sdk::ModelOption) -> 
     let bg = &app.loaded_config.config.background_models;
     let task = app.bg_model_picker_task.as_deref().unwrap_or("");
     let entry = match task {
-        "naming" => bg.naming.as_ref(),
-        "memory_extraction" => bg.memory_extraction.as_ref(),
-        "compaction" => bg.compaction.as_ref(),
         "repo_search" => bg.repo_search.as_ref(),
         "subagent_research" => bg.subagent_research.as_ref(),
-        "simple_code_edit" => bg.simple_code_edit.as_ref(),
         _ => bg.default.as_ref(),
     };
     if let Some(entry) = entry {

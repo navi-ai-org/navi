@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::policy::EffectiveAgentPolicy;
+use super::policy::{EffectiveAgentPolicy, RunPolicy};
 use crate::cancel::CancelToken;
 
 /// Default max Lua script size (64 KiB).
@@ -58,7 +58,7 @@ pub struct AgentRequest {
     pub prompt: String,
     pub label: Option<String>,
     pub model: Option<String>,
-    pub max_tokens: Option<usize>,
+    pub run_policy: RunPolicy,
     pub effective: EffectiveAgentPolicy,
     pub cancel_token: CancelToken,
 }
@@ -70,7 +70,7 @@ impl std::fmt::Debug for AgentRequest {
             .field("prompt", &self.prompt)
             .field("label", &self.label)
             .field("model", &self.model)
-            .field("max_tokens", &self.max_tokens)
+            .field("run_policy", &self.run_policy)
             .field("effective", &self.effective)
             .field("cancel_token", &"<CancelToken>")
             .finish()

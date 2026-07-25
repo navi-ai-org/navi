@@ -4,13 +4,12 @@ type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::registry::types::{RegistryModel, RegistryProvider};
 use navi_core::{
     AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    MemoryExtractionModel, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents,
-    RuntimeEvent, SessionGoal, SessionId, SessionSnapshot, SessionStore, SessionTitleHandle,
-    SessionTitleTool, SkillManifest, available_model_options, canonical_provider_id,
-    config::effective_context_window, discover_configured_skills, model_can_run_publicly,
-    provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
-    resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    save_project_config,
+    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
+    SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool, SkillManifest,
+    available_model_options, canonical_provider_id, config::effective_context_window,
+    discover_configured_skills, model_can_run_publicly, provider_catalog, registry,
+    registry::RegistryStore, resolve_provider_api_key, resolve_provider_config,
+    resolve_provider_credential_status, save_global_config, save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 
@@ -417,8 +416,6 @@ impl NaviEngine {
 
         let loaded_config = self.loaded_config();
         let provider = build_provider_for_project_config(&loaded_config, &project_dir)?;
-        let memory_extraction_model =
-            self.configured_memory_extraction_model(&loaded_config, &project_dir)?;
         let mut tool_executor = build_local_tooling(
             &loaded_config,
             project_dir.clone(),
@@ -566,7 +563,6 @@ impl NaviEngine {
             event_tx: None,
             runtime_components: Some(runtime_components),
             session_title_handle: Some(session_title_handle),
-            memory_extraction_model,
             skip_auto_tool_bootstrap: !install_code_agent_extras,
         });
         let events = runtime.stream_events();
@@ -617,41 +613,6 @@ impl NaviEngine {
                 }),
             );
         Ok(info)
-    }
-
-    /// Builds the opt-in model used for automatic memory extraction. This is
-    /// intentionally separate from the chat provider: leaving it unset
-    /// disables automatic extraction instead of charging the interactive model
-    /// in a hidden background request.
-    fn configured_memory_extraction_model(
-        &self,
-        loaded_config: &LoadedConfig,
-        project_dir: &std::path::Path,
-    ) -> Result<Option<MemoryExtractionModel>> {
-        let Some(entry) = loaded_config
-            .config
-            .background_models
-            .memory_extraction
-            .as_ref()
-        else {
-            return Ok(None);
-        };
-        let (Some(provider), Some(model)) = (entry.provider.as_deref(), entry.model.as_deref())
-        else {
-            return Err(NaviError::Config(
-                "background_models.memory_extraction requires an explicit provider and model"
-                    .into(),
-            ));
-        };
-
-        let mut extraction_config = loaded_config.clone();
-        extraction_config.config.model.provider = provider.to_string();
-        extraction_config.config.model.name = model.to_string();
-        let provider = build_provider_for_project_config(&extraction_config, project_dir)?;
-        Ok(Some(MemoryExtractionModel {
-            provider,
-            model_name: model.to_string(),
-        }))
     }
 
     /// Sends a user message to an active session and waits for the assistant response.

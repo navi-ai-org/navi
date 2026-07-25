@@ -1132,20 +1132,6 @@ impl RegistryStore {
     pub fn seed_default_profiles(&self) -> Result<()> {
         let defaults = vec![
             Profile {
-                id: "cheap_general".to_string(),
-                description: "General-purpose cheap model".to_string(),
-                min_context: Some(32_000),
-                max_input_price: Some(0.50),
-                requires_tools: false,
-            },
-            Profile {
-                id: "cheap_code".to_string(),
-                description: "Cheap code-focused model with tool support".to_string(),
-                min_context: Some(64_000),
-                max_input_price: Some(1.00),
-                requires_tools: true,
-            },
-            Profile {
                 id: "repo_search".to_string(),
                 description: "Fast repository exploration".to_string(),
                 min_context: Some(64_000),
@@ -1153,22 +1139,8 @@ impl RegistryStore {
                 requires_tools: true,
             },
             Profile {
-                id: "naming".to_string(),
-                description: "Session title generation".to_string(),
-                min_context: Some(8_000),
-                max_input_price: Some(0.20),
-                requires_tools: false,
-            },
-            Profile {
-                id: "long_context_cheap".to_string(),
-                description: "Compaction and summarization".to_string(),
-                min_context: Some(128_000),
-                max_input_price: Some(1.00),
-                requires_tools: false,
-            },
-            Profile {
-                id: "research_synthesis".to_string(),
-                description: "Research subagent with tool access".to_string(),
+                id: "subagent_research".to_string(),
+                description: "Research-oriented subagent".to_string(),
                 min_context: Some(64_000),
                 max_input_price: Some(1.00),
                 requires_tools: true,
@@ -1552,7 +1524,7 @@ mod tests {
                     context_window_tokens: Some(200_000),
                     max_output_tokens: Some(8_192),
                     recommended_temperature: Some(0.7),
-                    supports_thinking: None,
+                    supports_thinking: Some(false),
                     reasoning_levels: Vec::new(),
                     default_reasoning_effort: None,
                     supports_attachments: None,
@@ -1572,7 +1544,7 @@ mod tests {
                     context_window_tokens: Some(128_000),
                     max_output_tokens: Some(4_096),
                     recommended_temperature: Some(0.5),
-                    supports_thinking: None,
+                    supports_thinking: Some(false),
                     reasoning_levels: Vec::new(),
                     default_reasoning_effort: None,
                     supports_attachments: None,
@@ -2065,14 +2037,12 @@ mod tests {
             .upsert_pricing(model_id, "test-provider", Some(0.10), Some(0.30))
             .expect("pricing");
         store
-            .upsert_model_profile(model_id, "test-provider", "cheap_general", 0.9)
+            .upsert_model_profile(model_id, "test-provider", "repo_search", 0.9)
             .expect("profile");
 
         store.seed_default_profiles().expect("seed profiles");
 
-        let ranked = store
-            .query_models_by_profile("cheap_general")
-            .expect("query");
+        let ranked = store.query_models_by_profile("repo_search").expect("query");
         assert!(!ranked.is_empty());
         assert_eq!(ranked[0].model_id, model_id);
         assert_eq!(ranked[0].score, 0.9);
@@ -2120,15 +2090,13 @@ mod tests {
 
         let model_id = "tiny:tiny-model";
         store
-            .upsert_model_profile(model_id, "tiny", "cheap_general", 1.0)
+            .upsert_model_profile(model_id, "tiny", "repo_search", 1.0)
             .expect("profile");
 
         store.seed_default_profiles().expect("seed");
 
-        // cheap_general requires min_context 32k, tiny-model has 4k.
-        let ranked = store
-            .query_models_by_profile("cheap_general")
-            .expect("query");
+        // repo_search requires min_context 64k, tiny-model has 4k.
+        let ranked = store.query_models_by_profile("repo_search").expect("query");
         assert!(
             ranked.is_empty(),
             "tiny-model should be filtered out by min_context"
@@ -2148,7 +2116,7 @@ mod tests {
             .upsert_pricing(model_id, "test-provider", Some(0.10), Some(0.30))
             .expect("pricing");
         store
-            .upsert_model_profile(model_id, "test-provider", "cheap_general", 0.9)
+            .upsert_model_profile(model_id, "test-provider", "repo_search", 0.9)
             .expect("profile");
 
         store
@@ -2157,7 +2125,7 @@ mod tests {
 
         assert!(store.load_capabilities(model_id).unwrap().is_empty());
         assert!(store.load_pricing(model_id).unwrap().is_none());
-        let ranked = store.query_models_by_profile("cheap_general").unwrap();
+        let ranked = store.query_models_by_profile("repo_search").unwrap();
         assert!(ranked.is_empty());
     }
 

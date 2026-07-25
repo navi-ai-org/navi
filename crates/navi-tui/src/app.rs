@@ -264,13 +264,13 @@ pub struct TuiApp {
     pub(crate) bg_command_output_follow: bool,
     pub(crate) bg_poll_task: Option<JoinHandle<()>>,
 
-    // session naming
+    // session title/goal
     pub(crate) session_title: Option<String>,
     /// Session goal cached for frequent checkpoints (avoids reloading full JSON).
     pub(crate) session_goal: Option<SessionGoal>,
     /// When set, a debounced mid-turn session checkpoint is due at this instant.
     pub(crate) session_checkpoint_due: Option<Instant>,
-    /// How many background model tasks are actively running (naming, compaction, etc.)
+    /// How many background model tasks are actively running (repo_search, subagent_research)
     pub(crate) bg_models_running: usize,
 
     // background models config

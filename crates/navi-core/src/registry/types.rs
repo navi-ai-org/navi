@@ -33,7 +33,7 @@ pub struct ModelProfileEntry {
     /// Composite key: `"provider_id:model_name"`.
     pub model_id: String,
     pub provider_id: String,
-    /// Profile identifier (e.g. "cheap_general", "repo_search").
+    /// Profile identifier (e.g. "repo_search", "subagent_research").
     pub profile_id: String,
     /// Higher = better fit for this profile.
     pub score: f64,

@@ -2137,11 +2137,8 @@ pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area
     });
 
     let tasks: &[(&str, &str)] = &[
-        ("memory_extraction", "Automatic durable-memory extraction"),
-        ("compaction", "Conversation summarization"),
         ("repo_search", "Repository exploration"),
         ("subagent_research", "Research subagents"),
-        ("simple_code_edit", "Code edit subagents"),
     ];
 
     let mut rows: Vec<Line> = Vec::new();
@@ -2214,9 +2211,6 @@ pub(crate) fn render_background_models(frame: &mut Frame<'_>, app: &TuiApp, area
 
 fn resolve_bg_model_label(app: &TuiApp, task: &str) -> String {
     let bg = &app.loaded_config.config.background_models;
-    if task == "memory_extraction" && bg.memory_extraction.is_none() {
-        return "not configured (automatic extraction off)".to_string();
-    }
     if let Some(entry) = bg.resolve(task)
         && let (Some(provider), Some(model)) = (&entry.provider, &entry.model)
     {
@@ -2229,12 +2223,8 @@ fn resolve_bg_model_label(app: &TuiApp, task: &str) -> String {
 
 fn bg_model_has_override(bg: &navi_sdk::BackgroundModelsConfig, task: &str) -> bool {
     match task {
-        "naming" => bg.naming.is_some(),
-        "memory_extraction" => bg.memory_extraction.is_some(),
-        "compaction" => bg.compaction.is_some(),
         "repo_search" => bg.repo_search.is_some(),
         "subagent_research" => bg.subagent_research.is_some(),
-        "simple_code_edit" => bg.simple_code_edit.is_some(),
         _ => bg.default.is_some(),
     }
 }
@@ -2369,11 +2359,8 @@ fn render_model_routing_chat_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rec
 
 fn render_model_routing_agents_body(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let tasks: &[(&str, &str)] = &[
-        ("memory_extraction", "Automatic durable-memory extraction"),
-        ("compaction", "Conversation summarization"),
         ("repo_search", "Repository exploration"),
         ("subagent_research", "Research subagents"),
-        ("simple_code_edit", "Code edit subagents"),
     ];
     let mut rows: Vec<Line> = Vec::new();
     let bg = &app.loaded_config.config.background_models;

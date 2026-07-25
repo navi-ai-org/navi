@@ -152,8 +152,8 @@ pub use rewind::{
     RewindStore,
 };
 pub use runtime::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, MemoryExtractionModel, PlanReviewResolver,
-    QuestionResolver, SudoPasswordResolver, TurnCanceller,
+    AgentRuntime, AgentRuntimeOptions, ApprovalResolver, PlanReviewResolver, QuestionResolver,
+    SudoPasswordResolver, TurnCanceller,
 };
 pub use runtime_components::{
     CompactionStrategy, DefaultCompactionStrategy, DefaultHarnessDriver, DefaultPromptBuilder,
@@ -178,10 +178,10 @@ pub use skills::{
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
-    AgentBackend, AgentProfile, ApprovalMode, MockAgentBackend, PolicyAgentBackend,
-    ProviderBuilderFn, RepoExploreTool, SubagentBridgeBackend, SubagentTool, Tool, ToolDefinition,
-    ToolExecutor, ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult, ToolRisk,
-    WorkerProbeBackend, WorkflowTool, capabilities, workflow_tool_description,
+    AgentBackend, MockAgentBackend, PolicyAgentBackend, ProviderBuilderFn, RepoExploreTool,
+    SubagentBridgeBackend, SubagentOptions, SubagentTool, Tool, ToolDefinition, ToolExecutor,
+    ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult, ToolRisk, WorkerProbeBackend,
+    WorkflowTool, capabilities, workflow_tool_description,
 };
 pub use trace::{
     ApprovalTrace, ToolCallTrace, TraceStore, TurnMetrics, TurnOutcome, TurnTrace, VerifierTrace,

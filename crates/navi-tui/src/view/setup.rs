@@ -45,12 +45,6 @@ pub(crate) fn render_setup(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             "Setup · Provider",
             "Choose a provider and enter your API key in the model picker (ctrl+m).",
         ),
-        Some(SetupPhase::MemoryModel) => render_banner(
-            frame,
-            area,
-            "Setup · Memory model",
-            "Pick the dedicated model for automatic memory extraction (Agents tab).",
-        ),
         Some(SetupPhase::Interview) | None => {
             // Interview uses the normal chat UI underneath; show a thin banner.
             render_banner(

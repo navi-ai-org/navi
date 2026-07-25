@@ -331,37 +331,17 @@ fn p9_mcp_tool_has_deferred_exposure() {
     assert!(metadata.tags.contains(&"mcp".to_string()));
 }
 
-// ── P10: Subagent profiles ───────────────────────────────────────────────────
+// ── P10: Subagent options ────────────────────────────────────────────────────
 
 #[test]
-fn p10_agent_profile_serde_roundtrip() {
-    let profiles = [
-        navi_core::AgentProfile::Explorer,
-        navi_core::AgentProfile::Implementer,
-        navi_core::AgentProfile::Reviewer,
-        navi_core::AgentProfile::Verifier,
-        navi_core::AgentProfile::Summarizer,
-    ];
-    for profile in &profiles {
-        let json = serde_json::to_string(profile).unwrap();
-        let restored: navi_core::AgentProfile = serde_json::from_str(&json).unwrap();
-        assert_eq!(*profile, restored);
-    }
-}
-
-#[test]
-fn p10_approval_mode_serde_roundtrip() {
-    let modes = [
-        navi_core::ApprovalMode::Inherit,
-        navi_core::ApprovalMode::Escalate,
-        navi_core::ApprovalMode::ReadOnly,
-        navi_core::ApprovalMode::DenyWrite,
-    ];
-    for mode in &modes {
-        let json = serde_json::to_string(mode).unwrap();
-        let restored: navi_core::ApprovalMode = serde_json::from_str(&json).unwrap();
-        assert_eq!(*mode, restored);
-    }
+fn p10_subagent_options_serde_roundtrip() {
+    let opts = navi_core::SubagentOptions {
+        model: Some("claude-sonnet".to_string()),
+        path_deny: Some(vec!["secrets/".to_string()]),
+    };
+    let json = serde_json::to_string(&opts).unwrap();
+    let restored: navi_core::SubagentOptions = serde_json::from_str(&json).unwrap();
+    assert_eq!(opts, restored);
 }
 
 // ── Capabilities ─────────────────────────────────────────────────────────────

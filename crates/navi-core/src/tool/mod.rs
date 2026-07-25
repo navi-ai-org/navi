@@ -34,9 +34,9 @@ use builtin::{
 use builtin::{CodeEditTool, CodeReadTool};
 
 pub use builtin::{
-    AgentBackend, AgentProfile, ApprovalMode, MockAgentBackend, PolicyAgentBackend,
-    ProviderBuilderFn, RepoExploreTool, SubagentBridgeBackend, SubagentTool, WorkerProbeBackend,
-    WorkflowTool, workflow_tool_description,
+    AgentBackend, MockAgentBackend, PolicyAgentBackend, ProviderBuilderFn, RepoExploreTool,
+    SubagentBridgeBackend, SubagentOptions, SubagentTool, WorkerProbeBackend, WorkflowTool,
+    workflow_tool_description,
 };
 pub use metadata::{ToolExposure, ToolMetadata, ToolRisk, capabilities};
 pub use registry::{ToolRegistry, ToolSet, phases};

@@ -77,14 +77,9 @@ pub struct TurnContext {
     pub config: Arc<RwLock<crate::config::NaviConfig>>,
     /// Optional previous-session memory loaded at session startup.
     pub memory_injection: Option<String>,
-    /// Optional separate provider for compaction/summarization. When set,
-    /// auto_compact uses this instead of the main model provider.
-    pub compaction_provider: Option<Arc<dyn ModelProvider>>,
     /// Current agent mode (Default or Plan). In Plan mode, only read-only
     /// tools are available to the model.
     pub agent_mode: crate::plan_mode::AgentMode,
-    /// Model name for the compaction provider.
-    pub compaction_model_name: Option<String>,
     pub session_id: String,
     /// Optional set of tool names this turn may call (subagent or active harness).
     /// `None` means unrestricted (beyond security policy / agent mode).

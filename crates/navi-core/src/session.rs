@@ -703,6 +703,11 @@ pub enum SessionCommand {
     Compact {
         response_tx: tokio::sync::oneshot::Sender<Result<crate::compact::CompactOutcome>>,
     },
+    /// Return a clone of the current conversation messages (for forked tasks
+    /// such as memory extraction that want to reuse the prompt cache).
+    GetMessages {
+        response_tx: tokio::sync::oneshot::Sender<Vec<crate::model::ModelMessage>>,
+    },
 }
 
 /// Truncate model history so only the first `keep_user_turns` user turns remain.
@@ -776,6 +781,9 @@ impl SessionRuntime {
                     SessionCommand::Compact { response_tx } => {
                         let result = force_compact_session_messages(&ctx, &mut messages).await;
                         let _ = response_tx.send(result);
+                    }
+                    SessionCommand::GetMessages { response_tx } => {
+                        let _ = response_tx.send(messages.clone());
                     }
                 }
             }
@@ -1083,9 +1091,7 @@ mod tests {
                 crate::config::NaviConfig::default(),
             )),
             memory_injection: None,
-            compaction_provider: None,
             agent_mode: crate::plan_mode::AgentMode::Default,
-            compaction_model_name: None,
             session_id: "test-session".to_string(),
             allowed_tool_names: None,
             is_subagent: false,

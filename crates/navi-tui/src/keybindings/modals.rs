@@ -1922,17 +1922,7 @@ pub(crate) fn handle_model_routing_key(app: &mut TuiApp, code: KeyCode) -> bool 
     use crate::state::ModelRoutingTab;
     match code {
         KeyCode::Esc => {
-            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel)
-                && app.model_routing_tab == ModelRoutingTab::Agents
-            {
-                show_notification(
-                    app,
-                    "Setup",
-                    "Choose a memory extraction model to continue setup.",
-                );
-            } else {
-                super::close_active_modal(app);
-            }
+            super::close_active_modal(app);
         }
         KeyCode::Left | KeyCode::Char('h') => {
             app.model_routing_tab = app.model_routing_tab.previous();
@@ -2114,25 +2104,14 @@ fn open_bg_model_picker(app: &mut TuiApp) {
 }
 
 const BG_MODEL_TASKS: &[(&str, &str)] = &[
-    ("memory_extraction", "Automatic durable-memory extraction"),
-    ("compaction", "Conversation summarization"),
     ("repo_search", "Repository exploration"),
     ("subagent_research", "Research subagents"),
-    ("simple_code_edit", "Code edit subagents"),
 ];
 
 pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
     match code {
         KeyCode::Esc => {
-            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel) {
-                show_notification(
-                    app,
-                    "Setup",
-                    "Choose a memory extraction model to continue setup.",
-                );
-            } else {
-                super::close_active_modal(app);
-            }
+            super::close_active_modal(app);
         }
         // Reuse the same list navigation as the Model Routing → Agents tab.
         other => handle_background_models_list_key(app, other),
@@ -2151,14 +2130,6 @@ pub(crate) fn handle_bg_model_picker_key(
 
     match code {
         KeyCode::Esc => {
-            if app.setup_phase == Some(crate::state::SetupPhase::MemoryModel) {
-                show_notification(
-                    app,
-                    "Setup",
-                    "Choose a memory extraction model to continue setup.",
-                );
-                return false;
-            }
             if app.attachment_model_picker_active {
                 app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
             } else {
@@ -2266,13 +2237,6 @@ pub(crate) fn handle_bg_model_picker_key(
                         "Agent Model Routes",
                         format!("{} → {}:{}", task_id, provider_id, model_name),
                     );
-                    if task_id == "memory_extraction"
-                        && app.setup_phase == Some(crate::state::SetupPhase::MemoryModel)
-                    {
-                        super::close_all_modals(app);
-                        crate::providers::maybe_start_setup_interview(app);
-                        return false;
-                    }
                 }
             }
             if app.attachment_model_picker_active {
@@ -2324,12 +2288,8 @@ fn set_bg_model_override(app: &mut TuiApp, task: &str, provider: &str, model: &s
         fallback: None,
     };
     match task {
-        "naming" => bg.naming = Some(entry),
-        "memory_extraction" => bg.memory_extraction = Some(entry),
-        "compaction" => bg.compaction = Some(entry),
         "repo_search" => bg.repo_search = Some(entry),
         "subagent_research" => bg.subagent_research = Some(entry),
-        "simple_code_edit" => bg.simple_code_edit = Some(entry),
         _ => bg.default = Some(entry),
     }
 }
@@ -2337,12 +2297,8 @@ fn set_bg_model_override(app: &mut TuiApp, task: &str, provider: &str, model: &s
 fn clear_bg_model_override(app: &mut TuiApp, task: &str) {
     let bg = &mut app.loaded_config.config.background_models;
     match task {
-        "naming" => bg.naming = None,
-        "memory_extraction" => bg.memory_extraction = None,
-        "compaction" => bg.compaction = None,
         "repo_search" => bg.repo_search = None,
         "subagent_research" => bg.subagent_research = None,
-        "simple_code_edit" => bg.simple_code_edit = None,
         _ => bg.default = None,
     }
 }

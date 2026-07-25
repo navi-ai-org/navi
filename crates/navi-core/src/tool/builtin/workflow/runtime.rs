@@ -414,7 +414,7 @@ fn call_agent(
         prompt,
         label: opts.label.clone(),
         model: opts.model.clone(),
-        max_tokens: opts.max_tokens,
+        run_policy: host.run_policy.clone(),
         effective,
         cancel_token: host.cancel_token.clone(),
     };
@@ -528,27 +528,6 @@ fn parse_agent_opts(opts: Option<Table>) -> AgentPolicyOpts {
     if let Ok(Some(l)) = t.get::<Option<String>>("label") {
         out.label = Some(l);
     }
-    if let Ok(Some(a)) = t.get::<Option<String>>("approval") {
-        out.approval = Some(a);
-    }
-    if let Ok(Some(b)) = t.get::<Option<bool>>("create_files") {
-        out.create_files = Some(b);
-    }
-    if let Ok(Some(b)) = t.get::<Option<bool>>("create_dirs") {
-        out.create_dirs = Some(b);
-    }
-    if let Ok(Some(n)) = t.get::<Option<i64>>("max_tokens") {
-        out.max_tokens = Some(n.max(0) as usize);
-    }
-    out.tools = read_string_array(&t, "tools");
-    out.write_allow = read_string_array(&t, "write_allow").or_else(|| {
-        // Distinguish missing vs empty: if key exists as empty table, return Some([])
-        if t.contains_key("write_allow").unwrap_or(false) {
-            Some(Vec::new())
-        } else {
-            None
-        }
-    });
     out.path_allow = read_string_array(&t, "path_allow");
     out.path_deny = read_string_array(&t, "path_deny");
     out

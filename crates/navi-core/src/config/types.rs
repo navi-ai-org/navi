@@ -1069,32 +1069,18 @@ pub struct MemoryConfig {
 pub struct BackgroundModelsConfig {
     /// Default background model entry (used when no task-specific entry is set).
     pub default: Option<BackgroundModelEntry>,
-    /// Model for session title generation.
-    pub naming: Option<BackgroundModelEntry>,
-    /// Dedicated model for automatic durable-memory extraction after a turn.
-    /// This is opt-in: unlike other background routes it never falls back to
-    /// the active chat model, preventing invisible credit consumption.
-    pub memory_extraction: Option<BackgroundModelEntry>,
     /// Model for repository exploration subagent.
     pub repo_search: Option<BackgroundModelEntry>,
-    /// Model for conversation compaction/summarization.
-    pub compaction: Option<BackgroundModelEntry>,
     /// Model for research-oriented subagents.
     pub subagent_research: Option<BackgroundModelEntry>,
-    /// Model for simple code edit subagents.
-    pub simple_code_edit: Option<BackgroundModelEntry>,
 }
 
 impl BackgroundModelsConfig {
     /// Resolves the entry for a given task key, falling back to `default`.
     pub fn resolve(&self, task: &str) -> Option<&BackgroundModelEntry> {
         let entry = match task {
-            "naming" => self.naming.as_ref(),
-            "memory_extraction" => self.memory_extraction.as_ref(),
             "repo_search" => self.repo_search.as_ref(),
-            "compaction" => self.compaction.as_ref(),
             "subagent_research" => self.subagent_research.as_ref(),
-            "simple_code_edit" => self.simple_code_edit.as_ref(),
             _ => None,
         };
         entry.or(self.default.as_ref())
@@ -1104,7 +1090,7 @@ impl BackgroundModelsConfig {
 /// A single background model entry: either a profile name or an explicit provider+model.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BackgroundModelEntry {
-    /// Profile identifier (e.g. "cheap_general", "naming").
+    /// Profile identifier (e.g. "repo_search", "subagent_research").
     pub profile: Option<String>,
     /// Explicit provider override (used when profile is None).
     pub provider: Option<String>,

@@ -132,7 +132,6 @@ impl LiteRuntime {
             event_tx: None,
             runtime_components: Some(components),
             session_title_handle: None,
-            memory_extraction_model: None,
             skip_auto_tool_bootstrap: false,
         });
 

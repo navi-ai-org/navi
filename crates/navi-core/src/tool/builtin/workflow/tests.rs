@@ -538,18 +538,10 @@ async fn p2_write_allow_single_file() {
         json!({
             "policy": {
                 "create_files": true,
-                "write_allow": ["src/a.rs", "src/b.rs"],
+                "write_allow": ["src/a.rs"],
                 "tools": ["read_file", "search", "edit", "write_file"]
             },
-            "script": r#"
-                function workflow()
-                    return agent("edit", {
-                        write_allow = {"src/a.rs"},
-                        create_files = true,
-                        tools = {"read_file", "edit", "write_file"}
-                    })
-                end
-            "#
+            "script": r#"function workflow() return agent("edit") end"#
         }),
     )
     .await;
@@ -589,15 +581,7 @@ async fn p3_create_files_false_blocks_create() {
                 "write_allow": ["src/a.rs"],
                 "tools": ["read_file", "write_file", "edit"]
             },
-            "script": r#"
-                function workflow()
-                    return agent("x", {
-                        create_files = true,
-                        write_allow = {"src/a.rs"},
-                        tools = {"read_file", "write_file", "edit"}
-                    })
-                end
-            "#
+            "script": r#"function workflow() return agent("x") end"#
         }),
     )
     .await;
@@ -634,12 +618,7 @@ async fn p4_path_deny_wins() {
             },
             "script": r#"
                 function workflow()
-                    return agent("x", {
-                        write_allow = {"src/a.rs"},
-                        path_deny = {"src/a.rs"},
-                        create_files = true,
-                        tools = {"read_file", "write_file", "edit"}
-                    })
+                    return agent("x", {path_deny = {"src/a.rs"}})
                 end
             "#
         }),
@@ -680,11 +659,7 @@ async fn p5_worker_no_nested_orchestration() {
             "policy": {
                 "tools": ["read_file", "search", "subagent", "workflow"]
             },
-            "script": r#"
-                function workflow()
-                    return agent("x", {tools = {"read_file", "subagent", "workflow"}})
-                end
-            "#
+            "script": r#"function workflow() return agent("x") end"#
         }),
     )
     .await;
@@ -701,15 +676,10 @@ async fn p5_worker_no_nested_orchestration() {
 #[test]
 fn p6_intersection_unit() {
     let run = default_run_policy();
-    let opts = AgentPolicyOpts {
-        tools: Some(vec!["bash".into(), "read_file".into()]),
-        ..Default::default()
-    };
-    let eff = intersect_agent_policy(&run, &opts);
-    assert!(!eff.tools.iter().any(|t| t == "bash"));
+    let eff = intersect_agent_policy(&run, &AgentPolicyOpts::default());
     // Real probe path: bash must not be registered under default run.
     let (_dir, policy) = temp_policy();
-    let probe = super::backends::probe_worker_capabilities(&policy, &eff);
+    let probe = super::backends::probe_worker_capabilities(&policy, &run, &eff);
     assert!(!probe.can_bash, "{probe:?}");
     assert!(
         !probe.registered_tools.iter().any(|t| t == "bash"),
@@ -718,22 +688,19 @@ fn p6_intersection_unit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn p7_implementer_empty_write_allow() {
+async fn p7_run_empty_write_allow_blocks_writes() {
     let (_dir, policy) = temp_policy();
     let tool = tool_with_probe(policy);
     let r = run(
         &tool,
         json!({
-            "script": r#"
-                function workflow()
-                    return agent("x", {
-                        profile = "implementer",
-                        write_allow = {},
-                        create_files = true,
-                        tools = {"read_file", "write_file", "edit"}
-                    })
-                end
-            "#
+            "policy": {
+                "profile": "implementer",
+                "create_files": true,
+                "write_allow": [],
+                "tools": ["read_file", "write_file", "edit"]
+            },
+            "script": r#"function workflow() return agent("x") end"#
         }),
     )
     .await;
@@ -742,13 +709,8 @@ async fn p7_implementer_empty_write_allow() {
     assert_eq!(res["backend"], "worker_probe");
     assert_eq!(res["can_write_file"], false, "{res:?}");
     assert_eq!(res["can_edit"], false, "{res:?}");
-    assert_eq!(res["create_files"], false);
+    assert_eq!(res["create_files"], true, "{res:?}");
     assert_eq!(res["create_new_file_allowed"], false);
-    let reg = res["registered_tools"].as_array().unwrap();
-    assert!(
-        !reg.iter()
-            .any(|t| t.as_str() == Some("write_file") || t.as_str() == Some("edit"))
-    );
 }
 
 #[test]
@@ -819,15 +781,11 @@ fn production_bridge_payload_validates_on_real_subagent_executor() {
             ..Default::default()
         },
     );
-    assert!(
-        effective.create_files,
-        "run create_files must inherit when agent omits the flag"
-    );
+    assert_eq!(effective.profile, "implementer");
     let input = build_subagent_bridge_input(
         "create scratch/probe.txt with ok",
         None, // label missing → must NOT emit description:null
         &effective,
-        None,
         None,
     );
     assert!(
@@ -844,7 +802,7 @@ fn production_bridge_payload_validates_on_real_subagent_executor() {
         .unwrap_or_else(|e| panic!("production bridge payload rejected by subagent schema: {e:?}"));
 
     // Case B: explicit label still accepted.
-    let input2 = build_subagent_bridge_input("ping", Some("worker-1"), &effective, None, None);
+    let input2 = build_subagent_bridge_input("ping", Some("worker-1"), &effective, None);
     let inv2 = ToolInvocation {
         id: "wf-agent-2".into(),
         tool_name: "subagent".into(),
@@ -1017,13 +975,13 @@ async fn production_bridge_agent_write_scope_options_not_schema_error() {
         "must use SubagentBridgeBackend: {agent:?}"
     );
     assert_eq!(
-        agent["create_files"], true,
-        "effective create_files should surface on bridge result: {agent:?}"
+        agent["profile"].as_str(),
+        Some("implementer"),
+        "profile should surface on bridge result: {agent:?}"
     );
-    let wa = agent["write_allow"].as_array().cloned().unwrap_or_default();
     assert!(
-        wa.iter().any(|v| v.as_str() == Some("scratch/x.txt")),
-        "write_allow must pass through bridge payload: {agent:?}"
+        agent["path_deny"].is_array(),
+        "path_deny should surface on bridge result: {agent:?}"
     );
     assert!(
         agent.get("error_code").and_then(|v| v.as_str()) != Some("invalid_arguments"),

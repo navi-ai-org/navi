@@ -1,7 +1,8 @@
 use super::*;
 use crate::config::{ApprovalConfig, HarnessConfig, PermissionMode};
 use crate::{
-    ModelRequest, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig, ToolInvocation,
+    ModelRequest, ModelResponse, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig,
+    ToolInvocation,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -60,7 +61,16 @@ impl ModelProvider for MockToolProvider {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
-        ModelProvider::complete(self, request).await
+        let mut stream = self.stream(request);
+        let mut text = String::new();
+        while let Some(event) = stream.next().await {
+            match event? {
+                ModelStreamEvent::TextDelta { text: delta } => text.push_str(&delta),
+                ModelStreamEvent::Done => break,
+                _ => {}
+            }
+        }
+        Ok(ModelResponse { text })
     }
 }
 
@@ -155,7 +165,6 @@ async fn headless_runtime_executes_read_tools_and_continues() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 
@@ -224,7 +233,6 @@ async fn runtime_session_lifecycle_streams_events_and_snapshots() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 
@@ -341,7 +349,6 @@ async fn runtime_registers_goal_tools_on_provided_executor() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 
@@ -400,7 +407,6 @@ async fn runtime_uses_requested_session_id_once() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 
@@ -445,7 +451,6 @@ async fn active_session_uses_replaced_model_provider_on_next_turn() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 
@@ -523,7 +528,6 @@ async fn dropped_turn_future_does_not_poison_session_event_stream() {
         event_tx: None,
         runtime_components: None,
         session_title_handle: None,
-        memory_extraction_model: None,
         skip_auto_tool_bootstrap: false,
     });
 

@@ -39,13 +39,13 @@ impl BackgroundModelResolver {
         }
     }
 
-    /// Resolves a model for the given task type (e.g. "naming", "compaction").
+    /// Resolves a model for the given task type ("repo_search" or "subagent_research").
     ///
     /// Resolution order:
     /// 1. Check user config `background_models.<task>` for explicit override or profile
-    /// 2. Query SQLite registry for models matching the profile
+    /// 2. Query SQLite registry for models matching the task profile
     /// 3. Check credential availability for each candidate
-    /// 4. Return first match, or fallback to main model
+    /// 4. Fall back to the main chat model
     pub fn resolve(&self, task: &str) -> ResolvedBackgroundModel {
         let config = self.config.read().unwrap_or_else(|e| e.into_inner());
         let bg_config = &config.background_models;
@@ -65,17 +65,8 @@ impl BackgroundModelResolver {
             }
         }
 
-        // 3. Map task to default profile and query registry.
-        let default_profile = match task {
-            "naming" => "naming",
-            "memory_extraction" => "cheap_general",
-            "repo_search" => "repo_search",
-            "compaction" => "long_context_cheap",
-            "subagent_research" => "research_synthesis",
-            "simple_code_edit" => "cheap_code",
-            _ => "cheap_general",
-        };
-        if let Some(resolved) = self.resolve_from_profile(default_profile) {
+        // 3. Query registry for the task profile.
+        if let Some(resolved) = self.resolve_from_profile(task) {
             return resolved;
         }
 
@@ -167,7 +158,7 @@ mod tests {
             ..Default::default()
         };
         let resolver = test_resolver(config);
-        let resolved = resolver.resolve("naming");
+        let resolved = resolver.resolve("repo_search");
         assert_eq!(resolved.provider_id, "openai");
         assert_eq!(resolved.model_name, "gpt-5.5");
     }
@@ -181,7 +172,7 @@ mod tests {
             },
             ..Default::default()
         };
-        config.background_models.naming = Some(BackgroundModelEntry {
+        config.background_models.repo_search = Some(BackgroundModelEntry {
             profile: None,
             provider: Some("anthropic".to_string()),
             model: Some("claude-haiku".to_string()),
@@ -197,7 +188,7 @@ mod tests {
         });
 
         let resolver = test_resolver(config);
-        let resolved = resolver.resolve("naming");
+        let resolved = resolver.resolve("repo_search");
         // Since no API key is set, explicit override won't resolve via credential check.
         // It falls through to the main model fallback.
         // The try_explicit doesn't check credentials, it just checks provider exists.
@@ -210,7 +201,7 @@ mod tests {
         let config = NaviConfig::default();
         let resolver = test_resolver(config);
         // All tasks should fall back to main model since registry is empty.
-        for task in &["naming", "repo_search", "compaction", "subagent_research"] {
+        for task in &["repo_search", "subagent_research"] {
             let resolved = resolver.resolve(task);
             // Falls back to default config model.
             assert_eq!(resolved.provider_id, "openai");

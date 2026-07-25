@@ -197,26 +197,6 @@ pub(crate) fn save_api_key_and_rebuild(app: &mut TuiApp) {
 pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
     match app.setup_phase {
         Some(crate::state::SetupPhase::ProviderLogin) if app.provider_configured => {
-            // Memory extraction is essential, but it must never silently use
-            // the interactive chat model. Make its dedicated model an explicit
-            // onboarding decision before the interview begins.
-            app.setup_phase = Some(crate::state::SetupPhase::MemoryModel);
-            app.bg_models_selected = 0;
-            crate::keybindings::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
-            crate::notifications::show_notification(
-                app,
-                "Setup",
-                "Choose the dedicated model for automatic memory extraction.",
-            );
-        }
-        Some(crate::state::SetupPhase::MemoryModel)
-            if app
-                .loaded_config
-                .config
-                .background_models
-                .memory_extraction
-                .is_some() =>
-        {
             begin_setup_approvals(app);
         }
         Some(crate::state::SetupPhase::Approvals)

@@ -321,20 +321,10 @@ pub struct AgentRuntimeOptions {
     /// Session-local title state written by the `set_session_title` tool.
     /// When omitted, direct runtime users simply do not get agent-managed titles.
     pub session_title_handle: Option<SessionTitleHandle>,
-    /// Explicit model for automatic durable-memory extraction. `None` means
-    /// extraction is disabled rather than silently billing the chat model.
-    pub memory_extraction_model: Option<MemoryExtractionModel>,
     /// When true, skip auto-registering goal tools and skill loaders on the
     /// provided tool executor. Used by host tool profiles (`chat_only`,
     /// `host_tools_only`) so the host's filtered tool set is preserved.
     pub skip_auto_tool_bootstrap: bool,
-}
-
-/// Provider selection for the opt-in per-turn memory extractor.
-#[derive(Clone)]
-pub struct MemoryExtractionModel {
-    pub provider: Arc<dyn ModelProvider>,
-    pub model_name: String,
 }
 
 /// The core agent runtime that manages sessions, turns, approvals, and events.
@@ -371,12 +361,8 @@ pub struct AgentRuntime {
     /// Whether the model used the `memory` tool with `write` action during the current turn.
     /// Used for mutual exclusion with background extractMemories.
     turn_used_memory_write: bool,
-    /// Last user task text — used for extractMemories context.
-    last_user_task: String,
     /// Session title assigned by the chat model through `set_session_title`.
     session_title_handle: SessionTitleHandle,
-    /// User-selected model for asynchronous automatic memory extraction.
-    memory_extraction_model: Option<MemoryExtractionModel>,
     /// When true, do not auto-register goal/skill tools on the provided executor.
     skip_auto_tool_bootstrap: bool,
     /// Whether a user message is pending (set when send_turn is called
@@ -475,9 +461,7 @@ impl AgentRuntime {
             goal_runtime,
             goal_extension,
             turn_used_memory_write: false,
-            last_user_task: String::new(),
             session_title_handle: options.session_title_handle.unwrap_or_default(),
-            memory_extraction_model: options.memory_extraction_model,
             skip_auto_tool_bootstrap: options.skip_auto_tool_bootstrap,
             pending_user_input: std::sync::atomic::AtomicBool::new(false),
             agent_mode: std::sync::RwLock::new(crate::plan_mode::AgentMode::Default),
@@ -1111,7 +1095,6 @@ impl AgentRuntime {
             content_parts: content_parts.clone(),
             submitted_at: Some(crate::session::current_unix_timestamp()),
         });
-        self.last_user_task = task.clone();
 
         // Pre-turn file snapshot (dirty paths only).
         let prompt_index = self
@@ -1222,14 +1205,7 @@ impl AgentRuntime {
                 let model_wrote_memory = self.turn_used_memory_write;
 
                 if !model_wrote_memory {
-                    // Build conversation snippet from user task + assistant response
-                    let user_task = self.last_user_task.clone();
-                    let conversation = if user_task.is_empty() {
-                        format!("Assistant: {}", text)
-                    } else {
-                        format!("User: {}\n\nAssistant: {}", user_task, text)
-                    };
-                    self.try_extract_memories(&session_id, &conversation);
+                    self.try_extract_memories();
                 }
 
                 // Reset per-turn flag
@@ -1894,19 +1870,11 @@ impl AgentRuntime {
     }
 
     /// extractMemories: background per-turn memory extraction.
-    /// Spawns a tokio task that calls the model to extract durable memories
-    /// from the completed turn. Fire-and-forget — does not block the agent loop.
-    fn try_extract_memories(&self, _session_id: &str, conversation: &str) {
-        // Extraction never borrows the interactive chat model. It only runs
-        // after the user explicitly configures a dedicated background model.
-        let Some(extraction_model) = &self.memory_extraction_model else {
-            tracing::debug!("extract-memories skipped: no memory extraction model configured");
-            return;
-        };
-        let provider = extraction_model.provider.clone();
-        let model_name = extraction_model.model_name.clone();
-        let conversation = conversation.to_string();
-
+    ///
+    /// Uses the main chat model in a fork of the principal session's
+    /// conversation messages so the prompt cache is reused. Runs as a
+    /// fire-and-forget tokio task.
+    fn try_extract_memories(&self) {
         let manager = match self.get_or_init_memory_manager() {
             Ok(Some(m)) => m,
             Ok(None) => return,
@@ -1921,12 +1889,44 @@ impl AgentRuntime {
             return;
         }
 
+        let Some(runtime) = self.session.runtime() else {
+            tracing::debug!("extract-memories: no active session runtime");
+            return;
+        };
+        let submission_tx = runtime.submission_tx.clone();
+
         let store = manager.auto_memory.clone();
+        let provider = self
+            .shared_model_provider
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let model_name = self
+            .shared_model_name
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
 
         // Fire-and-forget
         tokio::spawn(async move {
-            match crate::memory::extract::extract_memories(
-                &conversation,
+            let (tx, rx) = oneshot::channel::<Vec<ModelMessage>>();
+            if submission_tx
+                .send(crate::session::SessionCommand::GetMessages { response_tx: tx })
+                .is_err()
+            {
+                tracing::debug!("extract-memories: session runtime dropped");
+                return;
+            }
+            let messages = match rx.await {
+                Ok(m) => m,
+                Err(_) => {
+                    tracing::debug!("extract-memories: session did not return messages");
+                    return;
+                }
+            };
+
+            match crate::memory::extract::extract_memories_from_messages(
+                messages,
                 provider.as_ref(),
                 &model_name,
                 &store,
@@ -2140,9 +2140,7 @@ impl AgentRuntime {
             cancel_token: self.cancel_token.clone(),
             config: self.shared_config.clone(),
             memory_injection: memory_injection.clone(),
-            compaction_provider: None,
             agent_mode: self.agent_mode(),
-            compaction_model_name: None,
             session_id: self.session.id().as_str().to_string(),
             // Catalog-active skills do not lock tools. Only session-active harness
             // packs / harness-flagged skills may contribute an allowlist.

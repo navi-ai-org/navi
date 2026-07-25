@@ -4541,9 +4541,9 @@ fn model_routing_agents_down_arrow_moves_selection() {
     assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
     assert_eq!(app.bg_models_selected, 1);
     assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.bg_models_selected, 2);
-    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(app.bg_models_selected, 1);
+    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.bg_models_selected, 0);
 }
 
 #[test]
@@ -4621,7 +4621,7 @@ fn bg_model_picker_down_recovers_from_stale_zero_selection() {
     app.mode = Mode::BgModelPicker;
     app.modal_stack.replace(Some(ModalKind::BgModelPicker));
     app.bg_model_picker_active = true;
-    app.bg_model_picker_task = Some("memory_extraction".into());
+    app.bg_model_picker_task = Some("repo_search".into());
     // Stale open selection (pre-fix).
     app.bg_model_picker_selected = 0;
     app.model_scroll = 0;

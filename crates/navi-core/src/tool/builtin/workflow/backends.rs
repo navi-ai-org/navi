@@ -13,21 +13,10 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::AgentBackend;
-use super::policy::EffectiveAgentPolicy;
+use super::policy::{EffectiveAgentPolicy, RunPolicy};
 use super::types::{AgentBackendResult, AgentRequest, NESTED_WORKFLOW_TOOLS};
 use crate::security::{SecurityDecision, SecurityPolicy};
 use crate::tool::{ToolExecutor, ToolInvocation, ToolResult};
-
-/// Write-oriented tool names used when probing policy.
-const WRITE_TOOLS: &[&str] = &[
-    "write_file",
-    "write",
-    "edit",
-    "multiedit",
-    "apply_patch",
-    "code_edit",
-];
-const COMMAND_TOOLS: &[&str] = &["bash", "sandbox"];
 
 /// Builds a filtered worker executor and probes tool/path access via the real
 /// [`SecurityPolicy`] and tool registry path (no model call).
@@ -98,7 +87,8 @@ impl AgentBackend for WorkerProbeBackend {
             };
         }
 
-        let probe = probe_worker_capabilities(&self.policy, &request.effective);
+        let probe =
+            probe_worker_capabilities(&self.policy, &request.run_policy, &request.effective);
 
         if let Some(ref inflight) = self.in_flight {
             inflight.fetch_sub(1, Ordering::SeqCst);
@@ -113,10 +103,10 @@ impl AgentBackend for WorkerProbeBackend {
                 "label": request.label,
                 "agent_index": request.agent_index,
                 "profile": request.effective.profile,
-                "tools": request.effective.tools,
-                "create_files": request.effective.create_files,
-                "create_dirs": request.effective.create_dirs,
-                "write_allow": request.effective.write_allow,
+                "tools": request.run_policy.tools,
+                "create_files": request.run_policy.create_files,
+                "create_dirs": request.run_policy.create_dirs,
+                "write_allow": request.run_policy.write_allow,
                 "path_allow": request.effective.path_allow,
                 "path_deny": request.effective.path_deny,
                 "can_write_file": probe.can_write_file,
@@ -149,31 +139,46 @@ pub(crate) struct ProbeResult {
     pub(crate) policy_denials: Vec<String>,
 }
 
-fn scoped_policy(base: &SecurityPolicy, effective: &EffectiveAgentPolicy) -> SecurityPolicy {
+fn scoped_policy(
+    base: &SecurityPolicy,
+    run_policy: &RunPolicy,
+    effective: &EffectiveAgentPolicy,
+) -> SecurityPolicy {
     base.clone()
         .with_write_scope(crate::security::WritePathScope {
-            write_allow: effective.write_allow.clone(),
+            write_allow: run_policy.write_allow.clone(),
             path_deny: effective.path_deny.clone(),
-            create_files: effective.create_files,
-            create_dirs: effective.create_dirs,
+            create_files: run_policy.create_files,
+            create_dirs: run_policy.create_dirs,
         })
 }
 
 pub(crate) fn probe_worker_capabilities(
     base_policy: &SecurityPolicy,
+    run_policy: &RunPolicy,
     effective: &EffectiveAgentPolicy,
 ) -> ProbeResult {
     let mut out = ProbeResult::default();
     let project = base_policy.project_root().to_path_buf();
 
+    // Tools and write scope come from the run policy; per-agent opts cannot widen.
+    let mut run_tools: Vec<String> = run_policy
+        .tools
+        .iter()
+        .filter(|t| !NESTED_WORKFLOW_TOOLS.contains(&t.as_str()))
+        .cloned()
+        .collect();
+    run_tools.sort();
+    run_tools.dedup();
+
     // Nested orchestration must never appear after intersection + strip.
-    out.can_subagent = effective.tools.iter().any(|t| t == "subagent");
-    out.can_workflow = effective.tools.iter().any(|t| t == "workflow");
+    out.can_subagent = run_tools.iter().any(|t| t == "subagent");
+    out.can_workflow = run_tools.iter().any(|t| t == "workflow");
 
     // Worker executor with WritePathScope (same gate as production SubagentBridge).
-    let policy = scoped_policy(base_policy, effective);
+    let policy = scoped_policy(base_policy, run_policy, effective);
     let mut exec = ToolExecutor::empty(policy.clone());
-    register_filtered_tools(&mut exec, &project, effective);
+    register_filtered_tools(&mut exec, &project, run_policy, &run_tools);
     out.registered_tools = exec.tool_names();
     out.registered_tools.sort();
 
@@ -191,7 +196,7 @@ pub(crate) fn probe_worker_capabilities(
 
     // Real ToolExecutor::validate path for representative writes.
     let probe_paths: Vec<String> = {
-        let mut c = effective.write_allow.clone();
+        let mut c = run_policy.write_allow.clone();
         if c.is_empty() {
             c.push("src/a.rs".into());
         }
@@ -206,7 +211,7 @@ pub(crate) fn probe_worker_capabilities(
             }
         }
         // Non-existent path under write_allow for create_files probe.
-        if let Some(first) = effective.write_allow.first() {
+        if let Some(first) = run_policy.write_allow.first() {
             c.push(format!("__new_create_probe__/{first}"));
         } else {
             c.push("__new_create_probe__/file.rs".into());
@@ -243,7 +248,7 @@ pub(crate) fn probe_worker_capabilities(
 
     // create_files: writing a write_allow path that does not exist yet must Deny
     // when create_files=false (real SecurityPolicy WritePathScope).
-    if let Some(wa) = effective.write_allow.first() {
+    if let Some(wa) = run_policy.write_allow.first() {
         let abs = project.join(wa);
         // Use a unique non-existent path that still matches write_allow when
         // write_allow is a single file — probe that exact path if missing.
@@ -266,7 +271,7 @@ pub(crate) fn probe_worker_capabilities(
             SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {
                 // Only true if tool registered, write_allow non-empty, create_files true,
                 // and path is in write_allow (validate already checked scope).
-                out.create_new_file_allowed = out.can_write_file && effective.create_files;
+                out.create_new_file_allowed = out.can_write_file && run_policy.create_files;
             }
         }
     } else {
@@ -274,7 +279,7 @@ pub(crate) fn probe_worker_capabilities(
     }
 
     // Empty write_allow ⇒ no writes even if tools listed.
-    if effective.write_allow.is_empty() {
+    if run_policy.write_allow.is_empty() {
         out.can_write_file = false;
         out.can_edit = false;
         out.create_new_file_allowed = false;
@@ -286,7 +291,8 @@ pub(crate) fn probe_worker_capabilities(
 fn register_filtered_tools(
     exec: &mut ToolExecutor,
     project: &std::path::Path,
-    effective: &EffectiveAgentPolicy,
+    run_policy: &RunPolicy,
+    run_tools: &[String],
 ) {
     use super::super::{
         bash::BashTool, edit_tool::EditTool, read_tool::ReadTool, search_tool::SearchTool,
@@ -294,12 +300,7 @@ fn register_filtered_tools(
     };
 
     // Never register orchestration tools.
-    let allowed: Vec<&str> = effective
-        .tools
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|t| !NESTED_WORKFLOW_TOOLS.contains(t))
-        .collect();
+    let allowed: Vec<&str> = run_tools.iter().map(|s| s.as_str()).collect();
 
     let has = |name: &str| allowed.contains(&name);
 
@@ -312,7 +313,7 @@ fn register_filtered_tools(
 
     // Writes only when write_allow is non-empty (empty ⇒ no writes even for implementer).
     // create_files=false still registers tools; WritePathScope denies creates.
-    let writes_ok = !effective.write_allow.is_empty();
+    let writes_ok = !run_policy.write_allow.is_empty();
     if writes_ok && (has("write_file") || has("write")) {
         exec.register_tool(Arc::new(WriteTool::write_file(project.to_path_buf())));
     }
@@ -355,34 +356,15 @@ impl AgentBackend for SubagentBridgeBackend {
             };
         }
 
-        // Embed path policy in the prompt (guidance) AND pass write scope fields
-        // so SubagentTool forks a SecurityPolicy with WritePathScope (hard gate).
-        let tools_for_note: Vec<String> = {
-            let mut t = request.effective.tools.clone();
-            t.retain(|n| !NESTED_WORKFLOW_TOOLS.contains(&n.as_str()));
-            if request.effective.write_allow.is_empty() {
-                t.retain(|n| {
-                    !WRITE_TOOLS.contains(&n.as_str()) && !COMMAND_TOOLS.contains(&n.as_str())
-                });
-            }
-            t
-        };
+        // Embed path policy in the prompt as guidance. Subagents always run in
+        // yolo mode and inherit all base tools, so only model/path_deny are
+        // forwarded through the bridge options.
         let path_note = format!(
             "\n\n[workflow worker policy]\n\
              profile={}\n\
-             tools={:?}\n\
-             write_allow={:?}\n\
              path_deny={:?}\n\
-             create_files={}\n\
-             create_dirs={}\n\
-             You MUST NOT call subagent or workflow. \
-             Writes are only allowed on write_allow paths (empty ⇒ no writes).",
-            request.effective.profile,
-            tools_for_note,
-            request.effective.write_allow,
-            request.effective.path_deny,
-            request.effective.create_files,
-            request.effective.create_dirs,
+             You MUST NOT call subagent or workflow.",
+            request.effective.profile, request.effective.path_deny,
         );
 
         let prompt = format!("{}{path_note}", request.prompt);
@@ -391,7 +373,6 @@ impl AgentBackend for SubagentBridgeBackend {
             request.label.as_deref(),
             &request.effective,
             request.model.as_deref(),
-            request.max_tokens,
         );
         let inv = ToolInvocation {
             id: format!("wf-agent-{}", request.agent_index),
@@ -435,9 +416,7 @@ impl AgentBackend for SubagentBridgeBackend {
             obj.insert("backend".into(), json!("subagent_bridge"));
             obj.insert("agent_index".into(), json!(request.agent_index));
             obj.insert("profile".into(), json!(request.effective.profile));
-            obj.insert("tools".into(), json!(request.effective.tools));
-            obj.insert("write_allow".into(), json!(request.effective.write_allow));
-            obj.insert("create_files".into(), json!(request.effective.create_files));
+            obj.insert("path_deny".into(), json!(request.effective.path_deny));
         }
 
         AgentBackendResult {
@@ -455,41 +434,15 @@ pub(crate) fn build_subagent_bridge_input(
     label: Option<&str>,
     effective: &EffectiveAgentPolicy,
     model: Option<&str>,
-    max_tokens: Option<usize>,
 ) -> serde_json::Value {
-    let mut tools = effective.tools.clone();
-    tools.retain(|t| !NESTED_WORKFLOW_TOOLS.contains(&t.as_str()));
-    if effective.write_allow.is_empty() {
-        tools
-            .retain(|t| !WRITE_TOOLS.contains(&t.as_str()) && !COMMAND_TOOLS.contains(&t.as_str()));
-    }
-    let approval = if effective.write_allow.is_empty() {
-        "read_only"
-    } else if effective.approval == "escalate" {
-        "escalate"
-    } else {
-        effective.approval.as_str()
-    };
     let mut options = json!({
-        "agent_profile": effective.profile,
-        "tools": tools,
-        "approval": approval,
-        "write_allow": effective.write_allow,
         "path_deny": effective.path_deny,
-        "create_files": effective.create_files,
-        "create_dirs": effective.create_dirs,
     });
     if let Some(model) = model {
         options
             .as_object_mut()
             .expect("options object")
             .insert("model".into(), json!(model));
-    }
-    if let Some(max_tokens) = max_tokens {
-        options
-            .as_object_mut()
-            .expect("options object")
-            .insert("max_tokens".into(), json!(max_tokens));
     }
     let mut input = json!({
         "prompt": prompt,
@@ -541,30 +494,17 @@ mod tests {
 
     #[test]
     fn bridge_input_omits_null_description_when_label_missing() {
-        let mut run = default_run_policy();
-        run.create_files = true;
-        run.write_allow = vec!["scratch/a.txt".into()];
-        run.tools = vec![
-            "read_file".into(),
-            "write_file".into(),
-            "edit".into(),
-            "search".into(),
-        ];
+        let run = default_run_policy();
         let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
             &run,
-            &crate::tool::builtin::workflow::policy::AgentPolicyOpts {
-                profile: Some("implementer".into()),
-                ..Default::default()
-            },
+            &Default::default(),
         );
-        assert!(effective.create_files);
-        let input = build_subagent_bridge_input("do work", None, &effective, None, None);
+        let input = build_subagent_bridge_input("do work", None, &effective, None);
         assert!(
             input.get("description").is_none(),
             "missing label must not serialize description:null, got {input}"
         );
-        assert_eq!(input["options"]["create_files"], true);
-        assert_eq!(input["options"]["write_allow"], json!(["scratch/a.txt"]));
+        assert!(input["options"]["path_deny"].is_array());
         // Validate against the live SubagentTool schema (not a hand-rolled twin).
         let schema = registered_subagent_schema();
         let validator = jsonschema::validator_for(&schema).unwrap();
@@ -585,7 +525,7 @@ mod tests {
             &run,
             &Default::default(),
         );
-        let input = build_subagent_bridge_input("p", Some("  collect  "), &effective, None, None);
+        let input = build_subagent_bridge_input("p", Some("  collect  "), &effective, None);
         assert_eq!(input["description"], "collect");
         let schema = registered_subagent_schema();
         let validator = jsonschema::validator_for(&schema).unwrap();

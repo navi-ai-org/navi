@@ -12,15 +12,7 @@ use crate::types::{NaviConfigSaveTarget, NaviError};
 type Result<T> = std::result::Result<T, NaviError>;
 
 const ATTACHMENT_MODALITIES: &[&str] = &["image", "audio", "video", "document"];
-const BACKGROUND_TASKS: &[&str] = &[
-    "default",
-    "naming",
-    "memory_extraction",
-    "compaction",
-    "repo_search",
-    "subagent_research",
-    "simple_code_edit",
-];
+const BACKGROUND_TASKS: &[&str] = &["default", "repo_search", "subagent_research"];
 
 fn normalize_modality(modality: &str) -> Result<&'static str> {
     let key = modality.trim().to_ascii_lowercase();
@@ -43,7 +35,7 @@ fn normalize_bg_task(task: &str) -> Result<&'static str> {
         .find(|t| *t == key)
         .ok_or_else(|| {
             NaviError::Config(format!(
-                "unknown background task '{task}' (expected default|naming|memory_extraction|compaction|repo_search|subagent_research|simple_code_edit)"
+                "unknown background task '{task}' (expected default|repo_search|subagent_research)"
             ))
         })
 }
@@ -120,8 +112,7 @@ impl NaviEngine {
 
     /// Set an explicit provider:model override for a background task route.
     ///
-    /// Tasks: `default`, `naming`, `memory_extraction`, `compaction`, `repo_search`,
-    /// `subagent_research`, `simple_code_edit`.
+    /// Tasks: `default`, `repo_search`, `subagent_research`.
     pub fn set_background_model(
         &self,
         task: &str,
@@ -149,12 +140,8 @@ impl NaviEngine {
             fallback: None,
         };
         match task {
-            "naming" => loaded.config.background_models.naming = Some(entry),
-            "memory_extraction" => loaded.config.background_models.memory_extraction = Some(entry),
-            "compaction" => loaded.config.background_models.compaction = Some(entry),
             "repo_search" => loaded.config.background_models.repo_search = Some(entry),
             "subagent_research" => loaded.config.background_models.subagent_research = Some(entry),
-            "simple_code_edit" => loaded.config.background_models.simple_code_edit = Some(entry),
             "default" => loaded.config.background_models.default = Some(entry),
             // Invariant: `normalize_bg_task` only returns keys handled above.
             other => {
@@ -177,12 +164,8 @@ impl NaviEngine {
         let task = normalize_bg_task(task)?;
         let mut loaded = self.loaded_config();
         match task {
-            "naming" => loaded.config.background_models.naming = None,
-            "memory_extraction" => loaded.config.background_models.memory_extraction = None,
-            "compaction" => loaded.config.background_models.compaction = None,
             "repo_search" => loaded.config.background_models.repo_search = None,
             "subagent_research" => loaded.config.background_models.subagent_research = None,
-            "simple_code_edit" => loaded.config.background_models.simple_code_edit = None,
             "default" => loaded.config.background_models.default = None,
             // Invariant: `normalize_bg_task` only returns keys handled above.
             other => {

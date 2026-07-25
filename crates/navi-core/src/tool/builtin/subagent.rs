@@ -26,103 +26,21 @@ use crate::tool::{
 use crate::turn::TurnContext;
 use serde_json::Value;
 
-/// Pre-defined agent role profiles that influence tool availability and approval flow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentProfile {
-    /// Plans tasks and decomposes work. No write tool access.
-    Planner,
-    /// Reads files and searches the codebase. No write tool access.
-    Explorer,
-    /// Writes and edits code. Full write access, normal approvals.
-    Implementer,
-    /// Reviews code and proposes changes without applying them.
-    Reviewer,
-    /// Reviews security effects, capability use, and sensitive diffs.
-    SecurityReviewer,
-    /// Runs tests and verifies changes. Read-only access.
-    Verifier,
-    /// Summarizes conversations, code, or documentation.
-    Summarizer,
-}
-
-/// Controls how the subagent handles tool approvals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-pub enum ApprovalMode {
-    /// Inherit the parent session's approval policy (default).
-    #[default]
-    Inherit,
-    /// Route approval requests to the parent session for user decision.
-    Escalate,
-    /// Reject all write operations. The subagent can only read/query.
-    ReadOnly,
-    /// Deny write-oriented tools but allow read-only inspection and verifier commands.
-    DenyWrite,
-}
-
 /// Optional configuration for subagent behavior.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubagentOptions {
-    /// The agent role profile. Influences default tool access and approvals.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        rename = "agent_profile"
-    )]
-    pub profile: Option<AgentProfile>,
     /// Override the model used by this subagent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Restrict which tools the subagent may call. `None` = all tools available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<String>>,
-    /// Approval handling mode.
-    #[serde(default)]
-    pub approval: ApprovalMode,
-    /// Maximum tokens for the subagent response.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<usize>,
-    /// Workflow write-path envelope (when set, forks executor with WritePathScope).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub write_allow: Option<Vec<String>>,
+    /// Additional relative path patterns to deny for file writes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_deny: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create_files: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub create_dirs: Option<bool>,
 }
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
 /// Nested agent spawners must not be available inside subagents.
 /// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
 const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "workflow"];
-/// Tool names considered to be "write" operations for ReadOnly mode.
-const READONLY_DENIED_TOOLS: &[&str] = &[
-    "write",
-    "write_file",
-    "apply_patch",
-    "code_edit",
-    "code_exec",
-    "bash",
-    "sandbox",
-    "mark_feature_done",
-    "append_note",
-    "question",
-    "plan",
-];
-const WRITE_DENIED_TOOLS: &[&str] = &[
-    "write",
-    "write_file",
-    "apply_patch",
-    "code_edit",
-    "code_exec",
-    "sandbox",
-    "mark_feature_done",
-    "append_note",
-];
 
 /// Callback for building a `ModelProvider` from a `LoadedConfig`.
 pub type ProviderBuilderFn =
@@ -330,53 +248,21 @@ impl Tool for SubagentTool {
                     },
                     "profile": {
                         "type": "string",
-                        "enum": ["cheap_general", "cheap_code", "repo_search", "naming", "long_context_cheap", "research_synthesis"],
-                        "description": "Model profile to use for this subagent. Selects a cheaper model appropriate for the task type. Omit to use the main agent's model."
+                        "enum": ["repo_search", "subagent_research"],
+                        "description": "Model profile to use for this subagent. repo_search: repository exploration; subagent_research: research-oriented subagent. Omit to use the main agent's model."
                     },
                     "options": {
                         "type": "object",
-                        "description": "Subagent behavior options: agent profile, model override, tool restrictions, approval mode, and optional workflow write-path scope.",
+                        "description": "Subagent behavior options: model override and optional path deny list.",
                         "properties": {
-                            "agent_profile": {
-                                "type": "string",
-                                "enum": ["planner", "explorer", "implementer", "reviewer", "security_reviewer", "verifier", "summarizer"],
-                                "description": "Agent role profile that sets default tool access and approval behavior. Planner/Explorer/Reviewer/SecurityReviewer/Verifier/Summarizer default to read-only; Implementer has full access."
-                            },
                             "model": {
                                 "type": "string",
                                 "description": "Override the model used by this subagent."
                             },
-                            "tools": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "Explicit list of tool names the subagent may call. When not set, all tools are available (subject to profile defaults)."
-                            },
-                            "approval": {
-                                "type": "string",
-                                "enum": ["inherit", "escalate", "read_only", "deny_write"],
-                                "description": "How tool approvals are handled. Inherit: use parent session's policy. Escalate: route approval requests to the parent session/user. ReadOnly: deny all write/command tools. DenyWrite: deny write tools but allow commands."
-                            },
-                            "max_tokens": {
-                                "type": "integer",
-                                "description": "Maximum tokens for the subagent's response."
-                            },
-                            "write_allow": {
-                                "type": "array",
-                                "items": { "type": "string" },
-                                "description": "Workflow write-path allowlist (relative paths). When set, forks a WritePathScope so only these paths may be written."
-                            },
                             "path_deny": {
                                 "type": "array",
                                 "items": { "type": "string" },
-                                "description": "Workflow path deny list (relative paths). Always wins over write_allow."
-                            },
-                            "create_files": {
-                                "type": "boolean",
-                                "description": "When true (with write_allow), allow creating new files under the write scope. Default false for workflow workers."
-                            },
-                            "create_dirs": {
-                                "type": "boolean",
-                                "description": "When true (with write_allow), allow creating directories under the write scope. Default false for workflow workers."
+                                "description": "Additional relative path patterns to deny for file writes."
                             }
                         },
                         "additionalProperties": false
@@ -481,31 +367,13 @@ impl SubagentTool {
         // Resolve model provider based on profile.
         let (provider, model) = self.resolve_model_for_profile(profile.as_deref());
 
-        // Determine if this subagent should be read-only based on agent profile.
-        let effective_approval = resolve_approval_mode(&options);
-        let allowed_tool_names =
-            resolve_allowed_tool_names(&executor, &options, effective_approval);
-
-        // When workflow write scope is present, fork a worker executor with
-        // WritePathScope so write_allow / path_deny / create_files are enforced
-        // by SecurityPolicy on every write tool call (not just prompt text).
-        let tool_executor: Arc<crate::tool::ToolExecutor> =
-            if let Some(scope) = write_scope_from_options(&options) {
-                let mut policy = executor.policy().clone();
-                policy = policy.with_write_scope(scope);
-                let names = allowed_tool_names
-                    .clone()
-                    .unwrap_or_else(|| executor.tool_names());
-                Arc::new(executor.fork_with_policy_and_tools(policy, &names))
-            } else {
-                executor
-            };
+        // Subagents run in yolo mode with all parent tools except nested spawners.
+        let tool_executor = build_subagent_executor(&executor, options.path_deny.as_deref())?;
 
         let (mut messages, event_tx, _approval_handle, resolver) = self.prepare_subagent_context(
             &invocation_id,
             &prompt,
             &description,
-            effective_approval,
             parent_event_tx.clone(),
         );
 
@@ -549,11 +417,9 @@ impl SubagentTool {
             cancel_token,
             config: self.config.clone(),
             memory_injection: None,
-            compaction_provider: None,
             agent_mode: crate::plan_mode::AgentMode::Default,
-            compaction_model_name: None,
             session_id,
-            allowed_tool_names,
+            allowed_tool_names: None,
             is_subagent: true,
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
             harness_card: None,
@@ -657,21 +523,16 @@ impl SubagentTool {
         let parent_invocation_id = invocation_id.clone();
         let session_id = subagent_session_id();
 
-        let effective_approval = resolve_approval_mode(&options);
-        let allowed_tool_names_clone =
-            resolve_allowed_tool_names(&executor, &options, effective_approval);
-
-        let tool_executor: Arc<crate::tool::ToolExecutor> =
-            if let Some(scope) = write_scope_from_options(&options) {
-                let mut policy = executor.policy().clone();
-                policy = policy.with_write_scope(scope);
-                let names = allowed_tool_names_clone
-                    .clone()
-                    .unwrap_or_else(|| executor.tool_names());
-                Arc::new(executor.fork_with_policy_and_tools(policy, &names))
-            } else {
-                executor
-            };
+        // Subagents run in yolo mode with all parent tools except nested spawners.
+        let tool_executor = match build_subagent_executor(&executor, options.path_deny.as_deref()) {
+            Ok(ex) => ex,
+            Err(err) => {
+                return Ok(helpers::ok(
+                    invocation_id,
+                    json!({"error": format!("failed to build subagent executor: {err:#}") }),
+                ));
+            }
+        };
 
         tokio::spawn(async move {
             let (mut messages, event_tx, _approval_handle, resolver) =
@@ -679,7 +540,6 @@ impl SubagentTool {
                     &parent_invocation_id,
                     &prompt,
                     &description,
-                    effective_approval,
                     parent_event_tx.clone(),
                 );
 
@@ -715,11 +575,9 @@ impl SubagentTool {
                 cancel_token,
                 config: Arc::new(std::sync::RwLock::new(config_snapshot)),
                 memory_injection: None,
-                compaction_provider: None,
-                compaction_model_name: None,
                 session_id,
                 agent_mode: crate::plan_mode::AgentMode::Default,
-                allowed_tool_names: allowed_tool_names_clone,
+                allowed_tool_names: None,
                 is_subagent: true,
                 memory_manager: Arc::new(std::sync::Mutex::new(None)),
                 harness_card: None,
@@ -886,7 +744,6 @@ impl SubagentTool {
         parent_invocation_id: &str,
         prompt: &str,
         description: &Option<String>,
-        approval_mode: ApprovalMode,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> (
         Vec<ModelMessage>,
@@ -898,7 +755,6 @@ impl SubagentTool {
             parent_invocation_id,
             prompt,
             description,
-            approval_mode,
             parent_event_tx,
         )
     }
@@ -907,7 +763,6 @@ impl SubagentTool {
         parent_invocation_id: &str,
         prompt: &str,
         description: &Option<String>,
-        approval_mode: ApprovalMode,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> (
         Vec<ModelMessage>,
@@ -915,37 +770,25 @@ impl SubagentTool {
         tokio::task::JoinHandle<()>,
         ApprovalResolver,
     ) {
-        let access_note = match approval_mode {
-            ApprovalMode::ReadOnly => {
-                "Your tool access is read-only. Inspect, reason, and report findings; do not attempt writes or command execution."
-            }
-            ApprovalMode::DenyWrite => {
-                "Write tools are unavailable. You may inspect and run allowed verification commands when needed, then report findings."
-            }
-            ApprovalMode::Escalate => {
-                "Any risky action must be escalated to the parent session approval flow."
-            }
-            ApprovalMode::Inherit => "Use tools according to the parent session policy.",
-        };
         let workflow = "\
 Workflow:\n\
 1. Inspect with the cheapest tools first (overview/search → targeted read).\n\
 2. Prefer project-relative paths; batch independent read-only calls when possible.\n\
-3. Keep edits narrow; verify with the smallest relevant command when writes are allowed.\n\
+3. Keep edits narrow; verify with the smallest relevant command when writes are needed.\n\
 4. If a tool fails, adapt once using the error — do not thrash the same call.\n\
 5. Observation budget: tool outputs may be truncated; request ranges/results explicitly.\n\
 6. When done, report paths, key diffs, and findings — not walls of file contents.";
         let system = if let Some(desc) = description {
             format!(
                 "You are a subagent worker for NAVI. Execute the assigned task autonomously \
-                 within your assigned access policy. {access_note}\n\n\
+                 using all available tools.\n\n\
                  Context: {desc}\n\n{workflow}\n\n\
                  Be concise and deliver the result."
             )
         } else {
             format!(
                 "You are a subagent worker for NAVI. Execute the assigned task autonomously \
-                 within your assigned access policy. {access_note}\n\n{workflow}\n\n\
+                 using all available tools.\n\n{workflow}\n\n\
                  Be concise and deliver the result."
             )
         };
@@ -977,7 +820,6 @@ Workflow:\n\
         let resolver = ApprovalResolver::new_standalone();
         let resolver_bg = resolver.clone();
         let parent_invocation_id = parent_invocation_id.to_string();
-        let is_escalate = approval_mode == ApprovalMode::Escalate;
 
         let approval_handle = tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
@@ -993,26 +835,8 @@ Workflow:\n\
                     emit_subagent_transcript(&parent_event_tx, &parent_invocation_id, item);
                 }
                 if let AgentEvent::ApprovalRequested(req) = event {
-                    if is_escalate {
-                        // Forward the approval request to the parent session.
-                        // The parent's approval resolver will handle the response.
-                        // We register on a standalone resolver and wait for the
-                        // parent to resolve through the event channel.
-                        if let Some(tx) = &parent_event_tx {
-                            let _ = tx.send(AgentEvent::ApprovalRequested(
-                                crate::event::ApprovalRequest {
-                                    id: req.id.clone(),
-                                    summary: req.summary.clone(),
-                                    risk: req.risk.clone(),
-                                },
-                            ));
-                        }
-                        // In Escalate mode, we auto-approve locally since the
-                        // parent handles the actual approval flow externally.
-                        resolver_bg.resolve(ApprovalDecision::Approved { id: req.id.clone() });
-                    } else {
-                        resolver_bg.resolve(ApprovalDecision::Approved { id: req.id.clone() });
-                    }
+                    // Subagents run in yolo mode; auto-approve any residual approval events.
+                    resolver_bg.resolve(ApprovalDecision::Approved { id: req.id.clone() });
                 }
             }
         });
@@ -1167,53 +991,54 @@ fn parse_subagent_options(input: &Value) -> SubagentOptions {
 impl Default for SubagentOptions {
     fn default() -> Self {
         Self {
-            profile: None,
             model: None,
-            tools: None,
-            approval: ApprovalMode::Inherit,
-            max_tokens: None,
-            write_allow: None,
             path_deny: None,
-            create_files: None,
-            create_dirs: None,
         }
     }
 }
 
-fn write_scope_from_options(options: &SubagentOptions) -> Option<crate::security::WritePathScope> {
-    // Only install a write scope when the caller explicitly set workflow fields.
-    if options.write_allow.is_none()
-        && options.path_deny.is_none()
-        && options.create_files.is_none()
-        && options.create_dirs.is_none()
-    {
-        return None;
-    }
-    Some(crate::security::WritePathScope {
-        write_allow: options.write_allow.clone().unwrap_or_default(),
-        path_deny: options.path_deny.clone().unwrap_or_default(),
-        create_files: options.create_files.unwrap_or(false),
-        create_dirs: options.create_dirs.unwrap_or(false),
-    })
+/// Build a yolo-mode executor fork for a subagent.
+///
+/// The fork inherits all tools from the parent executor except `subagent` and
+/// `workflow` (to prevent recursive spawn storms). An optional `path_deny` list
+/// is applied as a workflow write-path deny scope with universal write_allow.
+fn build_subagent_executor(
+    executor: &crate::tool::ToolExecutor,
+    path_deny: Option<&[String]>,
+) -> Result<Arc<crate::tool::ToolExecutor>> {
+    let policy = build_subagent_policy(executor.policy(), path_deny)?;
+    let mut allowed: Vec<String> = executor
+        .tool_names()
+        .into_iter()
+        .filter(|name| !NESTED_AGENT_TOOLS.contains(&name.as_str()))
+        .collect();
+    allowed.sort();
+    allowed.dedup();
+    Ok(Arc::new(
+        executor.fork_with_policy_and_tools(policy, &allowed),
+    ))
 }
 
-/// Resolves the effective approval mode from a profile preference cascade.
-/// An explicit `options.approval` wins; otherwise `options.profile` determines
-/// the mode: Explorer/Reviewer/Verifier/Summarizer default to ReadOnly;
-/// Implementer defaults to Inherit.
-fn resolve_approval_mode(options: &SubagentOptions) -> ApprovalMode {
-    if options.approval != ApprovalMode::Inherit {
-        return options.approval;
+fn build_subagent_policy(
+    base: &crate::security::SecurityPolicy,
+    path_deny: Option<&[String]>,
+) -> Result<crate::security::SecurityPolicy> {
+    let mut config = base.config().clone();
+    config.permission_mode = crate::config::PermissionMode::Yolo;
+    let mut policy = crate::security::SecurityPolicy::new(
+        base.project_root().to_path_buf(),
+        base.data_dir().to_path_buf(),
+        config,
+    )?;
+    if let Some(deny) = path_deny.filter(|d| !d.is_empty()) {
+        policy = policy.with_write_scope(crate::security::WritePathScope {
+            write_allow: vec!["**".into()],
+            path_deny: deny.to_vec(),
+            create_files: true,
+            create_dirs: true,
+        });
     }
-    match options.profile {
-        Some(AgentProfile::Planner)
-        | Some(AgentProfile::Explorer)
-        | Some(AgentProfile::Reviewer)
-        | Some(AgentProfile::SecurityReviewer)
-        | Some(AgentProfile::Verifier)
-        | Some(AgentProfile::Summarizer) => ApprovalMode::ReadOnly,
-        Some(AgentProfile::Implementer) | None => ApprovalMode::Inherit,
-    }
+    Ok(policy)
 }
 
 /// Freeze specialized system/developer messages so `ensure_system_prompt`
@@ -1239,34 +1064,6 @@ fn freeze_specialized_prompt(
     )
 }
 
-/// Returns the set of tool names allowed for this subagent.
-///
-/// Always strips nested agent tools to prevent recursive spawn storms.
-/// ReadOnly/DenyWrite additionally strip write-oriented tools.
-fn resolve_allowed_tool_names(
-    executor: &crate::tool::ToolExecutor,
-    options: &SubagentOptions,
-    approval_mode: ApprovalMode,
-) -> Option<Vec<String>> {
-    let mut allowed = options
-        .tools
-        .clone()
-        .unwrap_or_else(|| executor.tool_names());
-    // Always block nested agent spawning (depth = 1).
-    allowed.retain(|name| !NESTED_AGENT_TOOLS.contains(&name.as_str()));
-    match approval_mode {
-        ApprovalMode::ReadOnly => {
-            allowed.retain(|name| !READONLY_DENIED_TOOLS.contains(&name.as_str()));
-        }
-        ApprovalMode::DenyWrite => {
-            allowed.retain(|name| !WRITE_DENIED_TOOLS.contains(&name.as_str()));
-        }
-        ApprovalMode::Inherit | ApprovalMode::Escalate => {}
-    }
-    // Always return Some so nested agent tools stay filtered even for Inherit.
-    Some(allowed)
-}
-
 /// Each nested agent is an independent provider conversation. Reusing a
 /// literal id (such as `subagent`) made Charm Hyper route unrelated agents to
 /// the same affinity/cache bucket.
@@ -1283,79 +1080,45 @@ mod tests {
     #[test]
     fn subagent_options_serde_roundtrip() {
         let opts = SubagentOptions {
-            profile: Some(AgentProfile::Explorer),
             model: Some("gpt-4".to_string()),
-            tools: Some(vec!["read".to_string(), "search".to_string()]),
-            approval: ApprovalMode::ReadOnly,
-            max_tokens: Some(4096),
-            ..Default::default()
+            path_deny: Some(vec!["secrets/".to_string()]),
         };
         let json = serde_json::to_value(&opts).unwrap();
         let deserialized: SubagentOptions = serde_json::from_value(json).unwrap();
-        assert_eq!(deserialized.profile, Some(AgentProfile::Explorer));
         assert_eq!(deserialized.model, Some("gpt-4".to_string()));
         assert_eq!(
-            deserialized.tools,
-            Some(vec!["read".to_string(), "search".to_string()])
+            deserialized.path_deny.as_deref(),
+            Some(["secrets/".to_string()].as_slice())
         );
-        assert_eq!(deserialized.approval, ApprovalMode::ReadOnly);
-        assert_eq!(deserialized.max_tokens, Some(4096));
     }
 
     #[test]
-    fn subagent_options_default_is_inherit() {
+    fn subagent_options_default_is_empty() {
         let opts = SubagentOptions::default();
-        assert_eq!(opts.approval, ApprovalMode::Inherit);
-        assert!(opts.profile.is_none());
         assert!(opts.model.is_none());
-        assert!(opts.tools.is_none());
-        assert!(opts.max_tokens.is_none());
+        assert!(opts.path_deny.is_none());
     }
 
     #[test]
     fn subagent_options_serde_missing_fields_default_correctly() {
         let json = json!({});
         let opts: SubagentOptions = serde_json::from_value(json).unwrap();
-        assert_eq!(opts.approval, ApprovalMode::Inherit);
-        assert!(opts.profile.is_none());
-        assert!(opts.tools.is_none());
+        assert!(opts.model.is_none());
+        assert!(opts.path_deny.is_none());
     }
 
     #[test]
-    fn subagent_options_serde_with_profile_only() {
-        let json = json!({"agent_profile": "explorer"});
+    fn subagent_options_serde_path_deny_only() {
+        let json = json!({"path_deny": ["secrets/"]});
         let opts: SubagentOptions = serde_json::from_value(json).unwrap();
-        assert_eq!(opts.profile, Some(AgentProfile::Explorer));
-        assert_eq!(opts.approval, ApprovalMode::Inherit);
-    }
-
-    #[test]
-    fn subagent_options_serde_workflow_write_scope() {
-        let json = json!({
-            "agent_profile": "explorer",
-            "tools": ["read_file", "search"],
-            "approval": "read_only",
-            "write_allow": [],
-            "path_deny": ["secrets/"],
-            "create_files": false,
-            "create_dirs": false
-        });
-        let opts: SubagentOptions = serde_json::from_value(json).unwrap();
-        assert_eq!(opts.profile, Some(AgentProfile::Explorer));
-        assert_eq!(opts.write_allow.as_deref(), Some([].as_slice()));
         assert_eq!(
             opts.path_deny.as_deref(),
             Some(["secrets/".to_string()].as_slice())
         );
-        assert_eq!(opts.create_files, Some(false));
-        assert_eq!(opts.create_dirs, Some(false));
     }
 
     #[test]
-    fn schema_accepts_workflow_bridge_options() {
-        // Mirrors SubagentBridgeBackend::run_agent options payload. Regression for:
-        // "Additional properties are not allowed ('create_dirs', 'create_files', ...)"
-        // Build a throwaway tool only for its schema (no model calls).
+    fn schema_allows_model_and_path_deny() {
         struct NoopProvider;
         impl ModelProvider for NoopProvider {
             fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
@@ -1375,189 +1138,35 @@ mod tests {
         );
         let schema = tool.definition().input_schema;
         let validator = jsonschema::validator_for(&schema).expect("compile schema");
-        let instance = json!({
+
+        let valid = json!({
             "prompt": "list files",
             "description": "collect",
             "options": {
-                "agent_profile": "explorer",
-                "tools": ["read_file", "search", "list_dir"],
-                "approval": "read_only",
-                "write_allow": [],
-                "path_deny": [],
-                "create_files": false,
-                "create_dirs": false
+                "model": "claude-sonnet",
+                "path_deny": ["secrets/"]
             }
         });
         let errors: Vec<String> = validator
-            .iter_errors(&instance)
+            .iter_errors(&valid)
             .map(|e| e.to_string())
             .collect();
         assert!(
             errors.is_empty(),
-            "workflow bridge options must pass subagent schema: {errors:?}"
+            "valid options must pass schema: {errors:?}"
         );
-    }
 
-    #[test]
-    fn resolve_approval_mode_readonly_profiles() {
-        for profile in &[
-            AgentProfile::Explorer,
-            AgentProfile::Reviewer,
-            AgentProfile::Planner,
-            AgentProfile::SecurityReviewer,
-            AgentProfile::Verifier,
-            AgentProfile::Summarizer,
-        ] {
-            let opts = SubagentOptions {
-                profile: Some(*profile),
-                ..Default::default()
-            };
-            assert_eq!(
-                resolve_approval_mode(&opts),
-                ApprovalMode::ReadOnly,
-                "{:?} should default to ReadOnly",
-                profile
-            );
-        }
-    }
-
-    #[test]
-    fn resolve_approval_mode_implementer_inherits() {
-        let opts = SubagentOptions {
-            profile: Some(AgentProfile::Implementer),
-            ..Default::default()
-        };
-        assert_eq!(resolve_approval_mode(&opts), ApprovalMode::Inherit);
-    }
-
-    #[test]
-    fn resolve_approval_mode_explicit_wins() {
-        let opts = SubagentOptions {
-            profile: Some(AgentProfile::Implementer),
-            approval: ApprovalMode::ReadOnly,
-            ..Default::default()
-        };
-        assert_eq!(resolve_approval_mode(&opts), ApprovalMode::ReadOnly);
-    }
-
-    #[test]
-    fn resolve_approval_mode_no_profile_inherits() {
-        let opts = SubagentOptions::default();
-        assert_eq!(resolve_approval_mode(&opts), ApprovalMode::Inherit);
-    }
-
-    /// ReadOnly mode should deny write tools via allowed_tool_names filtering.
-    #[test]
-    fn readonly_approval_mode_filteres_write_tools() {
-        // Verify that the TurnContext's allowed_tool_names check was properly
-        // set up. This test validates the setup logic, not the actual turn execution.
-        let opts = SubagentOptions {
-            approval: ApprovalMode::ReadOnly,
-            ..Default::default()
-        };
-        let mode = resolve_approval_mode(&opts);
-        assert_eq!(mode, ApprovalMode::ReadOnly);
-        // The actual enforcement happens via allowed_tool_names in TurnContext.
-        // ReadOnly mode sets allowed_tool_names to exclude write tools.
-        // We verify the setup path exists.
-    }
-
-    #[test]
-    fn explicit_tool_allowlist_is_intersected_with_readonly_profile() {
-        let temp = tempfile::tempdir().unwrap();
-        let policy = crate::security::SecurityPolicy::new(
-            temp.path().to_path_buf(),
-            temp.path()
-                .parent()
-                .unwrap_or(temp.path())
-                .join("navi-test-data-subagent"),
-            crate::config::SecurityConfig::default(),
-        )
-        .unwrap();
-        let executor = crate::tool::ToolExecutor::new(policy);
-        let opts = SubagentOptions {
-            profile: Some(AgentProfile::Reviewer),
-            tools: Some(vec![
-                "read".to_string(),
-                "search".to_string(),
-                "write_file".to_string(),
-                "code_exec".to_string(),
-            ]),
-            ..Default::default()
-        };
-
-        let allowed = resolve_allowed_tool_names(&executor, &opts, resolve_approval_mode(&opts))
-            .expect("restricted tools");
-
-        assert!(allowed.contains(&"read".to_string()));
-        assert!(allowed.contains(&"search".to_string()));
-        assert!(!allowed.contains(&"write_file".to_string()));
-        assert!(!allowed.contains(&"code_exec".to_string()));
-    }
-
-    #[test]
-    fn deny_write_keeps_command_tools_available_for_verification() {
-        let temp = tempfile::tempdir().unwrap();
-        let policy = crate::security::SecurityPolicy::new(
-            temp.path().to_path_buf(),
-            temp.path()
-                .parent()
-                .unwrap_or(temp.path())
-                .join("navi-test-data-subagent"),
-            crate::config::SecurityConfig::default(),
-        )
-        .unwrap();
-        let executor = crate::tool::ToolExecutor::new(policy);
-        let opts = SubagentOptions {
-            approval: ApprovalMode::DenyWrite,
-            tools: Some(vec![
-                "read".to_string(),
-                "bash".to_string(),
-                "write_file".to_string(),
-            ]),
-            ..Default::default()
-        };
-
-        let allowed = resolve_allowed_tool_names(&executor, &opts, ApprovalMode::DenyWrite)
-            .expect("restricted tools");
-
-        assert!(allowed.contains(&"read".to_string()));
-        assert!(allowed.contains(&"bash".to_string()));
-        assert!(!allowed.contains(&"write_file".to_string()));
-    }
-
-    #[test]
-    fn nested_agent_tools_always_stripped_even_for_inherit() {
-        let temp = tempfile::tempdir().unwrap();
-        let policy = crate::security::SecurityPolicy::new(
-            temp.path().to_path_buf(),
-            temp.path()
-                .parent()
-                .unwrap_or(temp.path())
-                .join("navi-test-data-subagent"),
-            crate::config::SecurityConfig::default(),
-        )
-        .unwrap();
-        let executor = crate::tool::ToolExecutor::new(policy);
-        let opts = SubagentOptions {
-            tools: Some(vec![
-                "read_file".to_string(),
-                "subagent".to_string(),
-                "repo_explore".to_string(),
-                "bash".to_string(),
-            ]),
-            ..Default::default()
-        };
-
-        let allowed = resolve_allowed_tool_names(&executor, &opts, ApprovalMode::Inherit)
-            .expect("always filtered");
-
-        assert!(allowed.contains(&"read_file".to_string()));
-        assert!(allowed.contains(&"bash".to_string()));
-        // repo_explore is BM25 (cheap) — allowed inside subagents.
-        assert!(allowed.contains(&"repo_explore".to_string()));
-        assert!(!allowed.contains(&"subagent".to_string()));
-        assert!(!allowed.contains(&"branch_race".to_string()));
+        let invalid = json!({
+            "prompt": "list files",
+            "options": {
+                "tools": ["read_file"]
+            }
+        });
+        let errors: Vec<String> = validator
+            .iter_errors(&invalid)
+            .map(|e| e.to_string())
+            .collect();
+        assert!(!errors.is_empty(), "removed options must fail schema");
     }
 
     #[test]
@@ -1603,20 +1212,72 @@ mod tests {
     }
 
     #[test]
-    fn agent_profile_serde_roundtrip() {
-        for profile in &[
-            AgentProfile::Explorer,
-            AgentProfile::Implementer,
-            AgentProfile::Reviewer,
-            AgentProfile::SecurityReviewer,
-            AgentProfile::Verifier,
-            AgentProfile::Planner,
-            AgentProfile::Summarizer,
-        ] {
-            let json = serde_json::to_value(profile).unwrap();
-            let deserialized: AgentProfile = serde_json::from_value(json).unwrap();
-            assert_eq!(&deserialized, profile);
+    fn subagent_executor_strips_nested_tools() {
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
         }
+
+        let temp = tempfile::tempdir().unwrap();
+        let policy = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let provider = Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>));
+        let mut executor = crate::tool::ToolExecutor::new(policy);
+        executor.register_tool(Arc::new(crate::tool::builtin::SubagentTool::new(
+            std::sync::Weak::new(),
+            provider,
+            temp.path().to_path_buf(),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            Arc::new(PromptCache::new()),
+            RuntimeComponents::default(),
+        )));
+        // Simulated names to verify filtering.
+        let names: Vec<String> = executor.tool_names();
+        let forked = build_subagent_executor(&executor, None).unwrap();
+        let forked_names = forked.tool_names();
+        assert!(!forked_names.contains(&"subagent".to_string()));
+        assert!(!forked_names.contains(&"workflow".to_string()));
+        // Other registered names remain.
+        for name in names
+            .iter()
+            .filter(|n| !NESTED_AGENT_TOOLS.contains(&n.as_str()))
+        {
+            assert!(forked_names.contains(name), "{name} should be inherited");
+        }
+    }
+
+    #[test]
+    fn subagent_policy_is_yolo() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path()
+                .parent()
+                .unwrap_or(temp.path())
+                .join("navi-test-data-subagent"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let policy = build_subagent_policy(&base, None).unwrap();
+        assert!(matches!(
+            policy.config().permission_mode,
+            crate::config::PermissionMode::Yolo
+        ));
     }
 
     #[test]

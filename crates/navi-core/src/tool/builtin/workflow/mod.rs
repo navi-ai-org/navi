@@ -102,10 +102,10 @@ impl AgentBackend for MockAgentBackend {
                 "label": request.label,
                 "agent_index": request.agent_index,
                 "profile": request.effective.profile,
-                "tools": request.effective.tools,
-                "create_files": request.effective.create_files,
-                "create_dirs": request.effective.create_dirs,
-                "write_allow": request.effective.write_allow,
+                "tools": request.run_policy.tools,
+                "create_files": request.run_policy.create_files,
+                "create_dirs": request.run_policy.create_dirs,
+                "write_allow": request.run_policy.write_allow,
                 "path_allow": request.effective.path_allow,
                 "path_deny": request.effective.path_deny,
             }),
@@ -122,8 +122,15 @@ pub struct PolicyAgentBackend {
 #[async_trait]
 impl AgentBackend for PolicyAgentBackend {
     async fn run_agent(&self, request: AgentRequest) -> AgentBackendResult {
+        let filtered: Vec<&str> = request
+            .run_policy
+            .tools
+            .iter()
+            .map(|t| t.as_str())
+            .filter(|t| !NESTED_WORKFLOW_TOOLS.contains(t))
+            .collect();
         for banned in NESTED_WORKFLOW_TOOLS {
-            if request.effective.tools.iter().any(|t| t == *banned) {
+            if filtered.iter().any(|t| *t == *banned) {
                 return AgentBackendResult {
                     ok: false,
                     output: json!({"error": "policy_denied", "tool": banned}),

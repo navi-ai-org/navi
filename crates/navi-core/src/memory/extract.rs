@@ -54,23 +54,45 @@ pub async fn extract_memories(
 ) -> Result<usize> {
     // Sanitize conversation to prevent prompt injection in the template
     let sanitized = conversation.replace("{conversation}", "[conversation]");
-
     let user = EXTRACT_USER.replace("{conversation}", &sanitized);
+
+    let messages = vec![
+        ModelMessage::system(EXTRACT_SYSTEM),
+        ModelMessage::user(user),
+    ];
+    extract_memories_from_messages(messages, model_provider, model_name, store).await
+}
+
+/// Runs memory extraction reusing an existing message history.
+///
+/// This is the forked-main-session path: the live conversation messages are
+/// cloned and the extraction prompt is appended as a final user message. This
+/// lets the provider cache hit the prefix of the main chat turn.
+pub async fn extract_memories_from_messages(
+    mut messages: Vec<ModelMessage>,
+    model_provider: &dyn ModelProvider,
+    model_name: &str,
+    store: &AutoMemoryStore,
+) -> Result<usize> {
+    messages.push(ModelMessage::user(format!(
+        "{EXTRACT_SYSTEM}\n\nUsing the conversation history above, extract durable memories as a JSON array. Output ONLY the JSON array — no markdown fences."
+    )));
 
     let request = ModelRequest {
         model: model_name.to_string(),
         instructions: None,
-        messages: vec![
-            ModelMessage::system(EXTRACT_SYSTEM),
-            ModelMessage::user(user),
-        ],
+        messages,
         thinking: ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
     };
 
     let response = model_provider.complete(request).await?;
-    let text = response.text.trim();
+    parse_and_save_memories(&response.text, store)
+}
+
+fn parse_and_save_memories(text: &str, store: &AutoMemoryStore) -> Result<usize> {
+    let text = text.trim();
 
     // Parse JSON array
     let memories: Vec<ExtractedMemory> = if text.starts_with('[') {

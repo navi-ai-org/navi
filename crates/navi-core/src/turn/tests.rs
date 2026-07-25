@@ -5,6 +5,7 @@ use crate::{
     ModelStream, PermissionMode, SecurityConfig, SecurityPolicy, ToolInvocation, ToolResult,
 };
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use futures_util::stream;
 use serde_json::json;
 use std::path::PathBuf;
@@ -115,6 +116,18 @@ impl Tool for SleepingTool {
     }
 }
 
+async fn collect_stream_text(mut stream: ModelStream) -> anyhow::Result<ModelResponse> {
+    let mut text = String::new();
+    while let Some(event) = stream.next().await {
+        match event? {
+            crate::model::ModelStreamEvent::TextDelta { text: delta } => text.push_str(&delta),
+            crate::model::ModelStreamEvent::Done => break,
+            _ => {}
+        }
+    }
+    Ok(ModelResponse { text })
+}
+
 struct MockProvider {
     calls: Mutex<usize>,
 }
@@ -150,7 +163,7 @@ impl ModelProvider for MockProvider {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
-        ModelProvider::complete(self, request).await
+        collect_stream_text(self.stream(request)).await
     }
 }
 
@@ -174,7 +187,7 @@ impl ModelProvider for MalformedToolProvider {
     }
 
     async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
-        ModelProvider::complete(self, request).await
+        collect_stream_text(self.stream(request)).await
     }
 }
 
@@ -277,9 +290,7 @@ async fn test_turn_loop_with_parallel_tools() {
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
         memory_injection: None,
-        compaction_provider: None,
         agent_mode: crate::plan_mode::AgentMode::Default,
-        compaction_model_name: None,
         session_id: "test-session".to_string(),
         allowed_tool_names: None,
         is_subagent: false,
@@ -567,8 +578,6 @@ async fn malformed_tool_arguments_stop_the_turn() {
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
         memory_injection: None,
-        compaction_provider: None,
-        compaction_model_name: None,
         session_id: "test-session".to_string(),
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,
@@ -669,8 +678,6 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         cancel_token: CancelToken::new(),
         config: Arc::new(std::sync::RwLock::new(crate::config::NaviConfig::default())),
         memory_injection: None,
-        compaction_provider: None,
-        compaction_model_name: None,
         session_id: "test-session".to_string(),
         agent_mode: crate::plan_mode::AgentMode::Default,
         allowed_tool_names: None,

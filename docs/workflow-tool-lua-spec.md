@@ -165,28 +165,24 @@ Structured JSON (example shape; field names stable):
 
 All optional; missing → run policy defaults.
 
+Production subagents always inherit all base tools and run in yolo mode, so the per-agent `tools`, `approval`, `write_allow`, `create_files`, `create_dirs`, and `max_tokens` options are **ignored**. Use the run `policy` table (4.2) to control those. The `agent()` opts table may only override:
+
 | Key | Type | Meaning |
 |-----|------|---------|
-| `profile` | string | Maps to existing `AgentProfile`: `planner`, `explorer`, `implementer`, `reviewer`, `security_reviewer`, `verifier`, `summarizer` |
+| `profile` | string | Optional worker label (no longer an `AgentProfile` enum; ignored by subagent backend) |
 | `model` | string | Optional model override for worker |
-| `tools` | `{string...}` | Allowlist of tool names (intersected with profile + run policy) |
-| `approval` | string | `inherit` \| `escalate` \| `read_only` \| `deny_write` |
-| `path_allow` | `{string...}` | Glob/path prefixes worker may touch (read/write subject to other flags) |
+| `path_allow` | `{string...}` | Glob/path prefixes worker may touch, intersected with run policy |
 | `path_deny` | `{string...}` | Always denied (wins over allow) |
-| `create_files` | bool | Default **false** |
-| `create_dirs` | bool | Default **false** |
-| `write_allow` | `{string...}` | Explicit paths/globs allowed for edit/write; empty ⇒ no writes even if profile is implementer |
-| `max_tokens` | integer | Optional completion budget for worker |
 | `label` | string | UI / journal label |
 | `schema` | table | Optional JSON-schema-like hint for structured return (best-effort validation) |
 
 **Intersection rule (normative):**
 
 ```text
-effective_tools = opts.tools ∩ run.policy.tools ∩ profile_allowlist
+effective_tools = run.policy.tools  (nested orchestration tools always stripped)
 effective_paths = opts.path_allow ∩ run.policy.path_allow  (− path_deny)
-effective_create_files = opts.create_files AND run.policy.create_files
-effective_write_allow = opts.write_allow ∩ run.policy.write_allow
+effective_create_files = run.policy.create_files
+effective_write_allow = run.policy.write_allow
 ```
 
 A worker **MUST NOT** receive a permission the run policy does not grant.
@@ -265,12 +261,12 @@ Each `agent()`:
 | Scenario | Expected |
 |----------|----------|
 | Default run + default agent | Cannot `write_file` / `edit` / `bash` |
-| `profile = implementer` but `write_allow = {}` | Still **no** writes |
-| `write_allow = {"src/a.rs"}`, edit other path | Denied |
-| `create_files = false`, tool creates new path | Denied |
+| `profile = "implementer"` but `run.policy.write_allow = []` | Still **no** writes |
+| `run.policy.write_allow = {"src/a.rs"}`, edit other path | Denied |
+| `run.policy.create_files = false`, tool creates new path | Denied |
 | `path_deny` overlaps allow | Deny wins |
 | Worker calls `subagent` / `workflow` | Denied (tool absent or policy deny) |
-| `approval = escalate` | Approvals route to parent session (if infrastructure exists); else document fallback |
+| Subagent backend | Always yolo; approvals route to parent session (if infrastructure exists) |
 
 ### 6.3 Bash / commands
 
@@ -427,9 +423,9 @@ Each row is a **requirement ID**. Implementation is complete when every **Must**
 | P3 | Must | `create_files=false` blocks new file create | Integration |
 | P4 | Must | path_deny wins | Integration |
 | P5 | Must | Worker cannot call `subagent` or `workflow` | Integration |
-| P6 | Must | Agent opts cannot add tools outside run allowlist | Unit intersection |
-| P7 | Must | implementer profile + empty write_allow ⇒ no writes | Integration |
-| P8 | Should | `approval=escalate` surfaces to parent | Integration if approval bus available |
+| P6 | Must | Run policy controls tools; nested orchestration stripped | Unit intersection |
+| P7 | Must | Empty `run.policy.write_allow` ⇒ no writes even with `create_files=true` | Integration |
+| P8 | Should | Subagent approvals route to parent session | Integration if approval bus available |
 
 ### 11.6 Lifecycle
 
