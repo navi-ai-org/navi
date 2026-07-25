@@ -168,6 +168,11 @@ impl Harness {
 
     /// Render the current app state to the test terminal buffer.
     pub fn render(&mut self) -> &mut Self {
+        // Keep elapsed times deterministic for screenshot tests by refreshing
+        // the loading start instant just before the draw call.
+        if self.app.is_loading {
+            self.app.loading_start = Some(std::time::Instant::now());
+        }
         let terminal = &mut self.terminal;
         let app = &mut self.app;
         terminal

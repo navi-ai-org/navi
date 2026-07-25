@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-24
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.0...v0.4.1
+
+Dead-code cleanup and removal of orphaned background-model surfaces after the phase 1–5 subagent/tooling refactor.
+
+### Removed
+
+- **`BackgroundModelsConfig` / `BackgroundModelEntry`** — removed from `navi-core` config types and `navi-sdk` re-exports.
+- **Background-model SDK/NAPI/Dart APIs** — `set_background_model`, `clear_background_model`, and `repo_search` / `subagent_research` routing helpers are gone.
+- **Server background-model endpoints** — `POST /routing/background` and `DELETE /routing/background/:task` removed.
+- **TUI background-models UI** — modal, model-routing Agents tab, keybindings, settings row, and related snapshot removed.
+- **Stale dead code** — `package_manager` no longer listed in `README.md`; remaining phase 1–5 dead code removed.
+
+### Changed
+
+- **Subagent model override** now only honors `options.model`; profile-based background model selection is no longer exposed.
+- **Workspace crates + npm packages** bumped to **0.4.1**.
+
 ## [0.4.0] - 2026-07-24
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.3.9...v0.4.0
@@ -531,7 +550,9 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/navi-ai-org/navi/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/navi-ai-org/navi/compare/v0.3.9...v0.4.0
 [0.3.6]: https://github.com/navi-ai-org/navi/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/navi-ai-org/navi/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/navi-ai-org/navi/compare/v0.3.3...v0.3.4
