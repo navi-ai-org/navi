@@ -108,7 +108,6 @@ const READONLY_DENIED_TOOLS: &[&str] = &[
     "code_exec",
     "bash",
     "sandbox",
-    "package_manager",
     "mark_feature_done",
     "append_note",
     "question",
@@ -121,7 +120,6 @@ const WRITE_DENIED_TOOLS: &[&str] = &[
     "code_edit",
     "code_exec",
     "sandbox",
-    "package_manager",
     "mark_feature_done",
     "append_note",
 ];

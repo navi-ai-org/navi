@@ -39,19 +39,18 @@ Do NOT call chrome/devtools/MCP tools. Prefer builtins only.
 23. plan active
 24. set_goal OR create_goal objective=Finish audit summary
 25. get_goal
-26. package_manager status OR list (no heavy installs)
-27. sandbox status if available
-28. view_image assets/dot.png
-29. load_skill audit-skill if present else skip
-30. repo_explore query=\"Where is greet?\" (ONE call only)
-31. subagent readonly: list src/*.rs (ONE short call)
-32. question one trivial MCQ
-33. sleep duration_ms=50 if allowed else skip
-34. request_user_input once if allowed else skip
-35. code_exec only if trivial/safe else skip
-36. verifier only if trivial else skip
-37. init_session / mark_feature_done only if already in sprint else skip
-38. branch_race_start only if safe else skip
+26. sandbox status if available
+27. view_image assets/dot.png
+28. load_skill audit-skill if present else skip
+29. repo_explore query=\"Where is greet?\" (ONE call only)
+30. subagent readonly: list src/*.rs (ONE short call)
+31. question one trivial MCQ
+32. sleep duration_ms=50 if allowed else skip
+33. request_user_input once if allowed else skip
+34. code_exec only if trivial/safe else skip
+35. verifier only if trivial else skip
+36. init_session / mark_feature_done only if already in sprint else skip
+37. branch_race_start only if safe else skip
 
 ## Memory (agent-side only here)
 - At least one memory write + search.

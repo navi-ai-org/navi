@@ -26,10 +26,9 @@ use builtin::BrowserTool;
 use builtin::{
     AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool,
     HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
-    NewContextWindowTool, PackageManagerTool, PlanTool, QuestionTool, ReadTool,
-    RepoIntelligenceAction, RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool,
-    SandboxTool, SearchTool, SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata,
-    truncate_tool_result,
+    NewContextWindowTool, PlanTool, QuestionTool, ReadTool, RepoIntelligenceAction,
+    RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
+    SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
@@ -989,7 +988,6 @@ impl ToolExecutor {
                 "power_catalog": [
                     "code / code_edit / ast_search / symbol_*: symbols and structured code nav",
                     "repo_explore: BM25 semantic search",
-                    "package_manager: dependency install/add/update",
                     "browser: headless UI testing",
                     "subagent: nested agent",
                     "apply_patch / sandbox / set_goal / history_ops: advanced workflows",
@@ -1121,7 +1119,6 @@ impl ToolExecutor {
         self.register(BashTool::new(pr.clone()));
         self.register(QuestionTool);
         self.register(PlanTool::new(self.policy.clone()));
-        self.register(PackageManagerTool::new(pr.clone()));
         self.register(RuntimeInfoTool::new(
             self.policy.clone(),
             self.harness_profile.clone(),

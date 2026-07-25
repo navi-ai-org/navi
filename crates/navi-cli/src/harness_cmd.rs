@@ -40,7 +40,6 @@ fn default_tool_meta() -> Vec<(String, ToolExposure)> {
         "repo_explore",
         "subagent",
         "workflow",
-        "package_manager",
         "ast_search",
         "symbol_goto",
         "view_image",

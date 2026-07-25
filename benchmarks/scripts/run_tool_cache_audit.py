@@ -138,7 +138,6 @@ EXPECTED_BUILTIN = [
     "new_context_window",
     "tool_search",
     "sandbox",
-    "package_manager",
     "verifier",
     "init_session",
     "mark_feature_done",

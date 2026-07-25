@@ -205,7 +205,6 @@ fn default_capability_inventory() -> CapabilityInventory {
             "repo_explore",
             "subagent",
             "workflow",
-            "package_manager",
             "ast_search",
             "symbol_goto",
             "view_image",

@@ -223,7 +223,6 @@ Built-in tools are registered by `ToolExecutor` in `navi-core`:
 | `tool_search` | Read | Discover deferred power tools + schemas |
 | `memory` | Write | Durable memory CRUD/search |
 | `apply_patch` | Write | Optional patch format (prefer `edit` for most edits) |
-| `package_manager` | Write | Dependency install/add/remove/update (also discoverable via `tool_search`) |
 
 
 All tools execute with the project root as working directory. Relative paths are resolved against the project root, not the process CWD.

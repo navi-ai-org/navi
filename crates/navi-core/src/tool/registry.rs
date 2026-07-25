@@ -370,16 +370,16 @@ mod tests {
         for name in ["bash", "edit", "read_file"] {
             reg.register(make_def(name, ToolKind::Read, &["core"], &[]));
         }
-        for name in ["code", "package_manager", "browser"] {
+        for name in ["repo_explore", "ast_search", "symbol_goto"] {
             let mut def = make_def(name, ToolKind::Custom, &["power"], &[]);
             def.metadata.exposure = ToolExposure::Deferred;
             reg.register(def);
         }
         let visible = reg.visible_tool_names();
         assert_eq!(visible.len(), 3);
-        assert!(!visible.iter().any(|n| n == "code"));
-        assert!(!visible.iter().any(|n| n == "package_manager"));
-        assert!(!visible.iter().any(|n| n == "browser"));
+        assert!(!visible.iter().any(|n| n == "repo_explore"));
+        assert!(!visible.iter().any(|n| n == "ast_search"));
+        assert!(!visible.iter().any(|n| n == "symbol_goto"));
         // Threshold constant remains available for compatibility callers.
         assert_eq!(MCP_TOOL_DEFER_THRESHOLD, 100);
     }

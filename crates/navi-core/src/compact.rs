@@ -941,7 +941,7 @@ mod tests {
                 m
             },
             ModelMessage::tool_result("c1", "write_file", "file written"),
-            ModelMessage::tool_result("c2", "package_manager", "deps ok"),
+            ModelMessage::tool_result("c2", "code_exec", "deps ok"),
             ModelMessage::tool_result("c3", "apply_patch", "patch applied"),
             ModelMessage::tool_result("c4", "bash", "command ok"),
         ];

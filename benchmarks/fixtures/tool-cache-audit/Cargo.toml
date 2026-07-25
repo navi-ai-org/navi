@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# intentionally empty — package_manager can add a crate if needed
+# intentionally empty — bash can add a crate if needed
 
 [[bin]]
 name = "tool-cache-audit"

@@ -183,7 +183,7 @@ allow_tools = ["read_file"]
 allow_tool_regex = ["^repo_"]
 ask_tools = ["bash"]
 ask_tool_regex = ["^plugin__"]
-deny_tools = ["package_manager"]
+deny_tools = ["write_file"]
 deny_tool_regex = ["^danger_"]
 "#,
         )
@@ -194,7 +194,7 @@ deny_tool_regex = ["^danger_"]
         assert_eq!(config.security.allow_tool_regex, vec!["^repo_"]);
         assert_eq!(config.security.ask_tools, vec!["bash"]);
         assert_eq!(config.security.ask_tool_regex, vec!["^plugin__"]);
-        assert_eq!(config.security.deny_tools, vec!["package_manager"]);
+        assert_eq!(config.security.deny_tools, vec!["write_file"]);
         assert_eq!(config.security.deny_tool_regex, vec!["^danger_"]);
     }
 

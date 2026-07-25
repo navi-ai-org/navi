@@ -300,7 +300,6 @@ fn build_system_prompt_inner(
             "Power tools (not always in the schema — discover with tool_search, then call by name):\n",
             "- code / code_edit / ast_search / symbol_*: symbols, AST, overview, rename\n",
             "- repo_explore: BM25 semantic repo search\n",
-            "- package_manager: add/install/update deps\n",
             "- browser: headless UI testing\n",
             "- subagent: nested agent\n",
             "- apply_patch / sandbox / history_ops / create_goal: advanced workflows\n",
@@ -314,7 +313,7 @@ fn build_system_prompt_inner(
             "  Do not use bash/python to edit files. Do not dump files with sed/cat/head/rg via bash —\n",
             "  use read_file/search. Power tools (apply_patch, code, …) are deferred.\n",
             "- Symbol-level edits: discover code_edit via tool_search when needed.\n",
-            "- Prefer package_manager (via tool_search) over bash for dependency management.\n",
+            "- Use bash for dependency management (install/add/update) in the project root.\n",
             "- bash for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
             "- Prefer project-relative paths. Writes and commands may require approval.\n",
             "{tool_calling_rule}\n",
@@ -335,7 +334,7 @@ fn build_system_prompt_inner(
     if tools_enabled {
         prompt.push_str(
             "Discovery:\
-             - Use `tool_search` to load schemas for deferred power tools (code, browser, package_manager, …).\
+             - Use `tool_search` to load schemas for deferred power tools (code, browser, …).\
              - After tool_search, call the returned tool by name with matching arguments.\
              - Unknown-tool errors include suggestions; prefer those over inventing bash workarounds.\n",
         );

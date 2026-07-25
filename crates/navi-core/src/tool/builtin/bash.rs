@@ -435,7 +435,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run an ad-hoc shell command in the current project. Common git, test, build, package-manager, and file-read commands (cat/sed/head/rg/ls/find) are not executed here; bash returns a native_tool_available suggestion pointing at read_file/search/package_manager. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model. Never use bash to dump project source for inspection.",
+            "Run an ad-hoc shell command in the current project. Common git, test, build, and file-read commands (cat/sed/head/rg/ls/find) are not executed here; bash returns a native_tool_available suggestion pointing at read_file/search. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model. Never use bash to dump project source for inspection.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
@@ -548,9 +548,6 @@ fn native_tool_suggestion(command: &str) -> Option<Value> {
     let program = argv.first()?.as_str();
 
     let suggestion = match program {
-        "cargo" => suggest_cargo(&argv[1..])?,
-        "go" => suggest_go(&argv[1..])?,
-        "npm" | "bun" => suggest_js_package_manager(program, &argv[1..])?,
         "rg" | "grep" | "ag" | "ack" => suggest_grep(program, &argv[1..])?,
         "ls" => suggest_list(&argv[1..]),
         "find" => suggest_find(&argv[1..]),
@@ -925,62 +922,6 @@ struct NativeSuggestion {
     input: Value,
 }
 
-fn suggest_cargo(args: &[String]) -> Option<NativeSuggestion> {
-    let subcommand = args.first()?;
-    match subcommand.as_str() {
-        "add" | "remove" | "update" => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: package_manager_input(map_package_action(subcommand), "cargo", &args[1..]),
-        }),
-        _ => None,
-    }
-}
-
-fn suggest_go(args: &[String]) -> Option<NativeSuggestion> {
-    let subcommand = args.first()?;
-    match subcommand.as_str() {
-        "mod"
-            if args
-                .get(1)
-                .is_some_and(|arg| matches!(arg.as_str(), "download" | "tidy")) =>
-        {
-            Some(NativeSuggestion {
-                tool: "package_manager",
-                input: json!({ "action": "install", "manager": "go" }),
-            })
-        }
-        "get" => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: package_manager_input("add", "go", &args[1..]),
-        }),
-        _ => None,
-    }
-}
-
-fn suggest_js_package_manager(program: &str, args: &[String]) -> Option<NativeSuggestion> {
-    let subcommand = args.first()?;
-    let manager = program;
-    match subcommand.as_str() {
-        "install" | "i" if args.len() == 1 => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: json!({ "action": "install", "manager": manager }),
-        }),
-        "install" | "i" | "add" => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: package_manager_input("add", manager, &args[1..]),
-        }),
-        "remove" | "rm" | "uninstall" => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: package_manager_input("remove", manager, &args[1..]),
-        }),
-        "update" | "upgrade" => Some(NativeSuggestion {
-            tool: "package_manager",
-            input: package_manager_input("update", manager, &args[1..]),
-        }),
-        _ => None,
-    }
-}
-
 fn suggest_grep(program: &str, args: &[String]) -> Option<NativeSuggestion> {
     let mut values = args
         .iter()
@@ -1026,32 +967,6 @@ fn suggest_find(args: &[String]) -> NativeSuggestion {
     NativeSuggestion {
         tool: "search",
         input,
-    }
-}
-
-fn package_manager_input(action: &str, manager: &str, args: &[String]) -> Value {
-    let dev = args
-        .iter()
-        .any(|arg| matches!(arg.as_str(), "-D" | "--dev" | "--save-dev"));
-    let packages = args
-        .iter()
-        .filter(|arg| !arg.starts_with('-'))
-        .cloned()
-        .collect::<Vec<_>>();
-    json!({
-        "action": action,
-        "manager": manager,
-        "packages": packages,
-        "dev": dev,
-    })
-}
-
-fn map_package_action(action: &str) -> &'static str {
-    match action {
-        "add" => "add",
-        "remove" => "remove",
-        "update" => "update",
-        _ => "install",
     }
 }
 

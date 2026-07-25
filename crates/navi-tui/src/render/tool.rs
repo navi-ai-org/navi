@@ -197,7 +197,6 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "runtime_info" => runtime_info_summary(result),
         "history_ops" => history_ops_summary(invocation, result),
         "sandbox" => sandbox_summary(invocation, result),
-        "package_manager" => package_manager_summary(invocation, result),
 
         name => humanize_tool_name(name),
     };
@@ -407,7 +406,6 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
             | "runtime_info"
             | "history_ops"
             | "sandbox"
-            | "package_manager"
     ) {
         render_named_structured_output("Output", result, &mut content);
     } else if obj.contains_key("stdout")
@@ -2768,88 +2766,6 @@ fn sandbox_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
     }
 }
 
-fn package_manager_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
-    let action = invocation
-        .input
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
-    let manager = result
-        .output
-        .get("manager")
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
-
-    match action {
-        "install" => format!("Package install ({manager})"),
-        "add" => {
-            let packages = invocation
-                .input
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            let pkgs = invocation
-                .input
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default();
-            if packages == 1 {
-                format!("Package add {pkgs} ({manager})")
-            } else {
-                format!("Package add ({packages} packages, {manager})")
-            }
-        }
-        "remove" => {
-            let packages = invocation
-                .input
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            let pkgs = invocation
-                .input
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .take(3)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                })
-                .unwrap_or_default();
-            if packages == 1 {
-                format!("Package remove {pkgs} ({manager})")
-            } else {
-                format!("Package remove ({packages} packages, {manager})")
-            }
-        }
-        "update" => {
-            let packages = invocation
-                .input
-                .get("packages")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            if packages == 0 {
-                format!("Package update all ({manager})")
-            } else {
-                format!("Package update ({packages} packages, {manager})")
-            }
-        }
-        "check" => format!("Package check ({manager})"),
-        _ => "Package manager".to_string(),
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // Shared helpers
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3310,7 +3226,6 @@ mod tests {
             "glob" => json!({ "pattern": "*.rs" }),
             "question" => json!({ "question": "Continue?", "options": ["yes", "no"] }),
             "plan" => json!({ "action": "list" }),
-            "package_manager" => json!({ "action": "install" }),
             "code" => json!({ "action": "overview", "path": "src" }),
             "code_exec" => json!({ "ops": [{ "op": "trace-note", "note": "done" }] }),
             "ast_search" | "tool_search" => json!({ "query": "Renderer" }),
@@ -3406,7 +3321,6 @@ mod tests {
             "process",
             "question",
             "plan",
-            "package_manager",
             "runtime_info",
             "code",
             "code_edit",

@@ -440,26 +440,6 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
-            "package_manager",
-            ToolMetadata {
-                namespace: "package".to_string(),
-                risk: crate::tool::ToolRisk::High,
-                is_read_only: false,
-                is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
-                capabilities: vec![
-                    "network.package".to_string(),
-                    "repo.write.lockfile".to_string(),
-                ],
-                tags: vec!["package", "dependency"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-                ..ToolMetadata::default()
-            },
-        );
-        insert(
-            &mut map,
             "repo_explore",
             ToolMetadata {
                 namespace: "repo".to_string(),
@@ -643,7 +623,6 @@ mod tests {
             "inspect_image",
             "append_note",
             "history_ops",
-            "package_manager",
             "workflow",
             "repo_explore",
             "subagent",
@@ -742,7 +721,6 @@ mod tests {
             "code",
             "code_edit",
             "ast_search",
-            "package_manager",
             "repo_explore",
             "browser",
             "subagent",

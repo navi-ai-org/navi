@@ -1710,50 +1710,6 @@ async fn fs_browser_list_skips_hidden_and_build_dirs() {
     assert!(!file_strs.iter().any(|f| f.contains("target")));
 }
 
-// ── package_manager regression tests ─────────────────────────────────────────
-
-#[test]
-fn package_manager_definition_has_expected_schema() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    let def = executor
-        .definition("package_manager")
-        .expect("package_manager");
-    assert_eq!(def.name, "package_manager");
-    assert_eq!(def.input_schema["type"], "object");
-    let required = def.input_schema["required"].as_array().unwrap();
-    assert!(required.contains(&json!("action")));
-}
-
-#[tokio::test]
-async fn package_manager_add_errors_without_packages() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let executor = executor(tempdir.path());
-
-    std::fs::write(
-        tempdir.path().join("Cargo.toml"),
-        "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
-    )
-    .unwrap();
-
-    let result = executor
-        .invoke(ToolInvocation {
-            id: "pm".to_string(),
-            tool_name: "package_manager".to_string(),
-            input: json!({
-                "action": "add",
-                "manager": "cargo",
-                "packages": []
-            }),
-        })
-        .await;
-
-    assert!(!result.ok);
-    assert_eq!(result.output["error_code"], "missing_packages");
-    assert!(result.output["message"].as_str().is_some());
-}
-
 // ── Integration: tools registered in definitions ─────────────────────────────
 
 #[test]
@@ -1767,7 +1723,6 @@ fn all_specialized_tools_registered_in_definitions() {
     assert!(names.contains(&"grep".to_string()));
     assert!(names.contains(&"fs_browser".to_string()));
     assert!(names.contains(&"search".to_string()));
-    assert!(names.contains(&"package_manager".to_string()));
 }
 
 #[test]
@@ -1775,7 +1730,7 @@ fn all_specialized_tools_have_valid_schemas() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    for name in ["search", "package_manager"] {
+    for name in ["search"] {
         let def = executor.definition(name).expect(name);
         assert_eq!(def.input_schema["type"], "object");
         assert!(
@@ -2109,7 +2064,6 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
         "code",
         "code_edit",
         "ast_search",
-        "package_manager",
         "sandbox",
         "append_note",
         "history_ops",
@@ -2162,12 +2116,6 @@ fn tool_search_discovers_deferred_power_tools() {
             .iter()
             .any(|n| *n == "code" || n.contains("symbol") || *n == "ast_search"),
         "expected code/symbol tools from tool_search, got {names:?}"
-    );
-    let pkg = executor.search_tools("package dependency", 10);
-    assert!(
-        pkg.iter().any(|d| d.name == "package_manager"),
-        "package_manager should be discoverable: {:?}",
-        pkg.iter().map(|d| &d.name).collect::<Vec<_>>()
     );
 }
 
