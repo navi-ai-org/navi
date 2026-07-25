@@ -3,7 +3,6 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::app::TuiApp;
 use crate::chat::{fork_from_user_message, revert_to_user_message};
 
-use crate::keybindings::modals::BG_MODEL_TASKS;
 use crate::keybindings::{close_active_modal, handle_key, replace_modal};
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
@@ -1133,17 +1132,13 @@ fn active_scroll_target(app: &TuiApp) -> Option<ScrollTarget> {
         | Mode::MessageActions
         | Mode::OAuth
         | Mode::Usage
+        | Mode::ModelRouting
         | Mode::QueuedMessageEdit
         | Mode::SetGoal
         | Mode::ConfirmCancelTurn
         | Mode::ConfirmMcpMerge
         | Mode::About
         | Mode::UpdateAvailable => None,
-        Mode::BackgroundModels | Mode::ModelRouting => {
-            // Agents tab list (and legacy agent routes modal).
-            Some(ScrollTarget::BackgroundModels)
-        }
-        Mode::BgModelPicker => Some(ScrollTarget::Models),
         Mode::Normal | Mode::ApiKeyEntry | Mode::Mcp | Mode::AttachmentModels => None,
         Mode::Setup => None,
         Mode::ConfirmPlan | Mode::SudoPassword => None,
@@ -1237,25 +1232,6 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             app.bg_command_selected = selected;
             app.bg_command_scroll = scroll;
             crate::background::clamp_background_selection(app);
-        }
-        ScrollTarget::BackgroundModels => {
-            // Only navigate the Agents list when that tab is active (or legacy modal).
-            if app.mode == Mode::ModelRouting
-                && app.model_routing_tab != crate::state::ModelRoutingTab::Agents
-            {
-                return;
-            }
-            let len = BG_MODEL_TASKS.len();
-            let visible_tasks = 4usize;
-            let (selected, scroll) = shifted_select_state(
-                app.bg_models_selected,
-                app.bg_models_scroll,
-                len,
-                delta,
-                visible_tasks,
-            );
-            app.bg_models_selected = selected;
-            app.bg_models_scroll = scroll;
         }
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;
@@ -1354,11 +1330,6 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
             app.bg_command_selected = offset.min(len.saturating_sub(1));
             app.bg_command_scroll = app.bg_command_selected;
             crate::background::clamp_background_selection(app);
-        }
-        ScrollTarget::BackgroundModels => {
-            let len = BG_MODEL_TASKS.len();
-            app.bg_models_selected = offset.min(len.saturating_sub(1));
-            app.bg_models_scroll = app.bg_models_selected.saturating_sub(3);
         }
         ScrollTarget::BackgroundCommandOutput => {
             app.bg_command_output_follow = false;
@@ -1474,11 +1445,7 @@ fn scroll_models_to(app: &mut TuiApp, offset: usize) {
 }
 
 fn active_model_list_selection(app: &TuiApp) -> usize {
-    if app.mode == Mode::BgModelPicker {
-        app.bg_model_picker_selected
-    } else {
-        app.selected_model
-    }
+    app.selected_model
 }
 
 fn select_model_near_row(app: &mut TuiApp, rows: &[ListRow], row: usize, prefer_after: bool) {
@@ -1499,11 +1466,7 @@ fn select_model_near_row(app: &mut TuiApp, rows: &[ListRow], row: usize, prefer_
     let resolved = selected
         .or_else(|| first_model_index(rows))
         .unwrap_or_else(|| active_model_list_selection(app));
-    if app.mode == Mode::BgModelPicker {
-        app.bg_model_picker_selected = resolved;
-    } else {
-        app.selected_model = resolved;
-    }
+    app.selected_model = resolved;
 }
 
 fn model_row_index(row: &ListRow) -> Option<usize> {

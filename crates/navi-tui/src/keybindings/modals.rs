@@ -8,9 +8,9 @@ use crate::notifications::show_notification;
 use crate::persistence::{load_session, save_current_session, save_preferences};
 use crate::providers::{
     apply_model_selection, build_model_rows, first_model_index, model_is_available_for_selection,
-    next_model_index, next_model_index_from, previous_model_index, previous_model_index_from,
-    rebuild_provider, save_api_key_and_rebuild, selected_model_in_rows, start_provider_oauth,
-    sync_scroll_to_model_index, sync_scroll_to_selection,
+    next_model_index, previous_model_index, rebuild_provider, save_api_key_and_rebuild,
+    selected_model_in_rows, start_provider_oauth, sync_scroll_to_model_index,
+    sync_scroll_to_selection,
 };
 use crate::session::{load_saved_sessions, load_session_snapshot};
 use crate::state::{MessageAction, ModalKind, ThinkingLevel};
@@ -536,11 +536,6 @@ pub(crate) fn handle_settings_key(app: &mut TuiApp, code: KeyCode) -> bool {
                 }
                 SettingAction::Effort => {
                     super::open_thinking_picker(app);
-                }
-                SettingAction::AgentRoutes => {
-                    super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
-                    app.bg_models_selected = 0;
-                    app.bg_models_scroll = 0;
                 }
                 SettingAction::AttachmentFallbacks => {
                     super::open_model_routing(app, crate::state::ModelRoutingTab::Attachments);
@@ -1546,13 +1541,25 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
     let rows = build_model_rows(app);
     let visible_rows = 14u16;
     match code {
-        KeyCode::Esc => super::close_active_modal(app),
-        KeyCode::Char('r') if modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Esc => {
+            if app.attachment_model_picker_active {
+                app.attachment_model_picker_active = false;
+                app.attachment_model_picker_modality = None;
+                super::replace_modal(app, ModalKind::ModelRouting);
+                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
+            } else {
+                super::close_active_modal(app);
+            }
+        }
+        KeyCode::Char('r')
+            if modifiers.contains(KeyModifiers::CONTROL) && !app.attachment_model_picker_active =>
+        {
             super::provider_sync::sync_models_tui(app);
             super::close_all_modals(app);
         }
         KeyCode::Char('e')
             if modifiers.contains(KeyModifiers::CONTROL)
+                && !app.attachment_model_picker_active
                 && selected_model_in_rows(&rows, app.selected_model).is_some() =>
         {
             app.pending_model_selection = Some(app.selected_model);
@@ -1560,7 +1567,7 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
             app.api_key_input.clear();
             app.api_key_cursor = 0;
         }
-        KeyCode::Tab => {
+        KeyCode::Tab if !app.attachment_model_picker_active => {
             let provider_id = app
                 .models
                 .get(app.selected_model)
@@ -1599,17 +1606,50 @@ pub(crate) fn handle_model_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyMo
             if selected_model_in_rows(&rows, app.selected_model).is_none() {
                 return false;
             }
-            let model = &app.models[app.selected_model];
-            if model_is_available_for_selection(app, model) {
-                apply_model_selection(app, app.selected_model);
-                app.pending_model_selection = None;
-                super::close_all_modals(app);
-                crate::providers::maybe_start_setup_interview(app);
+            if app.attachment_model_picker_active {
+                let model = &app.models[app.selected_model];
+                let modality = app
+                    .attachment_model_picker_modality
+                    .clone()
+                    .unwrap_or_default();
+                let provider_id = model.provider_id.clone();
+                let model_name = model.name.clone();
+                if let Err(err) = app.engine().set_attachment_model(
+                    &modality,
+                    &provider_id,
+                    &model_name,
+                    NaviConfigSaveTarget::Global,
+                ) {
+                    show_notification(
+                        app,
+                        "Attachment Fallbacks",
+                        format!("Could not save {modality}: {err:#}"),
+                    );
+                    return false;
+                }
+                set_attachment_model_override(app, &modality, &provider_id, &model_name);
+                show_notification(
+                    app,
+                    "Attachment Fallbacks",
+                    format!("{} fallback → {}:{}", modality, provider_id, model_name),
+                );
+                app.attachment_model_picker_active = false;
+                app.attachment_model_picker_modality = None;
+                super::replace_modal(app, ModalKind::ModelRouting);
+                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
             } else {
-                app.pending_model_selection = Some(app.selected_model);
-                super::replace_modal(app, ModalKind::ApiKeyEntry);
-                app.api_key_input.clear();
-                app.api_key_cursor = 0;
+                let model = &app.models[app.selected_model];
+                if model_is_available_for_selection(app, model) {
+                    apply_model_selection(app, app.selected_model);
+                    app.pending_model_selection = None;
+                    super::close_all_modals(app);
+                    crate::providers::maybe_start_setup_interview(app);
+                } else {
+                    app.pending_model_selection = Some(app.selected_model);
+                    super::replace_modal(app, ModalKind::ApiKeyEntry);
+                    app.api_key_input.clear();
+                    app.api_key_cursor = 0;
+                }
             }
         }
         _ => {
@@ -1943,99 +1983,12 @@ pub(crate) fn handle_model_routing_key(app: &mut TuiApp, code: KeyCode) -> bool 
                 }
                 _ => {}
             },
-            ModelRoutingTab::Agents => {
-                // Reuse agent-list handling without Esc (already handled).
-                handle_background_models_list_key(app, other);
-            }
             ModelRoutingTab::Attachments => {
                 handle_attachment_models_list_key(app, other);
             }
         },
     }
     false
-}
-
-/// List navigation for Agents tab (no Esc / no modal close).
-fn handle_background_models_list_key(app: &mut TuiApp, code: KeyCode) {
-    let len = BG_MODEL_TASKS.len();
-    match code {
-        KeyCode::Up | KeyCode::Char('k') => {
-            if app.bg_models_selected > 0 {
-                app.bg_models_selected -= 1;
-            }
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            if app.bg_models_selected + 1 < len {
-                app.bg_models_selected += 1;
-            }
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::PageUp => {
-            app.bg_models_selected = app.bg_models_selected.saturating_sub(3);
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::PageDown => {
-            app.bg_models_selected = (app.bg_models_selected + 3).min(len.saturating_sub(1));
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::Home => {
-            app.bg_models_selected = 0;
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::End => {
-            app.bg_models_selected = len.saturating_sub(1);
-            clamp_bg_models_selection(app, len);
-        }
-        KeyCode::Enter => {
-            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
-                app.bg_model_picker_active = true;
-                app.attachment_model_picker_active = false;
-                app.bg_model_picker_task = Some(task_id.to_string());
-                open_bg_model_picker(app);
-            }
-        }
-        KeyCode::Char('d') => {
-            if let Some((task_id, _)) = BG_MODEL_TASKS.get(app.bg_models_selected) {
-                if let Err(err) = app
-                    .engine()
-                    .clear_background_model(task_id, NaviConfigSaveTarget::Global)
-                {
-                    show_notification(
-                        app,
-                        "Agent Model Routes",
-                        format!("Could not reset {task_id}: {err:#}"),
-                    );
-                    return;
-                }
-                clear_bg_model_override(app, task_id);
-                show_notification(
-                    app,
-                    "Agent Model Routes",
-                    format!("{task_id} reset to default."),
-                );
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Keep Agents selection in range and scroll the list so the row is visible.
-fn clamp_bg_models_selection(app: &mut TuiApp, len: usize) {
-    if len == 0 {
-        app.bg_models_selected = 0;
-        app.bg_models_scroll = 0;
-        return;
-    }
-    app.bg_models_selected = app.bg_models_selected.min(len - 1);
-    // Each task renders as 2 lines; keep ~4 tasks in the window.
-    let visible_tasks = 4usize;
-    if app.bg_models_selected < app.bg_models_scroll {
-        app.bg_models_scroll = app.bg_models_selected;
-    } else if app.bg_models_selected >= app.bg_models_scroll + visible_tasks {
-        app.bg_models_scroll = app.bg_models_selected.saturating_sub(visible_tasks - 1);
-    }
-    app.bg_models_scroll = app.bg_models_scroll.min(len.saturating_sub(visible_tasks));
 }
 
 /// List navigation for Attachments tab (no Esc).
@@ -2056,10 +2009,7 @@ fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
         }
         KeyCode::Enter => {
             if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
-                app.attachment_model_picker_active = true;
-                app.bg_model_picker_active = false;
-                app.bg_model_picker_task = Some(modality.to_string());
-                open_bg_model_picker(app);
+                open_attachment_model_picker(app, modality);
             }
         }
         KeyCode::Char('d') => {
@@ -2087,220 +2037,18 @@ fn handle_attachment_models_list_key(app: &mut TuiApp, code: KeyCode) {
     }
 }
 
-/// Open the shared model list used for agent routes and attachment fallbacks.
-///
-/// Selection starts on the first **model** row (often under "— Recent models —"),
-/// never raw index `0` which may be absent from the filtered/available list —
-/// that made Down a silent no-op.
-fn open_bg_model_picker(app: &mut TuiApp) {
-    app.model_scroll = 0;
+/// Open the model picker for an attachment fallback.
+fn open_attachment_model_picker(app: &mut TuiApp, modality: &str) {
+    app.attachment_model_picker_active = true;
+    app.attachment_model_picker_modality = Some(modality.to_string());
+    super::replace_modal(app, ModalKind::Models);
     app.model_filter.clear();
     app.model_filter_cursor = 0;
+    app.model_scroll = 0;
     app.refresh_authenticated_providers();
     let rows = build_model_rows(app);
-    app.bg_model_picker_selected = first_model_index(&rows).unwrap_or(0);
-    sync_scroll_to_model_index(app, app.bg_model_picker_selected, &rows, 14);
-    super::replace_modal(app, ModalKind::BgModelPicker);
-}
-
-pub(crate) const BG_MODEL_TASKS: &[(&str, &str)] = &[
-    ("repo_search", "Repository exploration"),
-    ("subagent_research", "Research subagents"),
-];
-
-pub(crate) fn handle_background_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    match code {
-        KeyCode::Esc => {
-            super::close_active_modal(app);
-        }
-        // Reuse the same list navigation as the Model Routing → Agents tab.
-        other => handle_background_models_list_key(app, other),
-    }
-    false
-}
-
-pub(crate) fn handle_bg_model_picker_key(
-    app: &mut TuiApp,
-    code: KeyCode,
-    modifiers: KeyModifiers,
-) -> bool {
-    let rows = build_model_rows(app);
-    let task_id = app.bg_model_picker_task.clone().unwrap_or_default();
-    const VISIBLE_ROWS: u16 = 14;
-
-    match code {
-        KeyCode::Esc => {
-            if app.attachment_model_picker_active {
-                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
-            } else {
-                app.model_routing_tab = crate::state::ModelRoutingTab::Agents;
-            }
-            app.attachment_model_picker_active = false;
-            app.bg_model_picker_active = false;
-            app.bg_model_picker_task = None;
-            super::replace_modal(app, ModalKind::ModelRouting);
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.bg_model_picker_selected =
-                previous_model_index_from(app.bg_model_picker_selected, &rows);
-            sync_scroll_to_model_index(
-                app,
-                app.bg_model_picker_selected,
-                &rows,
-                VISIBLE_ROWS.into(),
-            );
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            // When selection is not in `rows` (stale 0 after open / filter),
-            // next_model_index_from lands on the first model instead of no-op.
-            app.bg_model_picker_selected =
-                next_model_index_from(app.bg_model_picker_selected, &rows);
-            sync_scroll_to_model_index(
-                app,
-                app.bg_model_picker_selected,
-                &rows,
-                VISIBLE_ROWS.into(),
-            );
-        }
-        KeyCode::PageDown => {
-            // Jump a few model rows for long catalogs.
-            for _ in 0..5 {
-                let next = next_model_index_from(app.bg_model_picker_selected, &rows);
-                if next == app.bg_model_picker_selected {
-                    break;
-                }
-                app.bg_model_picker_selected = next;
-            }
-            sync_scroll_to_model_index(
-                app,
-                app.bg_model_picker_selected,
-                &rows,
-                VISIBLE_ROWS.into(),
-            );
-        }
-        KeyCode::PageUp => {
-            for _ in 0..5 {
-                let prev = previous_model_index_from(app.bg_model_picker_selected, &rows);
-                if prev == app.bg_model_picker_selected {
-                    break;
-                }
-                app.bg_model_picker_selected = prev;
-            }
-            sync_scroll_to_model_index(
-                app,
-                app.bg_model_picker_selected,
-                &rows,
-                VISIBLE_ROWS.into(),
-            );
-        }
-        KeyCode::Enter => {
-            if let Some(model) = app.models.get(app.bg_model_picker_selected) {
-                let provider_id = model.provider_id.clone();
-                let model_name = model.name.clone();
-                if app.attachment_model_picker_active {
-                    if let Err(err) = app.engine().set_attachment_model(
-                        &task_id,
-                        &provider_id,
-                        &model_name,
-                        NaviConfigSaveTarget::Global,
-                    ) {
-                        show_notification(
-                            app,
-                            "Attachment Fallbacks",
-                            format!("Could not save {task_id}: {err:#}"),
-                        );
-                        return false;
-                    }
-                    set_attachment_model_override(app, &task_id, &provider_id, &model_name);
-                    show_notification(
-                        app,
-                        "Attachment Fallbacks",
-                        format!("{} fallback → {}:{}", task_id, provider_id, model_name),
-                    );
-                } else {
-                    if let Err(err) = app.engine().set_background_model(
-                        &task_id,
-                        &provider_id,
-                        &model_name,
-                        NaviConfigSaveTarget::Global,
-                    ) {
-                        show_notification(
-                            app,
-                            "Agent Model Routes",
-                            format!("Could not save {task_id}: {err:#}"),
-                        );
-                        return false;
-                    }
-                    set_bg_model_override(app, &task_id, &provider_id, &model_name);
-                    show_notification(
-                        app,
-                        "Agent Model Routes",
-                        format!("{} → {}:{}", task_id, provider_id, model_name),
-                    );
-                }
-            }
-            if app.attachment_model_picker_active {
-                app.model_routing_tab = crate::state::ModelRoutingTab::Attachments;
-            } else {
-                app.model_routing_tab = crate::state::ModelRoutingTab::Agents;
-            }
-            app.attachment_model_picker_active = false;
-            app.bg_model_picker_active = false;
-            app.bg_model_picker_task = None;
-            super::replace_modal(app, ModalKind::ModelRouting);
-        }
-        KeyCode::Backspace => {
-            let before = app.model_filter.clone();
-            if handle_text_input_key(model_filter_ref(app), code, modifiers, false)
-                && app.model_filter != before
-            {
-                app.model_scroll = 0;
-                let rows = build_model_rows(app);
-                app.bg_model_picker_selected =
-                    first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
-            }
-        }
-        KeyCode::Char('/') | KeyCode::Char('f') => {
-            // Focus the filter input — handled by input routing.
-        }
-        _ => {
-            let before = app.model_filter.clone();
-            if handle_text_input_key(model_filter_ref(app), code, modifiers, false)
-                && app.model_filter != before
-            {
-                app.model_scroll = 0;
-                let rows = build_model_rows(app);
-                app.bg_model_picker_selected =
-                    first_model_index(&rows).unwrap_or(app.bg_model_picker_selected);
-            }
-        }
-    }
-    false
-}
-
-fn set_bg_model_override(app: &mut TuiApp, task: &str, provider: &str, model: &str) {
-    use navi_sdk::BackgroundModelEntry;
-    let bg = &mut app.loaded_config.config.background_models;
-    let entry = BackgroundModelEntry {
-        profile: None,
-        provider: Some(provider.to_string()),
-        model: Some(model.to_string()),
-        fallback: None,
-    };
-    match task {
-        "repo_search" => bg.repo_search = Some(entry),
-        "subagent_research" => bg.subagent_research = Some(entry),
-        _ => bg.default = Some(entry),
-    }
-}
-
-fn clear_bg_model_override(app: &mut TuiApp, task: &str) {
-    let bg = &mut app.loaded_config.config.background_models;
-    match task {
-        "repo_search" => bg.repo_search = None,
-        "subagent_research" => bg.subagent_research = None,
-        _ => bg.default = None,
-    }
+    app.selected_model = first_model_index(&rows).unwrap_or(0);
+    sync_scroll_to_model_index(app, app.selected_model, &rows, 14);
 }
 
 pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> bool {
@@ -2323,10 +2071,7 @@ pub(crate) fn handle_attachment_models_key(app: &mut TuiApp, code: KeyCode) -> b
         }
         KeyCode::Enter => {
             if let Some((modality, _)) = ATTACHMENT_MODALITIES.get(app.selected_attachment_model) {
-                app.attachment_model_picker_active = true;
-                app.bg_model_picker_active = false;
-                app.bg_model_picker_task = Some(modality.to_string());
-                open_bg_model_picker(app);
+                open_attachment_model_picker(app, modality);
             }
         }
         KeyCode::Char('d') => {

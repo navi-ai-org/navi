@@ -146,7 +146,7 @@ pub(crate) const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Entry {
         key: "ctrl+b",
         label: "Model routing",
-        detail: "Unified Chat / Agents / Attachments model routing (tabs with ←/→).",
+        detail: "Unified Chat / Attachments model routing (tabs with ←/→).",
     },
     HelpRow::Entry {
         key: "ctrl+,",

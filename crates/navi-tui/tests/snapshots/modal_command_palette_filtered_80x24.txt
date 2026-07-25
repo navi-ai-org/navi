@@ -12,9 +12,9 @@
         │ Plan Mode                                                  █ │
         │ Permissions                                                █ │
         │ Sync Models                                                █ │
-        │ Agent Routes…                                              █ │
         │ Usage…                                                     █ │
-        │ Effort…                                                    │ │
+        │ Effort…                                                    █ │
+        │ Providers…                                                 █ │
         │ [enter] run  [esc] clear search                              │
         ╰──────────────────────────────────────────────────────────────╯
 

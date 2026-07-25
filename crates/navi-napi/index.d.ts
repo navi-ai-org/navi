@@ -211,13 +211,6 @@ export interface ModelRef {
   name: string;
 }
 
-export interface BackgroundModelEntry {
-  profile?: string | null;
-  provider?: string | null;
-  model?: string | null;
-  fallback?: string | null;
-}
-
 export interface UpdateInfo {
   version: string;
   repo?: string | null;
@@ -233,11 +226,6 @@ export interface EngineConfig {
     audio?: ModelRef | null;
     video?: ModelRef | null;
     document?: ModelRef | null;
-  };
-  backgroundModels?: {
-    default?: BackgroundModelEntry | null;
-    repoSearch?: BackgroundModelEntry | null;
-    subagentResearch?: BackgroundModelEntry | null;
   };
   tui?: {
     theme: string;
@@ -322,8 +310,6 @@ export class NaviNapiEngine {
   selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
   setAttachmentModel(modality: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
   clearAttachmentModel(modality: string, saveTarget?: SaveTarget): JsonValue;
-  setBackgroundModel(task: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
-  clearBackgroundModel(task: string, saveTarget?: SaveTarget): JsonValue;
   subscribeEvents(sessionId: string): NaviNapiEventStream;
   // Thread goals (host API). While Active, sendTurn auto-continues until
   // complete/blocked/budget-limited/paused/cleared. Model tools: get_goal,

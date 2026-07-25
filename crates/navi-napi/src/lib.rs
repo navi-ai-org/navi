@@ -1275,41 +1275,6 @@ impl NaviNapiEngine {
         Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
     }
 
-    /// Set background-task model override (repo_search|subagent_research|default).
-    #[napi]
-    pub fn set_background_model(
-        &self,
-        task: String,
-        provider: String,
-        model: String,
-        save_target: Option<String>,
-    ) -> Result<JsonValue> {
-        let path = self
-            .inner
-            .set_background_model(
-                &task,
-                &provider,
-                &model,
-                parse_save_target(save_target.as_deref()),
-            )
-            .map_err(to_napi_error)?;
-        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
-    }
-
-    /// Clear background-task model override.
-    #[napi]
-    pub fn clear_background_model(
-        &self,
-        task: String,
-        save_target: Option<String>,
-    ) -> Result<JsonValue> {
-        let path = self
-            .inner
-            .clear_background_model(&task, parse_save_target(save_target.as_deref()))
-            .map_err(to_napi_error)?;
-        Ok(json!({ "savedTo": path.map(|p| p.display().to_string()) }))
-    }
-
     // ── Provider Model Sync ────────────────────────────────────────────
 
     #[napi]
@@ -1970,11 +1935,6 @@ impl NaviNapiEngine {
                 "audio": config.config.attachment_models.audio,
                 "video": config.config.attachment_models.video,
                 "document": config.config.attachment_models.document,
-            },
-            "backgroundModels": {
-                "default": config.config.background_models.default,
-                "repoSearch": config.config.background_models.repo_search,
-                "subagentResearch": config.config.background_models.subagent_research,
             },
             "tui": {
                 "theme": config.config.tui.theme,

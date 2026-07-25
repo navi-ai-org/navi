@@ -430,20 +430,6 @@ impl EngineDriver for MockEngine {
         })
     }
 
-    fn set_background_model(
-        &self,
-        _task: &str,
-        _provider: &str,
-        _model: &str,
-        _target: NaviConfigSaveTarget,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn clear_background_model(&self, _task: &str, _target: NaviConfigSaveTarget) -> Result<()> {
-        Ok(())
-    }
-
     fn set_attachment_model(
         &self,
         modality: &str,

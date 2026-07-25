@@ -2108,7 +2108,7 @@ fn wants_mouse_free_motion_with_pending_image() {
 }
 
 #[test]
-fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_background_agents() {
+fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_model_routing() {
     let mut app = test_app("");
 
     handle_key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
@@ -3471,7 +3471,6 @@ fn running_subagent_renders_active_task_block() {
             input: serde_json::json!({
                 "description": "Analyze repository structure",
                 "prompt": "Read justfile and summarize the main crates",
-                "profile": "repo_search",
             }),
         },
     );
@@ -4448,9 +4447,9 @@ fn model_routing_opens_from_ctrl_b_and_tabs() {
         KeyModifiers::CONTROL
     ));
     assert_eq!(app.mode, Mode::ModelRouting);
-    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
 
-    // Right arrow advances tabs: Agents -> Attachments -> Chat -> Agents
+    // Right arrow advances tabs: Chat -> Attachments -> Chat
     assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
     assert_eq!(
         app.model_routing_tab,
@@ -4458,8 +4457,6 @@ fn model_routing_opens_from_ctrl_b_and_tabs() {
     );
     assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
     assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
-    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
-    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
 }
 
 #[test]
@@ -4531,22 +4528,6 @@ fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
 }
 
 #[test]
-fn model_routing_agents_down_arrow_moves_selection() {
-    let mut app = test_app("");
-    handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
-    assert_eq!(app.mode, Mode::ModelRouting);
-    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Agents);
-    assert_eq!(app.bg_models_selected, 0);
-
-    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.bg_models_selected, 1);
-    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(app.bg_models_selected, 1);
-    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(app.bg_models_selected, 0);
-}
-
-#[test]
 fn next_model_index_from_recovers_when_selection_not_in_rows() {
     use crate::providers::{ListRow, next_model_index_from, previous_model_index_from};
 
@@ -4570,85 +4551,6 @@ fn next_model_index_from_recovers_when_selection_not_in_rows() {
     assert_eq!(next_model_index_from(7, &rows), 1);
     assert_eq!(previous_model_index_from(5, &rows), 5); // already first
     assert_eq!(previous_model_index_from(7, &rows), 5);
-}
-
-#[test]
-fn bg_model_picker_down_recovers_from_stale_zero_selection() {
-    // Regression: open forced selected=0; with Recent-first layout the first
-    // model is often not index 0, so Down found no current row and no-op'd.
-    let mut app = test_app("");
-    app.models = vec![
-        ModelOption {
-            name: "model-a".into(),
-            provider_id: "provider-a".into(),
-            provider_label: "Provider A".into(),
-            provider_description: String::new(),
-            task_size: None,
-            context_window_tokens: None,
-            supports_thinking: None,
-            reasoning_levels: Vec::new(),
-            default_reasoning_effort: None,
-        },
-        ModelOption {
-            name: "model-b".into(),
-            provider_id: "provider-b".into(),
-            provider_label: "Provider B".into(),
-            provider_description: String::new(),
-            task_size: None,
-            context_window_tokens: None,
-            supports_thinking: None,
-            reasoning_levels: Vec::new(),
-            default_reasoning_effort: None,
-        },
-        ModelOption {
-            name: "model-c".into(),
-            provider_id: "provider-b".into(),
-            provider_label: "Provider B".into(),
-            provider_description: String::new(),
-            task_size: None,
-            context_window_tokens: None,
-            supports_thinking: None,
-            reasoning_levels: Vec::new(),
-            default_reasoning_effort: None,
-        },
-    ];
-    // Skip refresh_authenticated_providers (would clear this on mock engine).
-    app.authenticated_providers.clear();
-    app.authenticated_providers.insert("provider-a".into());
-    app.authenticated_providers.insert("provider-b".into());
-    app.loaded_config.config.tui.recent_model_ids = vec!["provider-b:model-b".into()];
-
-    app.mode = Mode::BgModelPicker;
-    app.modal_stack.replace(Some(ModalKind::BgModelPicker));
-    app.bg_model_picker_active = true;
-    app.bg_model_picker_task = Some("repo_search".into());
-    // Stale open selection (pre-fix).
-    app.bg_model_picker_selected = 0;
-    app.model_scroll = 0;
-
-    let rows = build_model_rows(&app);
-    let first = first_model_index(&rows).expect("model");
-    assert_eq!(first, 1, "Recent should put model-b (index 1) first");
-    // Model 0 is in the full list but not the first row — old Down searched for
-    // index 0 and jumped mid-list, or if 0 were missing, no-op'd entirely.
-
-    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    // After fix: missing/stale selection recovers to first, then advances.
-    // first Down from 0 → lands on first (1) via recover, next Down would go further.
-    // With selected=0 which IS in rows (provider-a model), old code found 0's
-    // position under Provider A and advanced. New recovery only when missing.
-    // Force missing selection:
-    app.bg_model_picker_selected = 99;
-    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(
-        app.bg_model_picker_selected, first,
-        "Down from missing selection must land on first model row"
-    );
-    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
-    assert_ne!(
-        app.bg_model_picker_selected, first,
-        "second Down must advance past first Recent model"
-    );
 }
 
 #[test]

@@ -444,27 +444,24 @@ pub(crate) enum SetupPhase {
 /// Tab inside the unified Model Routing modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum ModelRoutingTab {
-    Chat,
     #[default]
-    Agents,
+    Chat,
     Attachments,
 }
 
 impl ModelRoutingTab {
-    pub(crate) const ALL: [Self; 3] = [Self::Chat, Self::Agents, Self::Attachments];
+    pub(crate) const ALL: [Self; 2] = [Self::Chat, Self::Attachments];
 
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Chat => "Chat",
-            Self::Agents => "Agents",
             Self::Attachments => "Attachments",
         }
     }
 
     pub(crate) fn next(self) -> Self {
         match self {
-            Self::Chat => Self::Agents,
-            Self::Agents => Self::Attachments,
+            Self::Chat => Self::Attachments,
             Self::Attachments => Self::Chat,
         }
     }
@@ -472,8 +469,7 @@ impl ModelRoutingTab {
     pub(crate) fn previous(self) -> Self {
         match self {
             Self::Chat => Self::Attachments,
-            Self::Agents => Self::Chat,
-            Self::Attachments => Self::Agents,
+            Self::Attachments => Self::Chat,
         }
     }
 }
@@ -503,9 +499,7 @@ pub enum Mode {
     OAuth,
     BackgroundCommands,
     BackgroundCommandOutput,
-    BackgroundModels,
-    BgModelPicker,
-    /// Unified model routing (Chat / Agents / Attachments).
+    /// Unified model routing (Chat / Attachments).
     ModelRouting,
     Setup,
     AttachmentModels,
@@ -550,10 +544,6 @@ pub(crate) enum ModalKind {
     OAuth,
     BackgroundCommands,
     BackgroundCommandOutput,
-    /// Legacy standalone agent-routes modal (superseded by [`Self::ModelRouting`]).
-    #[allow(dead_code)] // retained for mode map / migration from old routing UI
-    BackgroundModels,
-    BgModelPicker,
     ModelRouting,
     /// Legacy standalone attachment modal (superseded by [`Self::ModelRouting`]).
     #[allow(dead_code)] // retained for mode map / migration from old attachment UI
@@ -593,8 +583,6 @@ impl ModalKind {
             Self::OAuth => Mode::OAuth,
             Self::BackgroundCommands => Mode::BackgroundCommands,
             Self::BackgroundCommandOutput => Mode::BackgroundCommandOutput,
-            Self::BackgroundModels => Mode::BackgroundModels,
-            Self::BgModelPicker => Mode::BgModelPicker,
             Self::ModelRouting => Mode::ModelRouting,
             Self::AttachmentModels => Mode::AttachmentModels,
             Self::MessageQueue => Mode::MessageQueue,

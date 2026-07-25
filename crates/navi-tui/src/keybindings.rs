@@ -87,6 +87,8 @@ pub(crate) fn open_model_picker(app: &mut TuiApp) {
     app.model_filter.clear();
     app.model_filter_cursor = 0;
     app.model_scroll = 0;
+    app.attachment_model_picker_active = false;
+    app.attachment_model_picker_modality = None;
     app.refresh_authenticated_providers();
 
     let rows = build_model_rows(app);
@@ -149,9 +151,8 @@ fn open_plugins_picker(app: &mut TuiApp) {
 
 pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRoutingTab) {
     app.model_routing_tab = tab;
-    app.bg_model_picker_active = false;
-    app.bg_model_picker_task = None;
     app.attachment_model_picker_active = false;
+    app.attachment_model_picker_modality = None;
     replace_modal(app, ModalKind::ModelRouting);
 }
 
@@ -188,8 +189,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::BackgroundCommandOutput => {
             self::modals::handle_background_command_output_key(app, code)
         }
-        Mode::BackgroundModels => self::modals::handle_background_models_key(app, code),
-        Mode::BgModelPicker => self::modals::handle_bg_model_picker_key(app, code, modifiers),
         Mode::ModelRouting => self::modals::handle_model_routing_key(app, code),
         Mode::Setup => {
             if crate::providers::handle_setup_list_key(app, code) {

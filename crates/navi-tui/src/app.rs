@@ -270,19 +270,10 @@ pub struct TuiApp {
     pub(crate) session_goal: Option<SessionGoal>,
     /// When set, a debounced mid-turn session checkpoint is due at this instant.
     pub(crate) session_checkpoint_due: Option<Instant>,
-    /// How many background model tasks are actively running (repo_search, subagent_research)
-    pub(crate) bg_models_running: usize,
-
-    // background models config
-    pub(crate) bg_models_selected: usize,
-    pub(crate) bg_models_scroll: usize,
-    pub(crate) bg_model_picker_active: bool,
-    pub(crate) bg_model_picker_task: Option<String>,
-    pub(crate) bg_model_picker_selected: usize,
-
     // attachment models config
     pub(crate) selected_attachment_model: usize,
     pub(crate) attachment_model_picker_active: bool,
+    pub(crate) attachment_model_picker_modality: Option<String>,
 
     /// Active tab in the unified Model Routing modal.
     pub(crate) model_routing_tab: crate::state::ModelRoutingTab,
@@ -531,15 +522,10 @@ impl TuiApp {
             session_title: None,
             session_goal: None,
             session_checkpoint_due: None,
-            bg_models_running: 0,
-            bg_models_selected: 0,
-            bg_models_scroll: 0,
-            bg_model_picker_active: false,
-            bg_model_picker_task: None,
-            bg_model_picker_selected: 0,
             selected_attachment_model: 0,
             attachment_model_picker_active: false,
-            model_routing_tab: crate::state::ModelRoutingTab::Agents,
+            attachment_model_picker_modality: None,
+            model_routing_tab: crate::state::ModelRoutingTab::Chat,
             setup_phase: None,
             setup_list_selected: 0,
             pending_mcp_merge: None,

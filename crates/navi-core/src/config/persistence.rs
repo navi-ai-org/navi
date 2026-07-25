@@ -48,9 +48,8 @@ impl NaviConfig {
 
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
-            AttachmentModelsConfig, BackgroundModelsConfig, BrowserConfig, GoalsConfig, McpConfig,
-            ModelConfig, PluginMarketplaceConfig, SkillsConfig, TuiConfig, UpdatesConfig,
-            VoiceConfig,
+            AttachmentModelsConfig, BrowserConfig, GoalsConfig, McpConfig, ModelConfig,
+            PluginMarketplaceConfig, SkillsConfig, TuiConfig, UpdatesConfig, VoiceConfig,
         };
 
         if other.model != ModelConfig::default() {
@@ -77,9 +76,6 @@ impl NaviConfig {
         }
         if other.plugin_marketplace != PluginMarketplaceConfig::default() {
             self.plugin_marketplace = other.plugin_marketplace;
-        }
-        if other.background_models != BackgroundModelsConfig::default() {
-            self.background_models = other.background_models;
         }
         if other.goals != GoalsConfig::default() {
             self.goals = other.goals;

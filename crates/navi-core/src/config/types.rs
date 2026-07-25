@@ -48,9 +48,6 @@ pub struct NaviConfig {
     /// Terminal UI preferences.
     #[serde(default)]
     pub tui: TuiConfig,
-    /// Background model routing configuration.
-    #[serde(default)]
-    pub background_models: BackgroundModelsConfig,
     /// Goal system configuration.
     #[serde(default)]
     pub goals: GoalsConfig,
@@ -1061,43 +1058,6 @@ pub struct MemoryConfig {
     /// History database configuration.
     #[serde(default)]
     pub history: HistoryConfig,
-}
-
-/// Background model configuration — maps task types to model profiles or explicit overrides.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
-pub struct BackgroundModelsConfig {
-    /// Default background model entry (used when no task-specific entry is set).
-    pub default: Option<BackgroundModelEntry>,
-    /// Model for repository exploration subagent.
-    pub repo_search: Option<BackgroundModelEntry>,
-    /// Model for research-oriented subagents.
-    pub subagent_research: Option<BackgroundModelEntry>,
-}
-
-impl BackgroundModelsConfig {
-    /// Resolves the entry for a given task key, falling back to `default`.
-    pub fn resolve(&self, task: &str) -> Option<&BackgroundModelEntry> {
-        let entry = match task {
-            "repo_search" => self.repo_search.as_ref(),
-            "subagent_research" => self.subagent_research.as_ref(),
-            _ => None,
-        };
-        entry.or(self.default.as_ref())
-    }
-}
-
-/// A single background model entry: either a profile name or an explicit provider+model.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct BackgroundModelEntry {
-    /// Profile identifier (e.g. "repo_search", "subagent_research").
-    pub profile: Option<String>,
-    /// Explicit provider override (used when profile is None).
-    pub provider: Option<String>,
-    /// Explicit model override (used when profile is None).
-    pub model: Option<String>,
-    /// Fallback strategy: "main_model" or an explicit "provider:model".
-    pub fallback: Option<String>,
 }
 
 /// Goal system configuration.

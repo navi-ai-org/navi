@@ -45,15 +45,6 @@ struct AttachmentModelBody {
     save_target: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct BackgroundModelBody {
-    task: String,
-    provider: String,
-    model: String,
-    #[serde(default, alias = "saveTarget")]
-    save_target: String,
-}
-
 fn saved_to_json(path: Option<PathBuf>) -> serde_json::Value {
     serde_json::json!({
         "savedTo": path.map(|p| p.display().to_string()),
@@ -307,8 +298,6 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
                 warp::reply::json(&serde_json::json!({
                     "attachmentModels": loaded.config.attachment_models,
                     "attachment_models": loaded.config.attachment_models,
-                    "backgroundModels": loaded.config.background_models,
-                    "background_models": loaded.config.background_models,
                 }))
                 .into_response(),
             )
@@ -350,42 +339,6 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
             },
         );
 
-    // POST /routing/background  {task, provider, model, saveTarget?}
-    let set_background = warp::path!("routing" / "background")
-        .and(warp::post())
-        .and(warp::body::json())
-        .and(sf.clone())
-        .and(af.clone())
-        .and_then(|body: BackgroundModelBody, s: SharedState| async move {
-            let engine = s.engine.read().await;
-            let target = parse_save_target(&body.save_target);
-            match engine.set_background_model(&body.task, &body.provider, &body.model, target) {
-                Ok(path) => {
-                    Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
-                }
-                Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-            }
-        });
-
-    // DELETE /routing/background/:task ?saveTarget=
-    let clear_background = warp::path!("routing" / "background" / String)
-        .and(warp::delete())
-        .and(warp::query::<SaveTargetQuery>())
-        .and(sf.clone())
-        .and(af.clone())
-        .and_then(
-            |task: String, query: SaveTargetQuery, s: SharedState| async move {
-                let engine = s.engine.read().await;
-                let target = parse_save_target(&query.save_target);
-                match engine.clear_background_model(&task, target) {
-                    Ok(path) => {
-                        Ok::<_, Infallible>(warp::reply::json(&saved_to_json(path)).into_response())
-                    }
-                    Err(e) => Ok(err_resp(e.to_string(), StatusCode::BAD_REQUEST)),
-                }
-            },
-        );
-
     list_skills
         .or(get_skill)
         .or(save_skill)
@@ -399,7 +352,5 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
         .or(get_routing)
         .or(set_attachment)
         .or(clear_attachment)
-        .or(set_background)
-        .or(clear_background)
         .boxed()
 }

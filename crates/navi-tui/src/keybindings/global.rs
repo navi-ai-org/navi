@@ -199,9 +199,7 @@ pub(super) fn route_global_key(
     }
 
     if is_ctrl_chord(code, modifiers, 'b') {
-        super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
-        app.bg_models_selected = 0;
-        app.bg_models_scroll = 0;
+        super::open_model_routing(app, crate::state::ModelRoutingTab::Chat);
         return KeyOutcome::Handled;
     }
 

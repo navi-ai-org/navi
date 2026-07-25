@@ -233,13 +233,8 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             app.bg_command_scroll = 0;
             crate::background::refresh_background_commands(app);
         }
-        CommandAction::BackgroundModels => {
-            super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
-            app.bg_models_selected = 0;
-            app.bg_models_scroll = 0;
-        }
         CommandAction::ModelRouting => {
-            super::open_model_routing(app, crate::state::ModelRoutingTab::Agents);
+            super::open_model_routing(app, crate::state::ModelRoutingTab::Chat);
         }
         CommandAction::MessageQueue => {
             super::replace_modal(app, ModalKind::MessageQueue);

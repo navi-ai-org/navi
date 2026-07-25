@@ -15,7 +15,6 @@ pub(crate) enum SettingAction {
     Theme,
     ChatModel,
     Effort,
-    AgentRoutes,
     AttachmentFallbacks,
     Providers,
     PermissionMode,
@@ -50,7 +49,6 @@ pub(crate) const SETTINGS_ROWS: &[SettingRow] = &[
     SettingRow::Section("Model"),
     SettingRow::Action(SettingAction::ChatModel),
     SettingRow::Action(SettingAction::Effort),
-    SettingRow::Action(SettingAction::AgentRoutes),
     SettingRow::Action(SettingAction::AttachmentFallbacks),
     SettingRow::Section("System"),
     SettingRow::Action(SettingAction::Providers),
@@ -178,7 +176,6 @@ pub(crate) fn setting_display(
             app.thinking_level.label().to_string(),
             SettingValueKind::Link,
         ),
-        SettingAction::AgentRoutes => ("Agent routes", String::new(), SettingValueKind::Link),
         SettingAction::AttachmentFallbacks => {
             ("Attachments", String::new(), SettingValueKind::Link)
         }

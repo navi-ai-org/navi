@@ -106,8 +106,6 @@ pub enum ScrollTarget {
     QuestionOptions,
     BackgroundCommands,
     BackgroundCommandOutput,
-    /// Agent model routes list (Model Routing → Agents / legacy modal).
-    BackgroundModels,
     MessageQueue,
     Help,
     PathMentions,

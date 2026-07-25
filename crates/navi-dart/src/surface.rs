@@ -1532,61 +1532,6 @@ pub unsafe extern "C" fn navi_engine_clear_attachment_model(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_set_background_model(
-    engine: *mut NaviDartEngine,
-    task: *const c_char,
-    provider: *const c_char,
-    model: *const c_char,
-    save_target: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let task = match parse_str(task, "task") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let provider = match parse_str(provider, "provider") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let model = match parse_str(model, "model") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-    match engine
-        .inner
-        .set_background_model(&task, &provider, &model, target)
-    {
-        Ok(path) => to_json_ptr(&path_json(path)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_clear_background_model(
-    engine: *mut NaviDartEngine,
-    task: *const c_char,
-    save_target: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let task = match parse_str(task, "task") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-    match engine.inner.clear_background_model(&task, target) {
-        Ok(path) => to_json_ptr(&path_json(path)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_plugin_install_path_with_meta(
     engine: *mut NaviDartEngine,
     path: *const c_char,

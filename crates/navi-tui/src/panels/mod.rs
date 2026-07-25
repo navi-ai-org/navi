@@ -230,29 +230,13 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         30,
     )));
 
-    // Unified model routing (Chat / Agents / Attachments)
+    // Unified model routing (Chat / Attachments)
     pm.add_overlay(Box::new(ModalPanel::new(
         "model-routing",
         Mode::ModelRouting,
         modals::render_model_routing,
         78,
         18,
-    )));
-    // Background models
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "background-models",
-        Mode::BackgroundModels,
-        modals::render_background_models,
-        70,
-        14,
-    )));
-    // Bg model picker (reuses model_picker::render)
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "bg-model-picker",
-        Mode::BgModelPicker,
-        model_picker::render,
-        72,
-        22,
     )));
     // Attachment models
     pm.add_overlay(Box::new(ModalPanel::new(

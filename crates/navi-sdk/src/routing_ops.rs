@@ -1,10 +1,10 @@
-//! Attachment fallback models and background-task model routing on [`NaviEngine`].
+//! Attachment fallback models on [`NaviEngine`].
 
 use std::path::PathBuf;
 
 use anyhow::Context;
-use navi_core::config::types::{BackgroundModelEntry, ModelConfig};
-use navi_core::{canonical_provider_id, resolve_provider_config};
+use navi_core::config::types::ModelConfig;
+use navi_core::resolve_provider_config;
 
 use crate::engine::NaviEngine;
 use crate::types::{NaviConfigSaveTarget, NaviError};
@@ -12,7 +12,6 @@ use crate::types::{NaviConfigSaveTarget, NaviError};
 type Result<T> = std::result::Result<T, NaviError>;
 
 const ATTACHMENT_MODALITIES: &[&str] = &["image", "audio", "video", "document"];
-const BACKGROUND_TASKS: &[&str] = &["default", "repo_search", "subagent_research"];
 
 fn normalize_modality(modality: &str) -> Result<&'static str> {
     let key = modality.trim().to_ascii_lowercase();
@@ -23,19 +22,6 @@ fn normalize_modality(modality: &str) -> Result<&'static str> {
         .ok_or_else(|| {
             NaviError::Config(format!(
                 "unknown attachment modality '{modality}' (expected image|audio|video|document)"
-            ))
-        })
-}
-
-fn normalize_bg_task(task: &str) -> Result<&'static str> {
-    let key = task.trim().to_ascii_lowercase();
-    BACKGROUND_TASKS
-        .iter()
-        .copied()
-        .find(|t| *t == key)
-        .ok_or_else(|| {
-            NaviError::Config(format!(
-                "unknown background task '{task}' (expected default|repo_search|subagent_research)"
             ))
         })
 }
@@ -85,7 +71,7 @@ impl NaviEngine {
         Ok(saved)
     }
 
-    /// Clear the attachment fallback for a modality (falls back to “none”).
+    /// Clear the attachment fallback for a modality (falls back to “none").
     pub fn clear_attachment_model(
         &self,
         modality: &str,
@@ -102,75 +88,6 @@ impl NaviEngine {
             other => {
                 return Err(NaviError::Config(format!(
                     "internal error: unexpected attachment modality '{other}'"
-                )));
-            }
-        }
-        let saved = self.save_loaded_config(&loaded, save_target)?;
-        self.replace_loaded_config(loaded);
-        Ok(saved)
-    }
-
-    /// Set an explicit provider:model override for a background task route.
-    ///
-    /// Tasks: `default`, `repo_search`, `subagent_research`.
-    pub fn set_background_model(
-        &self,
-        task: &str,
-        provider: &str,
-        model: &str,
-        save_target: NaviConfigSaveTarget,
-    ) -> Result<Option<PathBuf>> {
-        let task = normalize_bg_task(task)?;
-        let provider = provider.trim();
-        let model = model.trim();
-        if provider.is_empty() || model.is_empty() {
-            return Err(NaviError::Config(
-                "provider and model are required for background model override".into(),
-            ));
-        }
-
-        let mut loaded = self.loaded_config();
-        let provider_cfg = resolve_provider_config(&loaded.config, provider)
-            .with_context(|| format!("unknown provider {provider}"))
-            .map_err(NaviError::from)?;
-        let entry = BackgroundModelEntry {
-            profile: None,
-            provider: Some(canonical_provider_id(&provider_cfg.id).to_string()),
-            model: Some(model.to_string()),
-            fallback: None,
-        };
-        match task {
-            "repo_search" => loaded.config.background_models.repo_search = Some(entry),
-            "subagent_research" => loaded.config.background_models.subagent_research = Some(entry),
-            "default" => loaded.config.background_models.default = Some(entry),
-            // Invariant: `normalize_bg_task` only returns keys handled above.
-            other => {
-                return Err(NaviError::Config(format!(
-                    "internal error: unexpected background task '{other}'"
-                )));
-            }
-        }
-        let saved = self.save_loaded_config(&loaded, save_target)?;
-        self.replace_loaded_config(loaded);
-        Ok(saved)
-    }
-
-    /// Clear a background-task model override (uses resolver defaults / main model).
-    pub fn clear_background_model(
-        &self,
-        task: &str,
-        save_target: NaviConfigSaveTarget,
-    ) -> Result<Option<PathBuf>> {
-        let task = normalize_bg_task(task)?;
-        let mut loaded = self.loaded_config();
-        match task {
-            "repo_search" => loaded.config.background_models.repo_search = None,
-            "subagent_research" => loaded.config.background_models.subagent_research = None,
-            "default" => loaded.config.background_models.default = None,
-            // Invariant: `normalize_bg_task` only returns keys handled above.
-            other => {
-                return Err(NaviError::Config(format!(
-                    "internal error: unexpected background task '{other}'"
                 )));
             }
         }

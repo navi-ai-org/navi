@@ -17,8 +17,8 @@ const LIST_RIGHT_PADDING_COLUMNS: u16 = 2;
 
 pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     clear_modal_area(frame, area);
-    let title: &str = if app.mode == crate::state::Mode::BgModelPicker {
-        "Background Model"
+    let title: &str = if app.attachment_model_picker_active {
+        "Attachment Model"
     } else {
         ""
     };
@@ -118,11 +118,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         return;
     }
 
-    let selected_model = if app.mode == crate::state::Mode::BgModelPicker {
-        app.bg_model_picker_selected
-    } else {
-        app.selected_model
-    };
+    let selected_model = app.selected_model;
     let selected_row = selected_model_in_rows(&list_rows, selected_model).unwrap_or(0);
     let hover_row = app
         .hover_index
@@ -144,9 +140,9 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
                 let model = &app.models[*index];
                 let selected = *index == selected_model;
                 let hovered = app.hover_index == Some(*index);
-                let configured = if app.mode == crate::state::Mode::BgModelPicker {
-                    // In bg model picker, show which model is the current override.
-                    bg_model_is_current_override(app, model)
+                let configured = if app.attachment_model_picker_active {
+                    // In attachment model picker, show which model is the current override.
+                    attachment_model_is_current_override(app, model)
                 } else {
                     model.name == app.loaded_config.config.model.name
                         && canonical_provider_id(&model.provider_id)
@@ -387,17 +383,21 @@ fn display_model_name(name: &str) -> String {
         .join(" ")
 }
 
-fn bg_model_is_current_override(app: &TuiApp, model: &navi_sdk::ModelOption) -> bool {
-    let bg = &app.loaded_config.config.background_models;
-    let task = app.bg_model_picker_task.as_deref().unwrap_or("");
-    let entry = match task {
-        "repo_search" => bg.repo_search.as_ref(),
-        "subagent_research" => bg.subagent_research.as_ref(),
-        _ => bg.default.as_ref(),
+fn attachment_model_is_current_override(app: &TuiApp, model: &navi_sdk::ModelOption) -> bool {
+    let config = &app.loaded_config.config.attachment_models;
+    let modality = app
+        .attachment_model_picker_modality
+        .as_deref()
+        .unwrap_or("");
+    let entry = match modality {
+        "image" => config.image.as_ref(),
+        "audio" => config.audio.as_ref(),
+        "video" => config.video.as_ref(),
+        "document" => config.document.as_ref(),
+        _ => None,
     };
     if let Some(entry) = entry {
-        entry.provider.as_deref() == Some(&model.provider_id)
-            && entry.model.as_deref() == Some(&model.name)
+        entry.provider == model.provider_id && entry.name == model.name
     } else {
         false
     }

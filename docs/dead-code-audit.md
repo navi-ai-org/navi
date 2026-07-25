@@ -148,3 +148,4 @@ The high and medium-confidence dead-code items above were removed in commit `07b
 - `memory::extract::extract_memories` removed; tests updated to call `extract_memories_from_messages`.
 - Registry profile dead code (`seed_default_profiles`, `query_models_by_profile`, `upsert_profile`, `Profile`, `RankedModel`, `ModelProfileEntry`) removed; unused `model_profiles`/`profiles` tables dropped from the schema.
 - `README.md` no longer lists the removed `package_manager` tool.
+- Orphaned `BackgroundModelsConfig` / `BackgroundModelEntry` surfaces were removed from `navi-sdk`, `navi-napi`, `navi-dart`, `navi-server`, and `navi-tui`; the TUI command-palette snapshot was regenerated and no reference to `background_models`, `set_background_model`, `clear_background_model`, `repo_search`, or `subagent_research` remains under `crates/`.

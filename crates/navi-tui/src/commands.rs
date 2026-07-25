@@ -70,7 +70,6 @@ pub(crate) enum CommandAction {
     Plugins,
     McpServers,
     BackgroundCommands,
-    BackgroundModels,
     ModelRouting,
     ReSetup,
     /// Set the current input as a multi-turn session goal (auto-continue).
@@ -270,13 +269,6 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Providers…",
         shortcut: None,
         action: CommandAction::Providers,
-        hub: Some(CommandHub::ModelRouting),
-        visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Agent Routes…",
-        shortcut: None,
-        action: CommandAction::BackgroundModels,
         hub: Some(CommandHub::ModelRouting),
         visibility: CommandVisibility::Always,
     },
@@ -499,8 +491,7 @@ fn action_keywords(action: CommandAction) -> &'static str {
     match action {
         CommandAction::SwitchModel => "chat model llm ai picker switch",
         CommandAction::OpenThinking => "thinking reason effort level binary",
-        CommandAction::ModelRouting => "routing routes background models agents",
-        CommandAction::BackgroundModels => "agent routes subagent model",
+        CommandAction::ModelRouting => "routing routes chat attachments fallback models",
         CommandAction::AttachmentModels => "attachment image audio video fallback vision",
         CommandAction::SyncModels => "refresh models catalog registry",
         CommandAction::Providers => "accounts api key oauth credentials login",

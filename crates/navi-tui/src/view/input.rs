@@ -932,13 +932,6 @@ fn composer_meta_right(app: &TuiApp, width: usize) -> ComposerMetaBuilt {
         ));
         spans.push(Span::styled(" · ", Style::default().fg(ghost())));
     }
-    if app.bg_models_running > 0 {
-        spans.push(Span::styled(
-            format!("⚙ {} bg", app.bg_models_running),
-            Style::default().fg(signal()).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(" · ", Style::default().fg(ghost())));
-    }
     if !app.pending_images.is_empty() {
         let count = app.pending_images.len();
         spans.push(Span::styled(

@@ -234,11 +234,13 @@ impl Harness {
                 if s.len() <= MAX_DIFF_CHARS {
                     s.to_string()
                 } else {
-                    format!(
-                        "{}\n… truncated {} more chars …",
-                        &s[..MAX_DIFF_CHARS],
-                        s.len() - MAX_DIFF_CHARS
-                    )
+                    let idx = s
+                        .char_indices()
+                        .map(|(i, _)| i)
+                        .filter(|&i| i <= MAX_DIFF_CHARS)
+                        .last()
+                        .unwrap_or(MAX_DIFF_CHARS);
+                    format!("{}\n… truncated {} more chars …", &s[..idx], s.len() - idx)
                 }
             };
             panic!(
