@@ -138,3 +138,13 @@ cargo clippy --all -- -W dead_code
 - Removing `background_model.rs` is a medium-confidence recommendation because the `profile` field remains in the subagent JSON schema. The product decision is whether to wire profile-based model selection or remove the `profile` parameter from the subagent tool. If `profile` is kept, `BackgroundModelResolver` should be constructed and passed via `with_background_resolver` instead of deleted.
 - The `evals/suites/beyond/b4_subagents.toml` verifier (`! rg -q ...`) is **correct and up-to-date**; it asserts the absence of removed identifiers. It is not dead/stale.
 - `crates/navi-core/src/tool/tests.rs:409-420` (`removed_tools_are_not_registered`) is a valid regression test asserting removed tools stay unregistered; it is not dead code.
+
+## Resolution
+
+The high and medium-confidence dead-code items above were removed in commit `07b003e` (`fix(core): remove dead code from phase 1-5 audit`).
+- `security.rs` `extract_shell_path_mentions` + `looks_like_path` deleted.
+- `SubagentTool` `_prompt_cache`, `ProviderBuilderFn`, `with_background_resolver`, `background_resolver`, and `provider_builder` removed; `profile` schema field and invocation parsing removed; `resolve_model` now honors `options.model` as a model-name override.
+- `background_model.rs` module and public re-exports deleted.
+- `memory::extract::extract_memories` removed; tests updated to call `extract_memories_from_messages`.
+- Registry profile dead code (`seed_default_profiles`, `query_models_by_profile`, `upsert_profile`, `Profile`, `RankedModel`, `ModelProfileEntry`) removed; unused `model_profiles`/`profiles` tables dropped from the schema.
+- `README.md` no longer lists the removed `package_manager` tool.
