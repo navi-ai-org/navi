@@ -56,10 +56,7 @@ pub async fn extract_memories(
     let sanitized = conversation.replace("{conversation}", "[conversation]");
     let user = EXTRACT_USER.replace("{conversation}", &sanitized);
 
-    let messages = vec![
-        ModelMessage::system(EXTRACT_SYSTEM),
-        ModelMessage::user(user),
-    ];
+    let messages = vec![ModelMessage::user(user)];
     extract_memories_from_messages(messages, model_provider, model_name, store).await
 }
 

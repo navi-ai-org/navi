@@ -64,7 +64,7 @@ Downloads the GGUF model and tokenizer from HuggingFace to `{data_dir}/memory/{p
 
 ## extractMemories (Per-Turn Extraction)
 
-After each completed turn, a background `tokio::spawn` calls the model to extract durable memories from the conversation. This is fire-and-forget and does not block the agent loop.
+After each completed turn, a background `tokio::spawn` forks the principal session's live message history, appends an extraction prompt, and calls the **main chat model** to extract durable memories. Reusing the conversation prefix lets the provider prompt cache hit, minimizing cost. This is fire-and-forget and does not block the agent loop. There is no separate memory-extraction model override.
 
 **Mutual exclusion**: if the model already used the `memory` tool with `write` during the turn, background extraction is skipped — the model's explicit writes take priority.
 

@@ -408,9 +408,14 @@ fn removed_tools_are_not_registered() {
 
     assert!(executor.definition("top_files").is_none());
     assert!(executor.definition("tool_workflow").is_none());
+    assert!(executor.definition("package_manager").is_none());
     assert!(!visible.contains(&"top_files".to_string()), "{visible:?}");
     assert!(
         !visible.contains(&"tool_workflow".to_string()),
+        "{visible:?}"
+    );
+    assert!(
+        !visible.contains(&"package_manager".to_string()),
         "{visible:?}"
     );
 }
@@ -2101,7 +2106,7 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
 }
 
 #[test]
-fn tool_search_discovers_deferred_power_tools() {
+fn tool_search_discovers_code_and_symbol_tools() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
     let results = executor.search_tools("code symbols", 10);

@@ -46,6 +46,9 @@ impl BackgroundModelResolver {
     /// 2. Query SQLite registry for models matching the task profile
     /// 3. Check credential availability for each candidate
     /// 4. Fall back to the main chat model
+    ///
+    /// `subagent_research` follows the same fallback path; configure it explicitly
+    /// in `background_models` or the registry if a research model is required.
     pub fn resolve(&self, task: &str) -> ResolvedBackgroundModel {
         let config = self.config.read().unwrap_or_else(|e| e.into_inner());
         let bg_config = &config.background_models;

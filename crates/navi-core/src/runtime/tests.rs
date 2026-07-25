@@ -93,8 +93,7 @@ struct GoalToolsProvider;
 #[async_trait]
 impl ModelProvider for GoalToolsProvider {
     fn stream(&self, _request: ModelRequest) -> ModelStream {
-        // Goal tools are Deferred exposure — they are registered on the
-        // executor but intentionally not listed in the Direct model schema.
+        // Goal tools are Direct exposure and should be listed in the model schema.
         Box::pin(stream::iter(vec![
             Ok(ModelStreamEvent::TextDelta {
                 text: "goal tools available".to_string(),

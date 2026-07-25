@@ -1,12 +1,22 @@
 version = 1
 id = "b4-subagents"
-title = "specialized subagent profiles are isolated"
+title = "subagents inherit base tools and run in yolo mode"
 category = "security_stress"
 mode = "verifier-first"
-task = "Verify that planner/security reviewer profiles exist and read-only tool restrictions include write/code exec tools."
+task = "Verify that the old per-subagent tool/approval/write options are gone and that subagents inherit parent tools while running in yolo mode."
 tags = ["beyond", "b4", "subagent"]
 
 [[verifiers]]
 verifier_type = "command"
-command = "rg -q 'Planner|SecurityReviewer|READONLY_DENIED_TOOLS|resolve_allowed_tool_names|code_exec' crates/navi-core/src/tool/builtin/subagent.rs"
+command = "! rg -q 'Planner|SecurityReviewer|READONLY_DENIED_TOOLS|WRITE_DENIED_TOOLS|resolve_allowed_tool_names|resolve_approval_mode|write_scope_from_options' crates/navi-core/src/tool/builtin/subagent.rs"
+required = true
+
+[[verifiers]]
+verifier_type = "command"
+command = "rg -q 'PermissionMode::Yolo' crates/navi-core/src/tool/builtin/subagent.rs"
+required = true
+
+[[verifiers]]
+verifier_type = "command"
+command = "rg -q 'NESTED_AGENT_TOOLS' crates/navi-core/src/tool/builtin/subagent.rs"
 required = true

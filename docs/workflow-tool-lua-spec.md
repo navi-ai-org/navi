@@ -169,7 +169,7 @@ Production subagents always inherit all base tools and run in yolo mode, so the 
 
 | Key | Type | Meaning |
 |-----|------|---------|
-| `profile` | string | Optional worker label (no longer an `AgentProfile` enum; ignored by subagent backend) |
+| `profile` | string | Optional background model profile (`repo_search` or `subagent_research`); used by the subagent backend to resolve the worker model. Omitted or unknown → main chat model. |
 | `model` | string | Optional model override for worker |
 | `path_allow` | `{string...}` | Glob/path prefixes worker may touch, intersected with run policy |
 | `path_deny` | `{string...}` | Always denied (wins over allow) |

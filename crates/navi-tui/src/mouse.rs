@@ -3,6 +3,7 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use crate::app::TuiApp;
 use crate::chat::{fork_from_user_message, revert_to_user_message};
 
+use crate::keybindings::modals::BG_MODEL_TASKS;
 use crate::keybindings::{close_active_modal, handle_key, replace_modal};
 use crate::notifications::{push_diagnostic, show_notification};
 use crate::plugins::{install_or_update_from_marketplace, plugin_picker_rows};
@@ -1244,7 +1245,7 @@ fn scroll_by(app: &mut TuiApp, target: ScrollTarget, delta: isize) {
             {
                 return;
             }
-            let len = 5usize; // BG_MODEL_TASKS length
+            let len = BG_MODEL_TASKS.len();
             let visible_tasks = 4usize;
             let (selected, scroll) = shifted_select_state(
                 app.bg_models_selected,
@@ -1355,7 +1356,7 @@ fn scroll_to(app: &mut TuiApp, target: ScrollTarget, offset: usize) {
             crate::background::clamp_background_selection(app);
         }
         ScrollTarget::BackgroundModels => {
-            let len = 5usize;
+            let len = BG_MODEL_TASKS.len();
             app.bg_models_selected = offset.min(len.saturating_sub(1));
             app.bg_models_scroll = app.bg_models_selected.saturating_sub(3);
         }

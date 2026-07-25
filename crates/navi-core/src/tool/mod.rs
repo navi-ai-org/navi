@@ -981,9 +981,9 @@ impl ToolExecutor {
                 "results": results,
                 "total": results.len(),
                 "hint": if results.is_empty() {
-                    "No tools found. Try broader terms like: code, browser, package, memory, subagent, sandbox, goal."
+                    "No tools found. Try broader terms like: code, browser, memory, sandbox, goal."
                 } else {
-                    "These tools may be deferred (not always in the schema). Call a returned tool by its `name` with arguments matching `input_schema`."
+                    "Call a returned tool by its `name` with arguments matching `input_schema`."
                 },
                 "power_catalog": [
                     "code / code_edit / ast_search / symbol_*: symbols and structured code nav",

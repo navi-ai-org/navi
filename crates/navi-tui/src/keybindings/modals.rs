@@ -2103,7 +2103,7 @@ fn open_bg_model_picker(app: &mut TuiApp) {
     super::replace_modal(app, ModalKind::BgModelPicker);
 }
 
-const BG_MODEL_TASKS: &[(&str, &str)] = &[
+pub(crate) const BG_MODEL_TASKS: &[(&str, &str)] = &[
     ("repo_search", "Repository exploration"),
     ("subagent_research", "Research subagents"),
 ];
