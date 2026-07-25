@@ -180,7 +180,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::High,
                 is_read_only: false,
                 is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec![
                     "browser.navigate".to_string(),
                     "network.external".to_string(),
@@ -219,7 +219,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 risk: crate::tool::ToolRisk::Low,
                 is_read_only: true,
                 is_concurrency_safe: true,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec!["repo.read".to_string(), "code.analyze".to_string()],
                 tags: vec!["code", "symbols", "analysis"]
                     .into_iter()
@@ -237,7 +237,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 is_read_only: false,
                 is_concurrency_safe: false,
                 supports_rollback: true,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec!["repo.write".to_string(), "code.edit".to_string()],
                 tags: vec!["code", "edit", "symbol"]
                     .into_iter()
@@ -255,7 +255,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 is_read_only: false,
                 is_concurrency_safe: false,
                 supports_rollback: true,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec![
                     "repo.read".to_string(),
                     "repo.write.src".to_string(),
@@ -471,7 +471,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 // Nested agent turns are exclusive: parallel subagent storms
                 // hang approvals and burn provider credits.
                 is_concurrency_safe: false,
-                exposure: crate::tool::ToolExposure::Deferred,
+                exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec!["agent.spawn".to_string()],
                 tags: vec!["agent", "subprocess"]
                     .into_iter()
@@ -690,6 +690,11 @@ mod tests {
             "tool_search",
             "memory",
             "set_session_title",
+            "code",
+            "code_edit",
+            "code_exec",
+            "browser",
+            "subagent",
         ] {
             let meta = builtin_metadata(name, ToolKind::Read);
             assert_eq!(
@@ -717,14 +722,7 @@ mod tests {
                 "{name} should be Hidden"
             );
         }
-        for name in [
-            "code",
-            "code_edit",
-            "ast_search",
-            "repo_explore",
-            "browser",
-            "subagent",
-        ] {
+        for name in ["ast_search", "repo_explore"] {
             let meta = builtin_metadata(name, ToolKind::Read);
             assert_eq!(
                 meta.exposure,

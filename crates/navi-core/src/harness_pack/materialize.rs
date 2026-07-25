@@ -196,14 +196,14 @@ fn default_capability_inventory() -> CapabilityInventory {
             "skill_list",
             "skill_get",
             "load_skill",
-        ],
-        [
             "browser",
             "code",
             "code_edit",
             "code_exec",
-            "repo_explore",
             "subagent",
+        ],
+        [
+            "repo_explore",
             "workflow",
             "ast_search",
             "symbol_goto",

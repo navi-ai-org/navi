@@ -294,10 +294,10 @@ fn build_system_prompt_inner(
             "Inspection decision tree (pick the cheapest tool that answers the question):\n",
             "1. Text/nav: `search` (action=grep|list|tree|find|stat). Prefer over grep/list_dir/glob aliases.\n",
             "2. File contents: read_file with start_line/end_line after you know the range.\n",
-            "3. Structure/symbols: if needed, discover `code` / symbol tools via tool_search first.\n",
+            "3. Structure/symbols: use `code` / symbol tools directly, or call tool_search for `ast_search` / `symbol_*` schemas.\n",
             "4. Avoid broad sweeps and re-reading the same region.\n",
             "\n",
-            "Power tools (not always in the schema — discover with tool_search, then call by name):\n",
+            "Power tools (in the schema alongside core tools; use them purposefully):\n",
             "- code / code_edit / ast_search / symbol_*: symbols, AST, overview, rename\n",
             "- repo_explore: BM25 semantic repo search\n",
             "- browser: headless UI testing\n",
@@ -311,8 +311,8 @@ fn build_system_prompt_inner(
             "- Edits: prefer `edit` (old_string→new_string; use `edits`[] for multiple replaces in one\n",
             "  file). Use `write_file` for whole-file create/overwrite. Prefer `search` for repo nav.\n",
             "  Do not use bash/python to edit files. Do not dump files with sed/cat/head/rg via bash —\n",
-            "  use read_file/search. Power tools (apply_patch, code, …) are deferred.\n",
-            "- Symbol-level edits: discover code_edit via tool_search when needed.\n",
+            "  use read_file/search. Power tools (apply_patch, code, …) are available when needed.\n",
+            "- Symbol-level edits: use code_edit for symbol-level changes.\n",
             "- Use bash for dependency management (install/add/update) in the project root.\n",
             "- bash for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
             "- Prefer project-relative paths. Writes and commands may require approval.\n",
@@ -334,7 +334,7 @@ fn build_system_prompt_inner(
     if tools_enabled {
         prompt.push_str(
             "Discovery:\
-             - Use `tool_search` to load schemas for deferred power tools (code, browser, …).\
+             - Use `tool_search` to load schemas for deferred tools (ast_search, symbol_*, repo_explore, …).\
              - After tool_search, call the returned tool by name with matching arguments.\
              - Unknown-tool errors include suggestions; prefer those over inventing bash workarounds.\n",
         );

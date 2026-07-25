@@ -31,14 +31,14 @@ fn default_tool_meta() -> Vec<(String, ToolExposure)> {
         "skill_list",
         "skill_get",
         "skill_delete",
-    ];
-    let deferred = [
         "browser",
         "code",
         "code_edit",
         "code_exec",
-        "repo_explore",
         "subagent",
+    ];
+    let deferred = [
+        "repo_explore",
         "workflow",
         "ast_search",
         "symbol_goto",

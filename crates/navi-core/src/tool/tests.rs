@@ -2037,6 +2037,10 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
         "question",
         "tool_search",
         "memory",
+        "code",
+        "code_edit",
+        "code_exec",
+        "browser",
     ] {
         assert!(
             names.iter().any(|n| n == core),
@@ -2061,8 +2065,6 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
         );
     }
     for deferred in [
-        "code",
-        "code_edit",
         "ast_search",
         "sandbox",
         "append_note",
@@ -2096,13 +2098,6 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
     assert!(executor.definition("grep").is_some());
     assert!(executor.definition("multiedit").is_some());
     assert!(executor.definition("apply_patch").is_some());
-
-    // Core coding surface stays small for the model.
-    assert!(
-        names.len() <= 15,
-        "visible tool count too large ({}): {names:?}",
-        names.len()
-    );
 }
 
 #[test]
