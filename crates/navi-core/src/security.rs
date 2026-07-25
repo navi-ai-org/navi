@@ -1385,25 +1385,6 @@ fn collect_perl_in_place_targets(
     index
 }
 
-fn extract_shell_path_mentions(command: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-    for token in shell_tokens(command) {
-        if is_shell_command_separator(&token) || is_output_redirection_operator(&token) {
-            continue;
-        }
-        if let Some(target) = attached_output_redirection_target(&token) {
-            push_unique_string(&mut paths, &target);
-            continue;
-        }
-        if let Some(path) = clean_shell_target(&token)
-            && looks_like_path(&path)
-        {
-            push_unique_string(&mut paths, &path);
-        }
-    }
-    paths
-}
-
 fn shell_tokens(command: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut token = String::new();
@@ -1539,16 +1520,6 @@ fn is_dynamic_shell_target(target: &str) -> bool {
 
 fn is_shell_command_separator(token: &str) -> bool {
     matches!(token, "|" | "||" | "&&" | ";" | "&")
-}
-
-fn looks_like_path(token: &str) -> bool {
-    token.starts_with('/')
-        || token.starts_with("./")
-        || token.starts_with("../")
-        || token.starts_with("~/")
-        || token.starts_with("$HOME/")
-        || token.starts_with("${HOME}/")
-        || token.contains('/')
 }
 
 fn command_token_name(token: &str) -> &str {

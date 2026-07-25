@@ -9,8 +9,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::types::{
-    ModelCapability, ModelPricing, Profile, RankedModel, RegistryAttachments, RegistryManifest,
-    RegistryModel, RegistryProvider, RegistryTranscriptionProvider,
+    ModelCapability, ModelPricing, RegistryAttachments, RegistryManifest, RegistryModel,
+    RegistryProvider, RegistryTranscriptionProvider,
 };
 
 /// Marker written to `providers.sha256` when models were populated from a
@@ -211,23 +211,6 @@ impl RegistryStore {
                 output_price REAL,
                 currency    TEXT NOT NULL DEFAULT 'USD',
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS model_profiles (
-                model_id    TEXT NOT NULL,
-                provider_id TEXT NOT NULL,
-                profile_id  TEXT NOT NULL,
-                score       REAL NOT NULL DEFAULT 0.0,
-                PRIMARY KEY (model_id, profile_id),
-                FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
-            );
-
-            CREATE TABLE IF NOT EXISTS profiles (
-                id              TEXT PRIMARY KEY,
-                description     TEXT NOT NULL DEFAULT '',
-                min_context     INTEGER,
-                max_input_price REAL,
-                requires_tools  INTEGER NOT NULL DEFAULT 0
             );
 
             -- Remote speech-to-text / dictation providers (JSON blob + integrity hash).
@@ -1047,127 +1030,6 @@ impl RegistryStore {
             Some(Ok(p)) => Ok(Some(p)),
             _ => Ok(None),
         }
-    }
-
-    // ── Profiles CRUD ───────────────────────────────────────────────────
-
-    /// Upserts a profile definition.
-    pub fn upsert_profile(&self, profile: &Profile) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT OR REPLACE INTO profiles (id, description, min_context, max_input_price, requires_tools)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![
-                profile.id,
-                profile.description,
-                profile.min_context.map(|v| v as i64),
-                profile.max_input_price,
-                profile.requires_tools as i64,
-            ],
-        )?;
-        Ok(())
-    }
-
-    /// Upserts a model-profile association.
-    pub fn upsert_model_profile(
-        &self,
-        model_id: &str,
-        provider_id: &str,
-        profile_id: &str,
-        score: f64,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT OR REPLACE INTO model_profiles (model_id, provider_id, profile_id, score)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![model_id, provider_id, profile_id, score],
-        )?;
-        Ok(())
-    }
-
-    /// Queries for models matching a profile, ranked by score and price.
-    ///
-    /// Returns models that satisfy the profile's constraints (min context, max price,
-    /// tool support) ordered by score descending, then input price ascending.
-    pub fn query_models_by_profile(&self, profile_id: &str) -> Result<Vec<RankedModel>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
-            "SELECT
-                mp.model_id,
-                mp.provider_id,
-                m.name,
-                mp.score,
-                pr.input_price,
-                pr.output_price,
-                m.context_window_tokens
-             FROM model_profiles mp
-             JOIN models m ON m.provider_id = mp.provider_id AND m.name = (
-                SELECT SUBSTR(mp.model_id, INSTR(mp.model_id, ':') + 1)
-             )
-             LEFT JOIN model_pricing pr ON pr.model_id = mp.model_id
-             LEFT JOIN profiles p ON p.id = mp.profile_id
-             WHERE mp.profile_id = ?1
-               AND (p.min_context IS NULL OR m.context_window_tokens >= p.min_context)
-               AND (p.max_input_price IS NULL OR pr.input_price IS NULL OR pr.input_price <= p.max_input_price)
-               AND (p.requires_tools = 0 OR m.supports_thinking IS NOT NULL)
-             ORDER BY mp.score DESC, pr.input_price ASC, pr.output_price ASC",
-        )?;
-        let rows = stmt
-            .query_map(params![profile_id], |row| {
-                Ok(RankedModel {
-                    model_id: row.get(0)?,
-                    provider_id: row.get(1)?,
-                    model_name: row.get(2)?,
-                    score: row.get(3)?,
-                    input_price: row.get(4)?,
-                    output_price: row.get(5)?,
-                    context_window_tokens: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    /// Seeds the default built-in profile definitions.
-    pub fn seed_default_profiles(&self) -> Result<()> {
-        let defaults = vec![
-            Profile {
-                id: "repo_search".to_string(),
-                description: "Fast repository exploration".to_string(),
-                min_context: Some(64_000),
-                max_input_price: Some(0.50),
-                requires_tools: true,
-            },
-            Profile {
-                id: "subagent_research".to_string(),
-                description: "Research-oriented subagent".to_string(),
-                min_context: Some(64_000),
-                max_input_price: Some(1.00),
-                requires_tools: true,
-            },
-        ];
-        for profile in &defaults {
-            self.upsert_profile(profile)?;
-        }
-        Ok(())
-    }
-
-    /// Deletes all capabilities, pricing, and model-profile entries for a provider.
-    pub fn delete_provider_metadata(&self, provider_id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "DELETE FROM model_capabilities WHERE provider_id = ?1",
-            params![provider_id],
-        )?;
-        conn.execute(
-            "DELETE FROM model_pricing WHERE provider_id = ?1",
-            params![provider_id],
-        )?;
-        conn.execute(
-            "DELETE FROM model_profiles WHERE provider_id = ?1",
-            params![provider_id],
-        )?;
-        Ok(())
     }
 }
 
@@ -2025,108 +1887,6 @@ mod tests {
         let store = RegistryStore::open_memory().expect("open");
         let loaded = store.load_pricing("nonexistent:model").expect("load");
         assert!(loaded.is_none());
-    }
-
-    #[test]
-    fn profiles_seed_and_query() {
-        let store = RegistryStore::open_memory().expect("open");
-        store.upsert_provider(&sample_provider()).expect("upsert");
-
-        let model_id = "test-provider:test-model-large";
-        store
-            .upsert_pricing(model_id, "test-provider", Some(0.10), Some(0.30))
-            .expect("pricing");
-        store
-            .upsert_model_profile(model_id, "test-provider", "repo_search", 0.9)
-            .expect("profile");
-
-        store.seed_default_profiles().expect("seed profiles");
-
-        let ranked = store.query_models_by_profile("repo_search").expect("query");
-        assert!(!ranked.is_empty());
-        assert_eq!(ranked[0].model_id, model_id);
-        assert_eq!(ranked[0].score, 0.9);
-    }
-
-    #[test]
-    fn query_respects_min_context_filter() {
-        let store = RegistryStore::open_memory().expect("open");
-
-        // Insert a provider with a small-context model.
-        let provider = RegistryProvider {
-            id: "tiny".to_string(),
-            label: "Tiny".to_string(),
-            description: String::new(),
-            kind: "openai-chat-completions".to_string(),
-            api_key_env: "TINY_KEY".to_string(),
-            base_url: None,
-            extends: None,
-            tool_calling_mode: None,
-            aggregator: false,
-            defaults: Default::default(),
-            request_options: Default::default(),
-            models: vec![RegistryModel {
-                model_ref: None,
-                api_name: None,
-                name: "tiny-model".to_string(),
-                task_size: Some("small".to_string()),
-                context_window_tokens: Some(4_000),
-                max_output_tokens: None,
-                recommended_temperature: None,
-                supports_thinking: None,
-                reasoning_levels: Vec::new(),
-                default_reasoning_effort: None,
-                supports_attachments: None,
-                supports_images: None,
-                supports_audio: None,
-                supports_video: None,
-                supports_documents: None,
-                attachments: Default::default(),
-                capabilities: Vec::new(),
-                pricing: None,
-            }],
-        };
-        store.upsert_provider(&provider).expect("upsert");
-
-        let model_id = "tiny:tiny-model";
-        store
-            .upsert_model_profile(model_id, "tiny", "repo_search", 1.0)
-            .expect("profile");
-
-        store.seed_default_profiles().expect("seed");
-
-        // repo_search requires min_context 64k, tiny-model has 4k.
-        let ranked = store.query_models_by_profile("repo_search").expect("query");
-        assert!(
-            ranked.is_empty(),
-            "tiny-model should be filtered out by min_context"
-        );
-    }
-
-    #[test]
-    fn delete_provider_metadata_cascades() {
-        let store = RegistryStore::open_memory().expect("open");
-        store.upsert_provider(&sample_provider()).expect("upsert");
-
-        let model_id = "test-provider:test-model-large";
-        store
-            .upsert_capabilities(model_id, "test-provider", &[("fast".into(), "true".into())])
-            .expect("caps");
-        store
-            .upsert_pricing(model_id, "test-provider", Some(0.10), Some(0.30))
-            .expect("pricing");
-        store
-            .upsert_model_profile(model_id, "test-provider", "repo_search", 0.9)
-            .expect("profile");
-
-        store
-            .delete_provider_metadata("test-provider")
-            .expect("delete");
-
-        assert!(store.load_capabilities(model_id).unwrap().is_empty());
-        assert!(store.load_pricing(model_id).unwrap().is_none());
-        let ranked = store.query_models_by_profile("repo_search").unwrap();
-        assert!(ranked.is_empty());
     }
 
     #[test]

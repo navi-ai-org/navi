@@ -27,43 +27,6 @@ pub struct ModelPricing {
     pub currency: String,
 }
 
-/// Associates a model with a routing profile and a quality score.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelProfileEntry {
-    /// Composite key: `"provider_id:model_name"`.
-    pub model_id: String,
-    pub provider_id: String,
-    /// Profile identifier (e.g. "repo_search", "subagent_research").
-    pub profile_id: String,
-    /// Higher = better fit for this profile.
-    pub score: f64,
-}
-
-/// A named routing profile that defines constraints for model selection.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    pub id: String,
-    pub description: String,
-    /// Minimum context window required (tokens).
-    pub min_context: Option<u64>,
-    /// Maximum input price per 1M tokens (cost ceiling).
-    pub max_input_price: Option<f64>,
-    /// Whether the model must support tool calling.
-    pub requires_tools: bool,
-}
-
-/// A model ranked by a profile query, ready for selection.
-#[derive(Debug, Clone)]
-pub struct RankedModel {
-    pub model_id: String,
-    pub provider_id: String,
-    pub model_name: String,
-    pub score: f64,
-    pub input_price: Option<f64>,
-    pub output_price: Option<f64>,
-    pub context_window_tokens: Option<u64>,
-}
-
 /// Attachment modalities a provider or model accepts directly.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryAttachments {

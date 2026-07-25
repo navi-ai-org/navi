@@ -125,7 +125,7 @@ Most “coding agents” are a chat UI glued to a few tools. **NAVI is an agent 
 | **One engine, many surfaces** | TUI · headless CLI · `navi-lite` (edge) · Rust SDK · Node (`@navi-agent/napi`) |
 | **Portable binary** | ~musl Linux for containers · macOS · Windows · under ~35&nbsp;MB RAM per instance |
 
-**Not a wrapper.** Built-in tools include file R/W, apply-patch, grep, bash, test/build runners, package manager, and sub-agents — sandboxed and auditable.
+**Not a wrapper.** Built-in tools include file R/W, apply-patch, grep, bash, test/build runners, and sub-agents — sandboxed and auditable.
 
 ---
 

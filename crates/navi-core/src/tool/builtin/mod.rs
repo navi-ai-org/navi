@@ -55,7 +55,7 @@ pub(super) use sandbox_tool::SandboxTool;
 pub(super) use search_tool::SearchTool;
 pub(super) use skill_manage::{SkillDeleteTool, SkillGetTool, SkillListTool};
 pub(super) use skill_tool::SkillTool;
-pub use subagent::{ProviderBuilderFn, SubagentOptions, SubagentTool};
+pub use subagent::{SubagentOptions, SubagentTool};
 pub use workflow::{
     AgentBackend, MockAgentBackend, PolicyAgentBackend, SubagentBridgeBackend, WorkerProbeBackend,
     WorkflowTool, workflow_tool_description,

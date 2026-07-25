@@ -10,10 +10,9 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::helpers;
-use crate::background_model::BackgroundModelResolver;
 use crate::cancel::CancelToken;
 use crate::compact::CompactState;
-use crate::config::{HarnessConfig, LoadedConfig, NaviConfig};
+use crate::config::{HarnessConfig, NaviConfig};
 use crate::event::{AgentEvent, ApprovalDecision, SubagentTranscriptItem, SubagentTranscriptKind};
 use crate::model::{ModelMessage, ModelProvider, ModelRole};
 use crate::prompt::PromptCache;
@@ -42,10 +41,6 @@ const MAX_BACKGROUND_SUBAGENTS: usize = 8;
 /// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
 const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "workflow"];
 
-/// Callback for building a `ModelProvider` from a `LoadedConfig`.
-pub type ProviderBuilderFn =
-    dyn Fn(&LoadedConfig) -> anyhow::Result<Arc<dyn ModelProvider>> + Send + Sync;
-
 pub struct SubagentTool {
     tool_executor: Weak<crate::tool::ToolExecutor>,
     model_provider: Arc<RwLock<Arc<dyn ModelProvider>>>,
@@ -53,18 +48,11 @@ pub struct SubagentTool {
     model_name: Arc<RwLock<String>>,
     harness_config: HarnessConfig,
     config: Arc<RwLock<NaviConfig>>,
-    /// Kept for constructor API stability. Nested turns use a fresh cache so
-    /// parent session prefix-cache keys are not poisoned by subagent prompts.
-    _prompt_cache: Arc<PromptCache>,
     components: RuntimeComponents,
     background_tasks: tokio::sync::Mutex<HashMap<String, Arc<SubagentBackgroundTask>>>,
     next_task_id: AtomicU64,
-    /// Optional resolver for selecting background models by profile.
-    background_resolver: Option<Arc<BackgroundModelResolver>>,
-    /// Data directory for building providers.
+    /// Data directory used when building subagent context.
     data_dir: std::path::PathBuf,
-    /// Callback for building a provider from config.
-    provider_builder: Option<Arc<ProviderBuilderFn>>,
 }
 
 impl SubagentTool {
@@ -76,7 +64,6 @@ impl SubagentTool {
         model_name: Arc<RwLock<String>>,
         harness_config: HarnessConfig,
         config: Arc<RwLock<NaviConfig>>,
-        prompt_cache: Arc<PromptCache>,
         components: RuntimeComponents,
     ) -> Self {
         Self {
@@ -87,26 +74,10 @@ impl SubagentTool {
             model_name,
             harness_config,
             config,
-            _prompt_cache: prompt_cache,
             components,
             background_tasks: tokio::sync::Mutex::new(HashMap::new()),
             next_task_id: AtomicU64::new(1),
-            background_resolver: None,
-            provider_builder: None,
         }
-    }
-
-    /// Sets the background model resolver for profile-based model selection.
-    pub fn with_background_resolver(
-        mut self,
-        resolver: Arc<BackgroundModelResolver>,
-        data_dir: std::path::PathBuf,
-        provider_builder: Arc<ProviderBuilderFn>,
-    ) -> Self {
-        self.background_resolver = Some(resolver);
-        self.data_dir = data_dir;
-        self.provider_builder = Some(provider_builder);
-        self
     }
 }
 
@@ -246,11 +217,6 @@ impl Tool for SubagentTool {
                         "type": "string",
                         "description": "Additional context or constraints for the subagent (optional)."
                     },
-                    "profile": {
-                        "type": "string",
-                        "enum": ["repo_search", "subagent_research"],
-                        "description": "Model profile to use for this subagent. repo_search: repository exploration; subagent_research: research-oriented subagent. Omit to use the main agent's model."
-                    },
                     "options": {
                         "type": "object",
                         "description": "Subagent behavior options: model override and optional path deny list.",
@@ -317,7 +283,6 @@ impl Tool for SubagentTool {
             helpers::optional_bool(&invocation.input, "background").unwrap_or(false);
         let prompt = helpers::required_string(&invocation.input, "prompt")?.to_string();
         let description = helpers::optional_string(&invocation.input, "description");
-        let profile = helpers::optional_string(&invocation.input, "profile");
         let options = parse_subagent_options(&invocation.input);
 
         if is_background {
@@ -326,7 +291,6 @@ impl Tool for SubagentTool {
                     invocation.id,
                     prompt,
                     description,
-                    profile,
                     options,
                     context.event_tx,
                     context.cancel_token,
@@ -338,7 +302,6 @@ impl Tool for SubagentTool {
             invocation.id,
             prompt,
             description,
-            profile,
             options,
             context.event_tx,
             context.cancel_token,
@@ -353,7 +316,6 @@ impl SubagentTool {
         invocation_id: String,
         prompt: String,
         description: Option<String>,
-        profile: Option<String>,
         options: SubagentOptions,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
         parent_cancel: Option<CancelToken>,
@@ -364,8 +326,8 @@ impl SubagentTool {
             .context("subagent tool executor has been dropped")?;
         let started = Instant::now();
 
-        // Resolve model provider based on profile.
-        let (provider, model) = self.resolve_model_for_profile(profile.as_deref());
+        // Resolve model provider based on options.
+        let (provider, model) = self.resolve_model(&options);
 
         // Subagents run in yolo mode with all parent tools except nested spawners.
         let tool_executor = build_subagent_executor(&executor, options.path_deny.as_deref())?;
@@ -460,7 +422,6 @@ impl SubagentTool {
         invocation_id: String,
         prompt: String,
         description: Option<String>,
-        profile: Option<String>,
         options: SubagentOptions,
         parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
         parent_cancel: Option<CancelToken>,
@@ -509,9 +470,8 @@ impl SubagentTool {
         });
         tasks.insert(task_id.clone(), task.clone());
 
-        // Resolve model provider based on profile.
-        let (resolved_provider, resolved_model) =
-            self.resolve_model_for_profile(profile.as_deref());
+        // Resolve model provider based on options.
+        let (resolved_provider, resolved_model) = self.resolve_model(&options);
         let model_provider = Arc::new(RwLock::new(resolved_provider));
         let model_name = Arc::new(RwLock::new(resolved_model));
         let components = self.components.clone();
@@ -687,42 +647,16 @@ impl SubagentTool {
         )
     }
 
-    /// Resolves a model provider and name for the given profile. Falls back to
-    /// the main agent's model when no profile is specified or resolution fails.
-    fn resolve_model_for_profile(&self, profile: Option<&str>) -> (Arc<dyn ModelProvider>, String) {
-        let Some(profile) = profile else {
-            return self.main_model();
-        };
-
-        let Some(ref resolver) = self.background_resolver else {
-            return self.main_model();
-        };
-
-        let Some(ref builder) = self.provider_builder else {
-            return self.main_model();
-        };
-
-        let resolved = resolver.resolve(profile);
-
-        // Build a provider for the resolved model.
-        let config_snapshot = self
-            .config
-            .read()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let mut bg_config = config_snapshot.clone();
-        bg_config.model.provider = resolved.provider_id.clone();
-        bg_config.model.name = resolved.model_name.clone();
-        let bg_loaded = LoadedConfig {
-            config: bg_config,
-            global_config_path: None,
-            project_config_path: None,
-            data_dir: self.data_dir.clone(),
-        };
-
-        match builder(&bg_loaded) {
-            Ok(provider) => (provider, resolved.model_name),
-            Err(_) => self.main_model(),
+    /// Resolves a model provider and name for the subagent.
+    ///
+    /// If `options.model` is set, the main agent's provider is reused with the
+    /// requested model name. Otherwise the main agent's model is used.
+    fn resolve_model(&self, options: &SubagentOptions) -> (Arc<dyn ModelProvider>, String) {
+        let (provider, model) = self.main_model();
+        if let Some(override_model) = options.model.as_deref() {
+            (provider, override_model.to_string())
+        } else {
+            (provider, model)
         }
     }
 
@@ -1133,7 +1067,6 @@ mod tests {
             Arc::new(RwLock::new("test".into())),
             HarnessConfig::default(),
             Arc::new(RwLock::new(NaviConfig::default())),
-            Arc::new(PromptCache::new()),
             RuntimeComponents::default(),
         );
         let schema = tool.definition().input_schema;
@@ -1243,7 +1176,6 @@ mod tests {
             Arc::new(RwLock::new("test".into())),
             HarnessConfig::default(),
             Arc::new(RwLock::new(NaviConfig::default())),
-            Arc::new(PromptCache::new()),
             RuntimeComponents::default(),
         )));
         // Simulated names to verify filtering.

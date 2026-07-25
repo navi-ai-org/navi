@@ -48,8 +48,6 @@ pub mod turn;
 pub mod update;
 pub mod verifier;
 
-pub mod background_model;
-
 pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,
@@ -178,10 +176,10 @@ pub use skills::{
 pub use tool::background::{BackgroundCommandSnapshot, BackgroundTaskStatus};
 pub use tool::registry::{ToolRegistry, ToolSet, phases};
 pub use tool::{
-    AgentBackend, MockAgentBackend, PolicyAgentBackend, ProviderBuilderFn, RepoExploreTool,
-    SubagentBridgeBackend, SubagentOptions, SubagentTool, Tool, ToolDefinition, ToolExecutor,
-    ToolExposure, ToolInvocation, ToolKind, ToolMetadata, ToolResult, ToolRisk, WorkerProbeBackend,
-    WorkflowTool, capabilities, workflow_tool_description,
+    AgentBackend, MockAgentBackend, PolicyAgentBackend, RepoExploreTool, SubagentBridgeBackend,
+    SubagentOptions, SubagentTool, Tool, ToolDefinition, ToolExecutor, ToolExposure,
+    ToolInvocation, ToolKind, ToolMetadata, ToolResult, ToolRisk, WorkerProbeBackend, WorkflowTool,
+    capabilities, workflow_tool_description,
 };
 pub use trace::{
     ApprovalTrace, ToolCallTrace, TraceStore, TurnMetrics, TurnOutcome, TurnTrace, VerifierTrace,
@@ -192,7 +190,6 @@ pub use update::{
     version_is_newer,
 };
 
-pub use background_model::{BackgroundModelResolver, ResolvedBackgroundModel};
 pub use benchmark::{
     BenchAgentConfig, BenchCase, BenchCaseMetrics, BenchCaseResult, BenchCompareConfig,
     BenchComparison, BenchRun, BenchRunMetrics, BenchSuite, aggregate_bench_metrics,

@@ -462,7 +462,6 @@ mod tests {
     use super::*;
     use crate::config::{HarnessConfig, NaviConfig};
     use crate::model::{ModelProvider, ModelRequest, ModelStream};
-    use crate::prompt::PromptCache;
     use crate::runtime_components::RuntimeComponents;
     use crate::tool::Tool;
     use crate::tool::builtin::SubagentTool;
@@ -486,7 +485,6 @@ mod tests {
             Arc::new(RwLock::new("test".into())),
             HarnessConfig::default(),
             Arc::new(RwLock::new(NaviConfig::default())),
-            Arc::new(PromptCache::new()),
             RuntimeComponents::default(),
         );
         tool.definition().input_schema

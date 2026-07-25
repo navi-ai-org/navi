@@ -22,11 +22,6 @@ Do NOT extract secrets, temporary errors, or facts obvious from the code.
 Return a JSON array of objects with: id (snake_case), type, name, description, body (1-3 sentences).
 If nothing worth remembering, return []. Output ONLY the JSON array — no markdown fences."#;
 
-/// User payload template (data only; identity lives in EXTRACT_SYSTEM).
-const EXTRACT_USER: &str = r#"Conversation turn to analyze:
-
-{conversation}"#;
-
 /// A memory extracted by the model.
 #[derive(Debug, Clone, Deserialize)]
 struct ExtractedMemory {
@@ -36,28 +31,6 @@ struct ExtractedMemory {
     name: String,
     description: String,
     body: String,
-}
-
-/// Runs memory extraction on a completed turn in background.
-///
-/// `conversation` is the user task + assistant response text.
-/// `model_provider` and `model_name` are used for the extraction call.
-/// `store` is the auto-memory SQLite store to write to.
-///
-/// This function is designed to be called via `tokio::spawn` — it should
-/// never panic or propagate errors to the caller.
-pub async fn extract_memories(
-    conversation: &str,
-    model_provider: &dyn ModelProvider,
-    model_name: &str,
-    store: &AutoMemoryStore,
-) -> Result<usize> {
-    // Sanitize conversation to prevent prompt injection in the template
-    let sanitized = conversation.replace("{conversation}", "[conversation]");
-    let user = EXTRACT_USER.replace("{conversation}", &sanitized);
-
-    let messages = vec![ModelMessage::user(user)];
-    extract_memories_from_messages(messages, model_provider, model_name, store).await
 }
 
 /// Runs memory extraction reusing an existing message history.
@@ -139,8 +112,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_prompt_has_placeholder() {
-        assert!(EXTRACT_USER.contains("{conversation}"));
+    fn test_extract_system_has_json_array() {
         assert!(EXTRACT_SYSTEM.contains("JSON array"));
     }
 
@@ -196,8 +168,11 @@ mod tests {
             response: r#"[{"id":"redis_tests","type":"feedback","name":"Redis for Tests","description":"Need Redis running","body":"Start Redis before running tests"}]"#.to_string(),
         };
 
-        let result = extract_memories(
-            "User: fix the tests\n\nAssistant: I found that Redis needs to be running",
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user(
+                "User: fix the tests\n\nAssistant: I found that Redis needs to be running"
+                    .to_string(),
+            )],
             &provider,
             "test-model",
             &store,
@@ -234,9 +209,14 @@ mod tests {
             response: r#"[{"id":"redis_tests","type":"feedback","name":"New","description":"New","body":"New body"}]"#.to_string(),
         };
 
-        let result = extract_memories("test", &provider, "model", &store)
-            .await
-            .unwrap();
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("test".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
 
         // Should skip because it already exists
         assert_eq!(result, 0);
@@ -256,9 +236,14 @@ mod tests {
             response: "[]".to_string(),
         };
 
-        let result = extract_memories("nothing useful", &provider, "model", &store)
-            .await
-            .unwrap();
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("nothing useful".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result, 0);
     }
@@ -273,9 +258,14 @@ mod tests {
             response: "This is not JSON at all".to_string(),
         };
 
-        let result = extract_memories("test", &provider, "model", &store)
-            .await
-            .unwrap();
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("test".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result, 0);
     }
@@ -294,9 +284,14 @@ mod tests {
 "#.to_string(),
         };
 
-        let result = extract_memories("User: I like dark mode", &provider, "model", &store)
-            .await
-            .unwrap();
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("User: I like dark mode".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result, 1);
         let entry = store.get("pref_dark").unwrap().unwrap();

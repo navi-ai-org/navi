@@ -33,9 +33,8 @@ pub use inherit::{
 pub use resolve::{ModelCatalog, resolve_provider_refs};
 pub use store::{LOCAL_API_SYNC_SHA, RegistryStore, registry_provider_to_config};
 pub use types::{
-    CanonicalModel, ModelCapability, ModelPricing, ModelProfileEntry, Profile, RankedModel,
-    RegistryTranscriptionModel, RegistryTranscriptionProvider, TranscriptionModelPricing,
-    TranscriptionProviderKind,
+    CanonicalModel, ModelCapability, ModelPricing, RegistryTranscriptionModel,
+    RegistryTranscriptionProvider, TranscriptionModelPricing, TranscriptionProviderKind,
 };
 pub use update::{
     LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,

@@ -1709,7 +1709,6 @@ impl AgentRuntime {
                 self.shared_model_name.clone(),
                 self.loaded_config.config.harness.clone(),
                 self.shared_config.clone(),
-                self.prompt_cache.clone(),
                 self.runtime_components.clone(),
             );
             executor.register_tool(Arc::new(subagent));

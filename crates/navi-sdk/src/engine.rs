@@ -483,7 +483,6 @@ impl NaviEngine {
             loaded_config.config.model.name.clone(),
         ));
         let shared_config = Arc::new(std::sync::RwLock::new(loaded_config.config.clone()));
-        let prompt_cache = Arc::new(navi_core::PromptCache::new());
         if install_code_agent_extras {
             executor.register_skill_loader(
                 project_dir.clone(),
@@ -511,7 +510,6 @@ impl NaviEngine {
                     shared_model.clone(),
                     loaded_config.config.harness.clone(),
                     shared_config.clone(),
-                    prompt_cache.clone(),
                     runtime_components.clone(),
                 );
                 executor.register_tool(Arc::new(subagent));

@@ -732,7 +732,6 @@ fn production_constructor_is_subagent_bridge() {
 fn production_bridge_payload_validates_on_real_subagent_executor() {
     use crate::config::{HarnessConfig, NaviConfig};
     use crate::model::{ModelProvider, ModelRequest, ModelStream};
-    use crate::prompt::PromptCache;
     use crate::runtime_components::RuntimeComponents;
     use crate::tool::ToolExecutor;
     use crate::tool::builtin::SubagentTool;
@@ -759,7 +758,6 @@ fn production_bridge_payload_validates_on_real_subagent_executor() {
         Arc::new(RwLock::new("test".into())),
         HarnessConfig::default(),
         Arc::new(RwLock::new(NaviConfig::default())),
-        Arc::new(PromptCache::new()),
         RuntimeComponents::default(),
     );
     executor.register_tool(Arc::new(subagent));
@@ -818,7 +816,6 @@ fn production_bridge_payload_validates_on_real_subagent_executor() {
 fn production_bridge_executor(policy: SecurityPolicy) -> Arc<crate::tool::ToolExecutor> {
     use crate::config::{HarnessConfig, NaviConfig};
     use crate::model::{ModelProvider, ModelRequest, ModelStream};
-    use crate::prompt::PromptCache;
     use crate::runtime_components::RuntimeComponents;
     use crate::tool::ToolExecutor;
     use crate::tool::builtin::SubagentTool;
@@ -844,7 +841,6 @@ fn production_bridge_executor(policy: SecurityPolicy) -> Arc<crate::tool::ToolEx
             Arc::new(RwLock::new("test".into())),
             HarnessConfig::default(),
             Arc::new(RwLock::new(NaviConfig::default())),
-            Arc::new(PromptCache::new()),
             RuntimeComponents::default(),
         );
         executor.register_tool(Arc::new(subagent));
