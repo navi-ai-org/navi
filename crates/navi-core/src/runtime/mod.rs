@@ -25,7 +25,7 @@ use crate::model::{ModelMessage, ModelProvider, ModelResponse};
 use crate::runtime_components::RuntimeComponents;
 use crate::security::SecurityPolicy;
 use crate::session::{SessionId, SessionStore, current_unix_timestamp};
-use crate::session_title::SessionTitleHandle;
+use crate::session_title::{SessionTitleHandle, SessionTitleTool};
 use crate::skills::{
     SkillManifest, SkillPool, active_skills, discover_catalog_entries, discover_configured_skills,
 };
@@ -1685,6 +1685,9 @@ impl AgentRuntime {
             self.shared_config.clone(),
         );
         executor.set_rewind_store(Some(self.rewind_store.clone()));
+        executor.register_tool(std::sync::Arc::new(SessionTitleTool::new(
+            self.session_title_handle.clone(),
+        )));
 
         let workflow_config = self.loaded_config.config.workflow.clone();
         let workflow_policy = SecurityPolicy::new(

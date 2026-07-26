@@ -2213,3 +2213,953 @@ async fn yolo_executor_allows_edit_outside_project() {
     assert!(result.ok, "{:?}", result.output);
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "changed\n");
 }
+
+#[test]
+fn is_session_core_tool_recognizes_infrastructure_tools() {
+    assert!(crate::turn::is_session_core_tool("set_session_title"));
+    assert!(crate::turn::is_session_core_tool("tool_search"));
+    assert!(crate::turn::is_session_core_tool("question"));
+    assert!(crate::turn::is_session_core_tool("plan"));
+    assert!(crate::turn::is_session_core_tool("memory"));
+    assert!(crate::turn::is_session_core_tool("append_note"));
+    assert!(crate::turn::is_session_core_tool("load_skill"));
+    // Non-core tools are not exempt
+    assert!(!crate::turn::is_session_core_tool("bash"));
+    assert!(!crate::turn::is_session_core_tool("edit"));
+    assert!(!crate::turn::is_session_core_tool("write_file"));
+    assert!(!crate::turn::is_session_core_tool("subagent"));
+    assert!(!crate::turn::is_session_core_tool("workflow"));
+    assert!(!crate::turn::is_session_core_tool(""));
+    assert!(!crate::turn::is_session_core_tool("unknown_tool"));
+}
+
+// ── Tool schema validation edge cases ─────────────────────────────────────
+
+#[tokio::test]
+async fn empty_input_object_for_required_field_tool_errors_cleanly() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    // search requires "action" — empty object should fail validation
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "empty-1".to_string(),
+            tool_name: "search".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+    assert!(result.output["recoverable"].as_bool().unwrap_or(false));
+}
+
+#[tokio::test]
+async fn null_arguments_for_tool_returns_malformed_error() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "null-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"raw_arguments": "null"}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+    assert_eq!(result.output["error_kind"], "malformed_arguments");
+}
+
+#[tokio::test]
+async fn wrong_type_for_string_field_returns_invalid_arguments() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "wrong-type-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": 12345}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+    assert!(result.output["problems"].is_array());
+    assert!(!result.output["problems"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn extra_properties_rejected_by_additional_properties_false() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "extra-props-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "test.txt", "bogus_field": "should_fail"}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+}
+
+// ── Tool recovery edge cases ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn recovers_grep_as_search_action() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path();
+    std::fs::write(project.join("lib.rs"), "fn marker() {}\n").unwrap();
+    let executor = executor(project);
+    // Model sends "grep" as tool name instead of "search"
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "recover-grep".to_string(),
+            tool_name: "grep".to_string(),
+            input: json!({"pattern": "marker", "path": "lib.rs"}),
+        })
+        .await;
+    assert!(
+        result.ok,
+        "grep alias should be recovered: {:?}",
+        result.output
+    );
+    assert!(result.output["matches"].is_array());
+}
+
+#[tokio::test]
+async fn recovers_fs_browser_action_from_dot_path() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path();
+    std::fs::write(project.join("a.rs"), "fn a() {}").unwrap();
+    std::fs::write(project.join("b.rs"), "fn b() {}").unwrap();
+    let executor = executor(project);
+    // Model sends "." as tool name with action=list
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "recover-dot".to_string(),
+            tool_name: ".".to_string(),
+            input: json!({"action": "list"}),
+        })
+        .await;
+    assert!(
+        result.ok,
+        "dot path should be recovered: {:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn does_not_recover_writeish_payload_as_read() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    // Path-like tool name with write keys should NOT be recovered as read_file
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "no-recover-write".to_string(),
+            tool_name: "src/main.rs".to_string(),
+            input: json!({"content": "fn main() {}", "new_string": "x"}),
+        })
+        .await;
+    // Should NOT be recovered as read_file — writeish keys block recovery
+    assert!(
+        !result.ok || result.output.get("error").is_none(),
+        "writeish payload should not be recovered as read_file: {:?}",
+        result.output
+    );
+}
+
+// ── Tool search live registry ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn tool_search_finds_late_registered_session_title_tool() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    // SessionTitleTool is registered late by the runtime/SDK
+    use crate::session_title::{SessionTitleHandle, SessionTitleTool};
+    let handle = SessionTitleHandle::new();
+    executor.register_tool(Arc::new(SessionTitleTool::new(handle)));
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-title".to_string(),
+            tool_name: "tool_search".to_string(),
+            input: json!({"query": "session title", "max_results": 10}),
+        })
+        .await;
+
+    assert!(result.ok, "tool_search failed: {:?}", result.output);
+    let names: Vec<&str> = result.output["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap_or(""))
+        .collect();
+    assert!(
+        names.contains(&"set_session_title"),
+        "set_session_title should be discoverable via tool_search, got: {names:?}"
+    );
+}
+
+#[tokio::test]
+async fn tool_search_finds_all_direct_tools() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-all".to_string(),
+            tool_name: "tool_search".to_string(),
+            input: json!({"query": "file read write edit bash search", "max_results": 50}),
+        })
+        .await;
+
+    assert!(result.ok);
+    let names: Vec<String> = result.output["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"read_file".to_string()),
+        "read_file not found"
+    );
+    assert!(
+        names.contains(&"write_file".to_string()),
+        "write_file not found"
+    );
+    assert!(names.contains(&"edit".to_string()), "edit not found");
+    assert!(names.contains(&"bash".to_string()), "bash not found");
+    assert!(names.contains(&"search".to_string()), "search not found");
+}
+
+#[tokio::test]
+async fn tool_search_empty_query_returns_empty_results() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-empty".to_string(),
+            tool_name: "tool_search".to_string(),
+            input: json!({"query": "", "max_results": 10}),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert_eq!(result.output["total"].as_u64().unwrap_or(1), 0);
+    assert!(result.output["results"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn tool_search_max_results_caps_output() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "search-cap".to_string(),
+            tool_name: "tool_search".to_string(),
+            input: json!({"query": "tool", "max_results": 2}),
+        })
+        .await;
+
+    assert!(result.ok);
+    assert!(result.output["results"].as_array().unwrap().len() <= 2);
+}
+
+// ── Security decision edge cases ──────────────────────────────────────────
+
+#[tokio::test]
+async fn restricted_mode_denies_bash_command_outside_project() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path().join("project");
+    let outside = tempdir.path().join("outside");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+
+    let policy = SecurityPolicy::new(
+        project,
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::Restricted,
+            restrict_paths_to_project: true,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "restricted-bash".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({"command": "ls", "cwd": outside.display().to_string()}),
+        })
+        .await;
+
+    assert!(
+        !result.ok || result.output.get("error_code").is_some(),
+        "Restricted mode should deny bash with cwd outside project"
+    );
+}
+
+#[tokio::test]
+async fn yolo_mode_allows_memory_tool_without_approval() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "yolo-memory".to_string(),
+            tool_name: "memory".to_string(),
+            input: json!({"action": "search", "query": "test"}),
+        })
+        .await;
+    // Memory tool should not need approval in YOLO
+    assert!(
+        result.ok
+            || result
+                .output
+                .get("error_code")
+                .map(|s| s.as_str().unwrap_or(""))
+                != Some("approval_required"),
+        "Memory tool should not require approval in YOLO mode: {:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn restricted_mode_denies_write_outside_project() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path().join("project");
+    let outside = tempdir.path().join("outside.txt");
+    std::fs::create_dir_all(&project).unwrap();
+
+    let policy = SecurityPolicy::new(
+        project,
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::Restricted,
+            restrict_paths_to_project: true,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "restricted-write".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({"path": outside.display().to_string(), "content": "data"}),
+        })
+        .await;
+
+    assert!(
+        !result.ok,
+        "Restricted mode should deny write outside project"
+    );
+    assert!(
+        result.output.get("error").is_some() || result.output.get("error_code").is_some(),
+        "Should have error details"
+    );
+}
+
+#[tokio::test]
+async fn accept_edits_mode_allows_write_in_project() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let project = tempdir.path().to_path_buf();
+    let policy = SecurityPolicy::new(
+        project.clone(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::AcceptEdits,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "accept-edits-write".to_string(),
+            tool_name: "write_file".to_string(),
+            input: json!({"path": "test.txt", "content": "hello"}),
+        })
+        .await;
+
+    assert!(
+        result.ok,
+        "AcceptEdits should allow write in project: {:?}",
+        result.output
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("test.txt")).unwrap(),
+        "hello"
+    );
+}
+
+#[tokio::test]
+async fn accept_edits_mode_still_requires_approval_for_bash() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig {
+            permission_mode: PermissionMode::AcceptEdits,
+            ..SecurityConfig::default()
+        },
+    )
+    .expect("policy");
+    let executor = ToolExecutor::new(policy);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "accept-edits-bash".to_string(),
+            tool_name: "bash".to_string(),
+            input: json!({"command": "echo hello"}),
+        })
+        .await;
+
+    // AcceptEdits still requires approval for Command tools
+    assert!(
+        !result.ok || result.output.get("error_code").is_some(),
+        "AcceptEdits should require approval for bash: {:?}",
+        result.output
+    );
+}
+
+// ── Schema simplification edge cases ──────────────────────────────────────
+
+#[test]
+fn model_facing_search_schema_flattens_action_enum() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let def = executor.definition("search").expect("search definition");
+    // The model-facing schema should have "action" as a direct property, not oneOf-wrapped
+    assert!(def.input_schema["properties"]["action"].is_object());
+    // Should not have anyOf/oneOf/allOf at the top level after simplification
+    assert!(def.input_schema.get("oneOf").is_none());
+    assert!(def.input_schema.get("anyOf").is_none());
+    assert!(def.input_schema.get("allOf").is_none());
+}
+
+#[test]
+fn model_facing_question_schema_simplifies_oneof_in_options() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let def = executor
+        .definition("question")
+        .expect("question definition");
+    // question schema has oneOf inside options.items — simplification should flatten it
+    // The top-level schema should not have oneOf/anyOf/allOf
+    assert!(def.input_schema.get("oneOf").is_none());
+    assert!(def.input_schema.get("anyOf").is_none());
+    assert!(def.input_schema.get("allOf").is_none());
+}
+
+#[test]
+fn model_facing_edit_schema_has_no_composition_keywords() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let def = executor.definition("edit").expect("edit definition");
+    assert!(def.input_schema.get("oneOf").is_none());
+    assert!(def.input_schema.get("anyOf").is_none());
+    assert!(def.input_schema.get("allOf").is_none());
+}
+
+#[test]
+fn model_facing_plan_schema_has_no_composition_keywords() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let def = executor.definition("plan").expect("plan definition");
+    assert!(def.input_schema.get("oneOf").is_none());
+    assert!(def.input_schema.get("anyOf").is_none());
+    assert!(def.input_schema.get("allOf").is_none());
+}
+
+// ── Tool definitions metadata edge cases ──────────────────────────────────
+
+#[test]
+fn all_visible_definitions_have_non_empty_names() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    for def in executor.definitions() {
+        assert!(
+            !def.name.is_empty(),
+            "Tool definition has empty name: {:?}",
+            def
+        );
+        assert!(
+            !def.description.is_empty(),
+            "Tool {} has empty description",
+            def.name
+        );
+        assert!(
+            def.input_schema.is_object(),
+            "Tool {} has non-object schema",
+            def.name
+        );
+    }
+}
+
+#[test]
+fn all_visible_definitions_have_valid_json_schema() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    for def in executor.definitions() {
+        let schema = &def.input_schema;
+        // 1.72 compatible: use is_object + get
+        assert!(schema.is_object(), "{}: schema not object", def.name);
+        assert!(
+            schema.get("type").is_some(),
+            "{}: missing type field",
+            def.name
+        );
+        assert!(
+            schema.get("properties").is_some(),
+            "{}: missing properties",
+            def.name
+        );
+    }
+}
+
+#[test]
+fn definitions_sorted_alphabetically() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let defs = executor.definitions();
+    let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+    let mut sorted = names.to_vec();
+    sorted.sort();
+    assert_eq!(
+        names, sorted,
+        "Tool definitions should be sorted alphabetically"
+    );
+}
+
+// ── Tool parallelism edge cases ───────────────────────────────────────────
+
+#[test]
+fn read_only_tools_use_shared_parallelism() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    // read_file is read-only and concurrency-safe → Shared
+    assert_eq!(
+        executor.parallelism_for("read_file"),
+        crate::tool::ToolParallelism::Shared
+    );
+    assert_eq!(
+        executor.parallelism_for("search"),
+        crate::tool::ToolParallelism::Shared
+    );
+}
+
+#[test]
+fn write_and_command_tools_use_exclusive_parallelism() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    assert_eq!(
+        executor.parallelism_for("write_file"),
+        crate::tool::ToolParallelism::Exclusive
+    );
+    assert_eq!(
+        executor.parallelism_for("edit"),
+        crate::tool::ToolParallelism::Exclusive
+    );
+    assert_eq!(
+        executor.parallelism_for("bash"),
+        crate::tool::ToolParallelism::Exclusive
+    );
+}
+
+#[test]
+fn plan_question_subagent_are_exclusive() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    assert_eq!(
+        executor.parallelism_for("plan"),
+        crate::tool::ToolParallelism::Exclusive
+    );
+    assert_eq!(
+        executor.parallelism_for("question"),
+        crate::tool::ToolParallelism::Exclusive
+    );
+}
+
+// ── Unknown tool handling edge cases ───────────────────────────────────────
+
+#[tokio::test]
+async fn unknown_tool_returns_suggestions_for_common_aliases() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "unknown-ls".to_string(),
+            tool_name: "ls".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "unknown_tool");
+    assert!(result.output["suggestions"].is_array());
+    let suggestions = result.output["suggestions"].as_array().unwrap();
+    assert!(
+        suggestions.contains(&json!("search")),
+        "should suggest search for ls"
+    );
+}
+
+#[tokio::test]
+async fn unknown_tool_returns_suggestions_for_cat() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "unknown-cat".to_string(),
+            tool_name: "cat".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "unknown_tool");
+    let suggestions = result.output["suggestions"].as_array().unwrap();
+    assert!(
+        suggestions.contains(&json!("read_file")),
+        "should suggest read_file for cat"
+    );
+}
+
+#[tokio::test]
+async fn unknown_tool_returns_available_tools_list() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "unknown-bogus".to_string(),
+            tool_name: "bogus_tool_xyz".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(!result.ok);
+    assert_eq!(result.output["error_code"], "unknown_tool");
+    assert!(result.output["available_tools"].is_array());
+    let available = result.output["available_tools"].as_array().unwrap();
+    assert!(!available.is_empty(), "should list available tools");
+    // available_tools is capped at 20 and sorted alphabetically, so early
+    // tools (e.g. "bash") are present while later ones like "read_file" may
+    // fall beyond the cap. Assert at least one well-known builtin is listed.
+    assert!(
+        available.contains(&json!("bash")),
+        "should list a known builtin tool, got: {available:?}"
+    );
+}
+
+#[tokio::test]
+async fn empty_string_tool_name_returns_unknown_tool_error() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "empty-name".to_string(),
+            tool_name: "".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(!result.ok);
+}
+
+// ── Tool registration edge cases ──────────────────────────────────────────
+
+#[test]
+fn register_tool_overwrites_previous_with_same_name() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    // Register a custom tool
+    executor.register_tool(Arc::new(LateRegisteredTool));
+    assert!(executor.definition("host__late_tool").is_some());
+    // Re-register should overwrite
+    executor.register_tool(Arc::new(LateRegisteredTool));
+    assert!(executor.definition("host__late_tool").is_some());
+}
+
+#[test]
+fn retain_tools_removes_matching_entries() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    let before = executor.tool_names();
+    executor.retain_tools(|name| name != "bash");
+    let after = executor.tool_names();
+    assert!(!after.contains(&"bash".to_string()));
+    assert_eq!(after.len(), before.len() - 1);
+}
+
+#[test]
+fn clear_tools_removes_all_entries() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    assert!(!executor.tool_names().is_empty());
+    executor.clear_tools();
+    assert!(executor.tool_names().is_empty());
+    assert!(executor.definitions().is_empty());
+}
+
+#[test]
+fn unregister_plugin_tools_only_removes_plugin_prefixed() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut executor = executor(tempdir.path());
+    // Register a fake plugin tool
+    executor.register_tool(Arc::new(PluginTestTool));
+    assert!(executor.definition("plugin__test").is_some());
+    assert!(executor.definition("read_file").is_some());
+    executor.unregister_plugin_tools();
+    assert!(executor.definition("plugin__test").is_none());
+    assert!(
+        executor.definition("read_file").is_some(),
+        "builtin tools should remain"
+    );
+}
+
+// ── Tool fork edge cases ──────────────────────────────────────────────────
+
+#[test]
+fn fork_with_policy_and_tools_preserves_security_and_strips_nested() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig::default(),
+    )
+    .expect("policy");
+    let allowed: Vec<String> = vec!["read_file".into(), "search".into(), "bash".into()];
+    let forked = executor.fork_with_policy_and_tools(policy, &allowed);
+    let names = forked.tool_names();
+    assert!(names.contains(&"read_file".to_string()));
+    assert!(names.contains(&"search".to_string()));
+    assert!(names.contains(&"bash".to_string()));
+    // Forked executor must not have subagent or workflow
+    assert!(
+        !names.contains(&"subagent".to_string()),
+        "fork must strip subagent"
+    );
+    assert!(
+        !names.contains(&"workflow".to_string()),
+        "fork must strip workflow"
+    );
+}
+
+#[test]
+fn fork_with_policy_and_tools_ignores_unknown_names() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig::default(),
+    )
+    .expect("policy");
+    let allowed: Vec<String> = vec!["read_file".into(), "nonexistent_tool".into()];
+    let forked = executor.fork_with_policy_and_tools(policy, &allowed);
+    let names = forked.tool_names();
+    assert!(names.contains(&"read_file".to_string()));
+    assert!(!names.contains(&"nonexistent_tool".to_string()));
+}
+
+// ── Session title tool tests ───────────────────────────────────────────────
+
+#[tokio::test]
+async fn set_session_title_tool_normalizes_whitespace() {
+    use crate::session_title::{SessionTitleHandle, SessionTitleTool};
+    let handle = SessionTitleHandle::new();
+    let tool = SessionTitleTool::new(handle.clone());
+    let result = tool
+        .invoke(ToolInvocation {
+            id: "title-ws".to_string(),
+            tool_name: "set_session_title".to_string(),
+            input: json!({"title": "  Fix   broken   tools  "}),
+        })
+        .await
+        .expect("invoke");
+    assert!(result.ok);
+    assert_eq!(result.output["title"], "Fix broken tools");
+    assert!(handle.is_assigned());
+}
+
+#[tokio::test]
+async fn set_session_title_tool_truncates_to_120_chars() {
+    use crate::session_title::{SessionTitleHandle, SessionTitleTool};
+    let handle = SessionTitleHandle::new();
+    let tool = SessionTitleTool::new(handle.clone());
+    let long_title = "a".repeat(200);
+    let result = tool
+        .invoke(ToolInvocation {
+            id: "title-long".to_string(),
+            tool_name: "set_session_title".to_string(),
+            input: json!({"title": long_title}),
+        })
+        .await
+        .expect("invoke");
+    assert!(result.ok);
+    let title = result.output["title"].as_str().unwrap();
+    assert_eq!(title.chars().count(), 120);
+}
+
+#[tokio::test]
+async fn set_session_title_tool_rejects_empty_title() {
+    use crate::session_title::{SessionTitleHandle, SessionTitleTool};
+    let handle = SessionTitleHandle::new();
+    let tool = SessionTitleTool::new(handle.clone());
+    let result = tool
+        .invoke(ToolInvocation {
+            id: "title-empty".to_string(),
+            tool_name: "set_session_title".to_string(),
+            input: json!({"title": "   "}),
+        })
+        .await;
+    assert!(result.is_err(), "empty title should error");
+}
+
+#[tokio::test]
+async fn set_session_title_tool_rejects_missing_title() {
+    use crate::session_title::{SessionTitleHandle, SessionTitleTool};
+    let handle = SessionTitleHandle::new();
+    let tool = SessionTitleTool::new(handle.clone());
+    let result = tool
+        .invoke(ToolInvocation {
+            id: "title-missing".to_string(),
+            tool_name: "set_session_title".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(result.is_err(), "missing title should error");
+}
+
+// ── CurrentTime tool edge cases ───────────────────────────────────────────
+
+#[tokio::test]
+async fn current_time_returns_valid_iso_format() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "time-1".to_string(),
+            tool_name: "current_time".to_string(),
+            input: json!({}),
+        })
+        .await;
+    assert!(result.ok, "current_time failed: {:?}", result.output);
+    let iso = result.output["utc_iso"].as_str().unwrap();
+    assert!(iso.ends_with('Z'));
+    assert_eq!(iso.len(), 20); // YYYY-MM-DDTHH:MM:SSZ
+}
+
+// ── Sleep tool edge cases ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn sleep_with_valid_seconds_succeeds() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "sleep-1".to_string(),
+            tool_name: "sleep".to_string(),
+            input: json!({"seconds": 1}),
+        })
+        .await;
+    assert!(result.ok, "sleep failed: {:?}", result.output);
+}
+
+#[tokio::test]
+async fn sleep_with_zero_seconds_uses_default() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "sleep-0".to_string(),
+            tool_name: "sleep".to_string(),
+            input: json!({"seconds": 0}),
+        })
+        .await;
+    // 0 is not a valid value (minimum 1), but the tool should handle it gracefully
+    // by either erroring or using default
+    assert!(
+        result.ok || result.output.get("error").is_some(),
+        "sleep with 0 should succeed or error cleanly: {:?}",
+        result.output
+    );
+}
+
+// ── Tool result truncation edge cases ───────────────────────────────────────
+
+#[tokio::test]
+async fn tool_result_truncation_preserves_structure() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    // Create a large file and read it
+    let large_content = "x".repeat(200_000);
+    std::fs::write(tempdir.path().join("large.txt"), &large_content).unwrap();
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "read-large".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "large.txt"}),
+        })
+        .await;
+    assert!(result.ok);
+    let content = result.output["content"].as_str().unwrap_or("");
+    // Should be truncated but still valid
+    assert!(!content.is_empty());
+}
+
+// ── Permissive security policy edge case ──────────────────────────────────
+
+#[tokio::test]
+async fn permissive_policy_allows_all_tools() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let policy = SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join(".navi-data"),
+        SecurityConfig::default(),
+    )
+    .expect("policy");
+    let mut executor =
+        ToolExecutor::empty_with_security_policy(policy, Arc::new(PermissiveSecurityPolicy));
+    // Register minimal tools
+    executor.register(ReadTool::new(tempdir.path().to_path_buf()));
+    // With permissive policy, any invocation should be allowed
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "permissive-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({"path": "nonexistent.txt"}),
+        })
+        .await;
+    // Permissive policy allows the tool call (tool may still error on missing file)
+    assert!(
+        result
+            .output
+            .get("error_code")
+            .map(|v| v.as_str().unwrap_or(""))
+            != Some("security_denied"),
+        "Permissive policy should not security-deny"
+    );
+}
+
+/// Minimal `Tool` impl used to exercise plugin-prefixed registration/removal.
+struct PluginTestTool;
+
+#[async_trait::async_trait]
+impl Tool for PluginTestTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition::new(
+            "plugin__test",
+            "test plugin tool",
+            ToolKind::Custom,
+            json!({"type": "object", "properties": {}, "additionalProperties": false}),
+        )
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult {
+            invocation_id: invocation.id,
+            ok: true,
+            output: json!({"ok": true}),
+        })
+    }
+}

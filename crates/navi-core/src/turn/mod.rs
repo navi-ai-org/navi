@@ -1078,6 +1078,22 @@ async fn execute_tool_call_with_parallelism(
     }
 }
 
+/// Tools that are always available regardless of harness allowlist.
+/// These are session-infrastructure tools that the model needs to function
+/// (name the session, discover tools, ask questions, plan, manage memory).
+pub fn is_session_core_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "set_session_title"
+            | "tool_search"
+            | "question"
+            | "plan"
+            | "memory"
+            | "append_note"
+            | "load_skill"
+    )
+}
+
 /// Deny message when `allowed_tool_names` rejects a tool.
 ///
 /// Root/harness turns must not say "subagent" — that misled the TUI when catalog
@@ -1106,8 +1122,12 @@ async fn execute_tool_call(
     }
 
     // Optional tool allowlist (nested subagent or soft harness on the root turn).
+    // Session-core tools (title, tool_search, question, plan, memory) are always
+    // allowed — harness packs must not lock out the model's ability to name the
+    // session, discover tools, ask questions, plan, or manage memory.
     if let Some(ref allowed) = ctx.allowed_tool_names
         && !allowed.contains(&invocation.tool_name)
+        && !is_session_core_tool(&invocation.tool_name)
     {
         let result = tool_error_result(
             &invocation,
