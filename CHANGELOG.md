@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-24
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.1...v0.4.2
+
+### Fixed
+
+- **Broken tools** — `set_session_title` was never registered when the runtime built its own `ToolExecutor` (non-SDK path). The tool existed and had Direct metadata but was invisible to the model, forcing subagent delegation even in YOLO mode. Now registered in `ensure_tool_executor`.
+- **Harness allowlist lockout** — Harness `entry_allow_tools` locked out session-infrastructure tools (`set_session_title`, `tool_search`, `question`, `plan`, `memory`, `append_note`, `load_skill`) even in YOLO mode. Added `is_session_core_tool` bypass so these tools are always available regardless of harness allowlist.
+
+### Added
+
+- **46 new edge-case tests** covering tool schema validation, misnamed-tool recovery, tool_search live registry, security decisions across all permission modes, schema simplification, tool parallelism, unknown-tool handling, tool registration lifecycle, executor fork, session title tool, and more. Total tool tests: 148→194.
+
 ## [0.4.1] - 2026-07-24
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.0...v0.4.1
