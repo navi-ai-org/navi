@@ -1,0 +1,64 @@
+{
+  "id": "novita",
+  "label": "Novita AI",
+  "description": "OpenAI-compatible LLM inference with competitive pricing on open models (DeepSeek, Llama, Qwen)",
+  "kind": "openai-chat-completions",
+  "api_key_env": "NOVITA_API_KEY",
+  "base_url": "https://api.novita.ai/v3/openai",
+  "models": [
+    {
+      "name": "deepseek/deepseek-v3-0324",
+      "task_size": "large",
+      "context_window_tokens": 64000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false,
+      "capabilities": ["tool_calling", "json_mode"]
+    },
+    {
+      "name": "deepseek/deepseek-r1-0528",
+      "task_size": "large",
+      "context_window_tokens": 64000,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.6,
+      "supports_thinking": true,
+      "capabilities": ["reasoning"]
+    },
+    {
+      "name": "meta-llama/llama-3.3-70b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 4096,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false,
+      "capabilities": ["tool_calling"]
+    },
+    {
+      "name": "qwen/qwen2.5-72b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false,
+      "capabilities": ["tool_calling", "json_mode"]
+    },
+    {
+      "name": "qwen/qwen2.5-coder-32b-instruct",
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.7,
+      "supports_thinking": false,
+      "capabilities": ["tool_calling", "code"]
+    },
+    {
+      "name": "deepseek/deepseek-r1-distill-llama-70b",
+      "task_size": "large",
+      "context_window_tokens": 131072,
+      "max_output_tokens": 8192,
+      "recommended_temperature": 0.6,
+      "supports_thinking": true,
+      "capabilities": ["reasoning"]
+    }
+  ]
+}

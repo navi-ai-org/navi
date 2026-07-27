@@ -775,6 +775,31 @@ impl ProviderBehavior for CharmHyperBehavior {
     }
 }
 
+// ─── Novita ───────────────────────────────────────────────────────────────
+
+pub(crate) struct NovitaBehavior;
+
+impl ProviderBehavior for NovitaBehavior {
+    fn default_base_url(&self) -> Option<&str> {
+        None
+    }
+
+    fn stream_route(&self, _model: &str, configured_kind: OpenAiApiKind) -> StreamRoute {
+        match configured_kind {
+            OpenAiApiKind::Responses => StreamRoute::Responses,
+            OpenAiApiKind::ChatCompletions => StreamRoute::ChatCompletions,
+        }
+    }
+
+    fn build_headers(
+        &self,
+        api_key: &str,
+        _endpoint: Endpoint,
+    ) -> Result<HeaderMap, ProviderError> {
+        standard_bearer_headers(api_key, true)
+    }
+}
+
 // ─── Nvidia NIM ──────────────────────────────────────────────────────────────
 
 pub(crate) struct NvidiaBehavior;
@@ -845,6 +870,7 @@ pub(crate) fn behavior_for_provider(provider_id: &ProviderId) -> Box<dyn Provide
         ProviderId::GROQ => Box::new(GroqBehavior),
         ProviderId::XAI => Box::new(XaiBehavior),
         ProviderId::NVIDIA => Box::new(NvidiaBehavior),
+        ProviderId::NOVITA => Box::new(NovitaBehavior),
         _ => Box::new(CustomBehavior),
     }
 }
