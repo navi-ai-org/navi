@@ -9,6 +9,12 @@ generation, and embeddings. The key services relevant to NAVI are:
 - **Embeddings** — for memory/RAG use cases
 - **Image Generation** (SDXL, Flux, etc.) — not core to NAVI (coding agent)
 
+> **Full model catalog:** see [`novita-models-full.md`](./novita-models-full.md) for an
+> exhaustive inventory of all 142 LLM/chat models plus embedding, reranker, image,
+> video, audio, and AI-search services on the Novita platform. The catalog is compiled
+> from the live `GET https://api.novita.ai/v3/openai/models` endpoint (authoritative,
+> machine-readable) cross-referenced with the public `https://novita.ai/pricing` page.
+
 ## API Details
 
 ### LLM Chat Completions (Primary)
@@ -17,7 +23,7 @@ generation, and embeddings. The key services relevant to NAVI are:
 - **Endpoint:** `POST /chat/completions`
 - **Auth:** `Authorization: Bearer <NOVITA_API_KEY>` (standard Bearer header)
 - **Format:** OpenAI-compatible — same request/response shape, streaming via SSE
-- **Models:** DeepSeek V3, DeepSeek R1, Llama 3.3, Qwen, and other open models
+- **Models:** 142 LLM/chat models across DeepSeek, Qwen, GLM, Kimi, MiniMax, Llama, Gemma, ERNIE, and more — see the [full model catalog](./novita-models-full.md) for the complete list with context windows, max output, capabilities, and pricing
 - **Features:** Streaming, tool/function calling, JSON mode
 - **Pricing:** Per-token (input + output), competitive pricing on open models
 
@@ -51,6 +57,22 @@ Novita's chat completions API is fully OpenAI-compatible:
 
 This means NAVI's existing `OpenAiProvider` + `OpenAiChatCompletions` kind works
 out-of-the-box — no custom behavior needed beyond standard Bearer auth.
+
+## Registry Integration (Aggregator Mode)
+
+Novita is registered in `crates/navi-core/registry/providers/novita.json` with
+`"aggregator": true`. This tells NAVI to treat the provider as an **aggregator**:
+the static model list seeded in the registry JSON (109 active LLM/chat models from
+the full catalog) is a fallback/seed, and at sync time NAVI fetches the live model
+list from the provider's OpenAI-compatible `/models` endpoint
+(`https://api.novita.ai/v3/openai/models`) via the shared
+`sync_aggregator_models` path. This keeps the available-model set current as
+Novita adds or retires models without requiring a registry re-release.
+
+The seeded JSON includes only **active** LLM/chat models — archived models, test/dev
+models (`ai_infer_test_*`, `dev/*`, `gt-4p`), and non-LLM services (embeddings,
+rerankers, image, video, audio, AI search) are excluded since they use separate
+endpoints and are not part of the chat-completions surface.
 
 ## Sources
 
