@@ -36,10 +36,10 @@ fn install_panic_guard() {
 }
 use navi_core::{ContentPart, ContextPacket, ThinkingConfig, ToolInvocation, ToolKind, ToolResult};
 use navi_sdk::{
-    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviAcpTurnRequest,
-    NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest, NaviPromptProfile,
-    NaviSecurityProfile, NaviSessionRequest, NaviToolProfile, NaviTurnRequest, ProviderConfig,
-    ProviderKind, ProviderModelConfig, QuestionResponse, RuntimeEvent, SdkHostTool,
+    ApprovalDecision, HostToolDefinition, HostToolHandler, HostToolInvocation, NaviAcpServer,
+    NaviAcpTurnRequest, NaviConfigSaveTarget, NaviEngineBuilder, NaviModelSelectionRequest,
+    NaviPromptProfile, NaviSecurityProfile, NaviSessionRequest, NaviToolProfile, NaviTurnRequest,
+    ProviderConfig, ProviderKind, ProviderModelConfig, QuestionResponse, RuntimeEvent, SdkHostTool,
     SdkHostToolResult,
 };
 use serde_json::{Value as JsonValue, json};
@@ -2061,6 +2061,30 @@ impl NaviNapiEngine {
     #[napi]
     pub fn set_auto_update(&self, enabled: bool) -> Result<()> {
         self.inner.set_auto_update(enabled).map_err(to_napi_error)
+    }
+
+    /// Create an ACP server backed by this engine. The server speaks the Agent
+    /// Client Protocol over stdio so other ACP clients can connect to NAVI.
+    #[napi(js_name = "acpServer")]
+    pub fn acp_server(&self) -> NaviNapiAcpServer {
+        NaviNapiAcpServer {
+            inner: NaviAcpServer::new(self.inner.clone()),
+        }
+    }
+}
+
+#[napi]
+pub struct NaviNapiAcpServer {
+    inner: NaviAcpServer,
+}
+
+#[napi]
+impl NaviNapiAcpServer {
+    /// Serve ACP over the current process stdio until the peer disconnects.
+    /// Useful when NAVI is spawned as a child ACP agent by an editor.
+    #[napi(js_name = "serveStdio")]
+    pub async fn serve_stdio(&self) -> Result<()> {
+        self.inner.serve_stdio().await.map_err(to_napi_error)
     }
 }
 

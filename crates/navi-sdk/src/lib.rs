@@ -1,4 +1,5 @@
 mod acp_ops;
+mod acp_server;
 mod attachment_tool;
 mod auth_ops;
 mod credentials;
@@ -20,10 +21,12 @@ mod voice;
 pub use acp_ops::{
     NaviAcpAgentInfo, NaviAcpTurnRequest, NaviAcpTurnResponse, map_acp_update_to_runtime_events,
 };
-// Re-export peer types for clients that want direct ACP access.
+pub use acp_server::NaviAcpServer;
+// Re-export ACP types for clients that want direct ACP access.
 pub use navi_acp::{
-    AcpAgentSpec, AcpClient, AcpConnectOptions, AcpEvent, AcpProcessConfig, AcpTurnResult,
-    ExternalAgentPeer, PermissionHandler, SpawnedAcpPeer,
+    AcpAgentHandler, AcpAgentSpec, AcpClient, AcpConnectOptions, AcpEvent, AcpProcessConfig,
+    AcpServer, AcpServerHandle, AcpTurnResult, ExternalAgentPeer, PermissionHandler,
+    SpawnedAcpPeer,
 };
 
 pub use credentials::{

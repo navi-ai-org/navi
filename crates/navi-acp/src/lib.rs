@@ -8,6 +8,7 @@ mod error;
 mod event;
 mod peer;
 mod process;
+mod server;
 mod transport;
 mod types;
 
@@ -16,6 +17,7 @@ pub use error::{AcpError, Result};
 pub use event::AcpEvent;
 pub use peer::{AcpAgentSpec, AcpTurnResult, ExternalAgentPeer, SpawnedAcpPeer, event_label};
 pub use process::AcpProcessConfig;
+pub use server::{AcpAgentHandler, AcpServer, AcpServerHandle};
 pub use transport::{
     InboundMessage, JsonRpcErrorObject, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, JsonRpcTransport, decode_message_line, encode_request_line,

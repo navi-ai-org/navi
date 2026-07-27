@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use navi_core::{LoadedConfig, LoggingRuntimeConfig, init_logging, log_path};
-use navi_sdk::{NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest};
+use navi_sdk::{
+    NaviAcpServer, NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest,
+};
 use navi_tui::TuiApp;
 use std::path::PathBuf;
 
@@ -131,6 +133,8 @@ enum Commands {
         #[command(subcommand)]
         action: HarnessAction,
     },
+    /// Serve ACP over stdio so other ACP clients can use NAVI as an agent
+    Acp,
 }
 
 #[derive(Debug, Subcommand)]
@@ -600,6 +604,16 @@ async fn main() -> Result<()> {
     // Handle remote server (systemd) subcommand early
     if let Some(Commands::Server { action }) = cli.command {
         return server_cmd::handle_server_command(action, &loaded_config, &cwd);
+    }
+
+    // Handle ACP server subcommand early
+    if let Some(Commands::Acp) = cli.command {
+        let engine = NaviEngineBuilder::from_project(&cwd)
+            .loaded_config(loaded_config)
+            .build()?;
+        let server = NaviAcpServer::new(engine);
+        server.serve_stdio().await?;
+        return Ok(());
     }
 
     if cli.print_log_path {
