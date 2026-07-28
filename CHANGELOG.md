@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-25
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.2...v0.4.3
+
+### Fixed
+
+- **Subagent card "Running subagent" zombie** — The subagent card no longer stays stuck on "Running subagent" after completion or error. Terminal states (done/failed/cancelled) now render on the card with real per-subagent elapsed time. The final transcript item patches the persisted background tool result so reloads never resurrect a stale running status.
+- **Subagent drill-in view** — Now a near-clone of the main chat page: shows the subagent's live model text and thinking content (streaming deltas), tool cards with full output bodies, and final-response markdown — rendered through the same `build_chat_render_for_messages` pipeline.
+- **Footer mouse interaction** — "Parent up / Prev left / Next right" in the subagent view now have registered hit regions and visual hover feedback (accent background + bold), working with mouse clicks as well as keyboard.
+- **Agent stops on transient errors** — The agent no longer halts on connection drops, server 5xx, or stream idle timeouts. Transient errors are now retried with exponential backoff + jitter, up to `request_max_retries` (default 4) attempts. Cancel (Esc) is honored during backoff. Non-retryable errors (insufficient_quota, usage limit exceeded) surface immediately so the user sees the real reason.
+
+### Changed
+
+- **core: SubagentTranscriptItem** gains optional full `invocation`/`result`/`text`/`thinking`/`status` payloads plus `ModelDelta`/`ThinkingDelta` variants for streaming; redaction covers all new fields.
+- **openai: transport module** made public for reuse across crates.
+
 ## [0.4.2] - 2026-07-24
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.1...v0.4.2
