@@ -56,11 +56,11 @@ project stripped like MCP for supply-chain safety).**
 enabled = true
 
 [[acp_agents]]
-id = "devin"
-command = "devin"
+id = "acme-agent"
+command = "acme-agent"
 args = ["acp"]
-api_key_env = "DEVIN_API_KEY"   # optional; passed via authenticate _meta.api_key
-auth_method_id = "devin-browser" # optional; defaults to first advertised method
+api_key_env = "ACP_AGENT_KEY"   # optional; passed via authenticate _meta.api_key
+auth_method_id = "acme-browser" # optional; defaults to first advertised method
 auto_approve_permissions = true  # v1 default for headless/delegate path
 ```
 
@@ -74,7 +74,7 @@ come later for discovery; config is enough to target any ACP binary today
 **Decision: navi does not own the ACP server’s long-lived credentials.**
 
 - Primary path: optional `api_key_env` → read env at connect time →
-  `authenticate` with `_meta.api_key` (Devin-compatible).
+  `authenticate` with `_meta.api_key` (standard ACP).
 - Alternate: server-driven flows (browser PKCE / terminal login) when no key
   is supplied; navi only issues `authenticate` with the advertised method id.
 - **CredentialStore is not used** as the source of truth for ACP agent

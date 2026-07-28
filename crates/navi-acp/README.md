@@ -15,14 +15,14 @@ This is **not** a `ModelProvider`. See [DESIGN.md](./DESIGN.md).
 enabled = true
 
 [[acp_agents]]
-id = "devin"
-command = "devin"
+id = "acme-agent"
+command = "acme-agent"
 args = ["acp"]
-api_key_env = "DEVIN_API_KEY"
+api_key_env = "ACP_AGENT_KEY"
 ```
 
 ## Smoke test
 
 ```bash
-ACP_SMOKE_TEST=1 DEVIN_API_KEY=... cargo test -p navi-acp smoke -- --ignored --nocapture
+ACP_SMOKE_TEST=1 ACP_AGENT_KEY=... cargo test -p navi-acp smoke -- --ignored --nocapture
 ```

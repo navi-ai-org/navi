@@ -148,11 +148,11 @@ timeout_ms = 1000
 enabled = true
 
 [[acp_agents]]
-id = "devin"
-command = "devin"
+id = "acme-agent"
+command = "acme-agent"
 args = ["acp"]
-api_key_env = "DEVIN_API_KEY"
-auth_method_id = "devin-browser"
+api_key_env = "ACP_AGENT_KEY"
+auth_method_id = "acme-browser"
 auto_approve_permissions = true
 enabled = true
 "#,
@@ -162,11 +162,11 @@ enabled = true
         assert!(config.acp.enabled);
         assert_eq!(config.acp_agents.len(), 1);
         let agent = &config.acp_agents[0];
-        assert_eq!(agent.id, "devin");
-        assert_eq!(agent.command, "devin");
+        assert_eq!(agent.id, "acme-agent");
+        assert_eq!(agent.command, "acme-agent");
         assert_eq!(agent.args, vec!["acp"]);
-        assert_eq!(agent.api_key_env.as_deref(), Some("DEVIN_API_KEY"));
-        assert_eq!(agent.auth_method_id.as_deref(), Some("devin-browser"));
+        assert_eq!(agent.api_key_env.as_deref(), Some("ACP_AGENT_KEY"));
+        assert_eq!(agent.auth_method_id.as_deref(), Some("acme-browser"));
         assert!(agent.auto_approve_permissions);
         assert!(agent.enabled);
     }

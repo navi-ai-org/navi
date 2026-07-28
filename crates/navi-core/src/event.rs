@@ -287,7 +287,7 @@ pub enum RuntimeEventKind {
     /// applicable; this variant carries the full peer update for clients that
     /// want tool/plan/permission detail from the external agent.
     AcpPeerUpdate {
-        /// Configured ACP agent id (e.g. `"devin"`).
+        /// Configured ACP agent id (e.g. `"acme-agent"`).
         agent_id: String,
         /// ACP session id on the external agent.
         acp_session_id: String,

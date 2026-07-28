@@ -111,9 +111,9 @@ pub struct AcpConfig {
 /// Configuration for a single external ACP agent subprocess.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcpAgentConfig {
-    /// Unique agent identifier (e.g. `"devin"`).
+    /// Unique agent identifier (e.g. `"acme-agent"`).
     pub id: String,
-    /// Command to launch the ACP server (e.g. `"devin"`).
+    /// Command to launch the ACP server (e.g. `"acme-agent"`).
     pub command: String,
     /// Arguments passed to the command (e.g. `["acp"]`).
     #[serde(default)]

@@ -1,10 +1,10 @@
-//! Env-gated live smoke against `devin acp`.
+//! Env-gated live smoke against `acme-agent acp`.
 //!
 //! ```bash
-//! ACP_SMOKE_TEST=1 DEVIN_API_KEY=... cargo test -p navi-acp --test smoke -- --nocapture
+//! ACP_SMOKE_TEST=1 ACP_AGENT_KEY=... cargo test -p navi-acp --test smoke -- --nocapture
 //! ```
 //!
-//! Skipped unless `ACP_SMOKE_TEST=1`. Requires `devin` on PATH.
+//! Skipped unless `ACP_SMOKE_TEST=1`. Requires `acme-agent` on PATH.
 
 use navi_acp::{
     AcpAgentSpec, AcpClient, AcpConnectOptions, AcpProcessConfig, ExternalAgentPeer,
@@ -21,8 +21,8 @@ fn smoke_enabled() -> bool {
     )
 }
 
-fn devin_available() -> bool {
-    Command::new("devin")
+fn acp_agent_available() -> bool {
+    Command::new("acme-agent")
         .arg("acp")
         .arg("--help")
         .output()
@@ -31,7 +31,7 @@ fn devin_available() -> bool {
 }
 
 fn api_key() -> Option<String> {
-    for name in ["DEVIN_API_KEY", "WINDSURF_API_KEY", "ACP_API_KEY"] {
+    for name in ["ACP_AGENT_KEY", "WINDSURF_API_KEY", "ACP_API_KEY"] {
         if let Ok(v) = std::env::var(name) {
             if !v.is_empty() {
                 return Some(v);
@@ -42,19 +42,19 @@ fn api_key() -> Option<String> {
 }
 
 #[tokio::test]
-async fn devin_acp_smoke_initialize_and_prompt() {
+async fn acp_smoke_initialize_and_prompt() {
     if !smoke_enabled() {
         eprintln!("skip: set ACP_SMOKE_TEST=1 to run");
         return;
     }
-    if !devin_available() {
-        eprintln!("skip: devin binary not available");
+    if !acp_agent_available() {
+        eprintln!("skip: acp-agent binary not available");
         return;
     }
     let key = match api_key() {
         Some(k) => k,
         None => {
-            eprintln!("skip: no DEVIN_API_KEY / WINDSURF_API_KEY / ACP_API_KEY");
+            eprintln!("skip: no ACP_AGENT_KEY / WINDSURF_API_KEY / ACP_API_KEY");
             return;
         }
     };
@@ -62,7 +62,7 @@ async fn devin_acp_smoke_initialize_and_prompt() {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp"));
     let opts = AcpConnectOptions {
         process: AcpProcessConfig {
-            command: "devin".into(),
+            command: "acme-agent".into(),
             args: vec!["acp".into()],
             env: BTreeMap::new(),
             cwd: Some(cwd.clone()),
@@ -78,7 +78,7 @@ async fn devin_acp_smoke_initialize_and_prompt() {
 
     let mut client = AcpClient::connect(opts)
         .await
-        .expect("connect to devin acp");
+        .expect("connect to acp agent");
     let init = client.initialize_result();
     eprintln!(
         "initialized: protocol={} agent={:?}",
@@ -128,8 +128,8 @@ async fn devin_acp_smoke_initialize_and_prompt() {
 }
 
 #[tokio::test]
-async fn devin_acp_peer_trait_smoke() {
-    if !smoke_enabled() || !devin_available() {
+async fn acp_peer_trait_smoke() {
+    if !smoke_enabled() || !acp_agent_available() {
         return;
     }
     let Some(key) = api_key() else {
@@ -138,8 +138,8 @@ async fn devin_acp_peer_trait_smoke() {
 
     let peer = SpawnedAcpPeer {
         spec: AcpAgentSpec {
-            id: "devin".into(),
-            command: "devin".into(),
+            id: "acme-agent".into(),
+            command: "acme-agent".into(),
             args: vec!["acp".into()],
             env: BTreeMap::new(),
             cwd: None,
@@ -159,6 +159,6 @@ async fn devin_acp_peer_trait_smoke() {
         "peer turn: agent={} session={} stop={:?} text={}",
         result.agent_id, result.acp_session_id, result.stop_reason, result.text
     );
-    assert_eq!(result.agent_id, "devin");
+    assert_eq!(result.agent_id, "acme-agent");
     assert!(!result.acp_session_id.is_empty());
 }

@@ -303,7 +303,7 @@ mod tests {
             message_id: None,
             content: ContentBlock::text("hi"),
         };
-        let events = map_acp_update_to_runtime_events("devin", "s1", &update);
+        let events = map_acp_update_to_runtime_events("acme-agent", "s1", &update);
         assert!(events.iter().any(|e| {
             matches!(
                 e.kind,

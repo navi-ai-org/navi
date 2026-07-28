@@ -61,7 +61,7 @@ impl NaviAcpServer {
 
     /// Serve ACP over the process stdio streams.
     ///
-    /// This is the same shape as `devin acp` or `navi acp` sub-process mode.
+    /// This is any ACP server sub-process mode.
     pub async fn serve_stdio(&self) -> Result<(), NaviError> {
         let stdin = tokio::io::stdin();
         let stdout = tokio::io::stdout();
