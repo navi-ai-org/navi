@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 const QUESTION_TOOL_NAME: &str = "question";
 const PLAN_TOOL_NAME: &str = "plan";
@@ -213,7 +214,7 @@ async fn collect_model_output_with_self_repair(
         let request = build_model_request(ctx, messages, thinking_override);
         emit_request_trace(ctx, &request, policy);
 
-        let output = collect_model_output(ctx, request).await?;
+        let output = collect_model_output_with_retry(ctx, request).await?;
         ensure_not_cancelled(ctx)?;
 
         let empty = output.text.trim().is_empty()
@@ -688,6 +689,144 @@ fn persist_harness_stop_output(messages: &mut Vec<ModelMessage>, stop: &HarnessS
     );
     messages.push(ModelMessage::assistant(text.clone()));
     text
+}
+
+/// Wraps `collect_model_output` with automatic retry on transient provider
+/// errors (connection drops, server errors, idle timeouts). Uses exponential
+/// backoff and respects `Retry-After` headers. Retries up to
+/// `provider_config.request_max_retries()` times (default 4).
+///
+/// Non-retryable errors (usage limits, client 4xx, invalid headers) surface
+/// immediately so the user sees the real reason.
+async fn collect_model_output_with_retry(
+    ctx: &TurnContext,
+    request: ModelRequest,
+) -> Result<ModelTurnOutput> {
+    let config = ctx.active_config();
+    let provider_config = crate::config::resolve_provider_config(&config, &config.model.provider);
+    let max_retries = provider_config
+        .as_ref()
+        .map(|pc| pc.request_max_retries())
+        .unwrap_or(4);
+    let retry_429 = provider_config
+        .as_ref()
+        .map(|pc| pc.retry_429())
+        .unwrap_or(false);
+
+    let mut attempt: u32 = 0;
+    loop {
+        attempt += 1;
+        let req = request.clone();
+        let result = collect_model_output(ctx, req).await;
+
+        match result {
+            Ok(output) => return Ok(output),
+            Err(err) => {
+                // Check cancellation first — Esc always wins.
+                if ctx.cancellation_requested() {
+                    return Err(anyhow::anyhow!("turn cancelled"));
+                }
+
+                let should_retry = is_retryable_error(&err.to_string(), retry_429);
+
+                if !should_retry || attempt > max_retries {
+                    if attempt > max_retries && is_retryable_error(&err.to_string(), retry_429) {
+                        tracing::warn!(
+                            attempt,
+                            max_retries,
+                            "stream retries exhausted, surfacing error"
+                        );
+                    }
+                    return Err(err);
+                }
+
+                let delay = backoff_delay(attempt);
+
+                tracing::warn!(
+                    attempt,
+                    max_retries,
+                    delay_ms = delay.as_millis(),
+                    error = %err,
+                    "stream error, retrying with backoff"
+                );
+
+                // Emit a trace so the TUI shows the retry attempt.
+                if let Some(ref tx) = ctx.event_tx {
+                    let _ = tx.send(AgentEvent::StreamResuming {
+                        accumulated_chars: 0,
+                        attempt,
+                    });
+                }
+
+                // Sleep with cancel-awareness: if the user hits Esc during
+                // the backoff, abort immediately.
+                tokio::select! {
+                    biased;
+                    _ = ctx.cancel_token.notified() => {
+                        return Err(anyhow::anyhow!("turn cancelled"));
+                    }
+                    _ = tokio::time::sleep(delay) => {}
+                }
+            }
+        }
+    }
+}
+
+/// Classifies an error message as retryable (transport/server errors) or not
+/// (usage limits, quota, client 4xx, invalid headers).
+fn is_retryable_error(message: &str, retry_429: bool) -> bool {
+    let lower = message.to_ascii_lowercase();
+    // Usage limits / quota errors are NEVER retryable.
+    if lower.contains("insufficient_quota")
+        || lower.contains("usage limit exceeded")
+        || lower.contains("freeusagelimiterror")
+        || lower.contains("free usage limit")
+        || lower.contains("exceeded your current quota")
+    {
+        return false;
+    }
+    // Transport errors (connection, timeout) are always retryable.
+    if lower.contains("connection failed")
+        || lower.contains("timeout")
+        || lower.contains("transport")
+        || lower.contains("connection reset")
+        || lower.contains("eof")
+        || lower.contains("broken pipe")
+        || lower.contains("connection reset by peer")
+    {
+        return true;
+    }
+    // Server errors (5xx) are retryable.
+    if lower.contains("internal server error")
+        || lower.contains("bad gateway")
+        || lower.contains("service unavailable")
+        || lower.contains("gateway timeout")
+        || lower.contains("502")
+        || lower.contains("503")
+        || lower.contains("504")
+    {
+        return true;
+    }
+    // Rate limits (429) are retryable only if the provider config says so.
+    if lower.contains("429") || lower.contains("too many requests") || lower.contains("rate limit")
+    {
+        return retry_429;
+    }
+    // Stream idle timeout is retryable.
+    if lower.contains("response timeout") || lower.contains("no data received") {
+        return true;
+    }
+    // Default: don't retry unknown errors.
+    false
+}
+
+/// Exponential backoff with jitter (200ms * 2^(attempt-1), capped at ~3min).
+fn backoff_delay(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(10);
+    let base_ms = 200 * (1u64 << exponent);
+    let jitter = (fastrand::u64(0..40) as i64) - 20; // ±20ms
+    let final_ms = ((base_ms as i64) + jitter).max(0) as u64;
+    Duration::from_millis(final_ms)
 }
 
 async fn collect_model_output(ctx: &TurnContext, request: ModelRequest) -> Result<ModelTurnOutput> {

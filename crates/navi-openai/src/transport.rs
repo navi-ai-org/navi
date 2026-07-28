@@ -3,9 +3,7 @@ use reqwest::Response;
 use serde_json::Value;
 use std::time::Duration;
 
-pub(crate) async fn ensure_success(
-    response: Response,
-) -> std::result::Result<Response, ProviderError> {
+pub async fn ensure_success(response: Response) -> std::result::Result<Response, ProviderError> {
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -50,11 +48,11 @@ pub(crate) async fn ensure_success(
     })
 }
 
-pub(crate) fn should_retry_status(status: reqwest::StatusCode, retry_429: bool) -> bool {
+pub fn should_retry_status(status: reqwest::StatusCode, retry_429: bool) -> bool {
     status.is_server_error() || (retry_429 && status == reqwest::StatusCode::TOO_MANY_REQUESTS)
 }
 
-pub(crate) fn should_retry_error(err: &ProviderError, retry_429: bool) -> bool {
+pub fn should_retry_error(err: &ProviderError, retry_429: bool) -> bool {
     match err {
         ProviderError::Transport(_) => true,
         ProviderError::Api { status, body, .. } => {
@@ -65,7 +63,7 @@ pub(crate) fn should_retry_error(err: &ProviderError, retry_429: bool) -> bool {
     }
 }
 
-pub(crate) fn retry_delay_for_error(err: &ProviderError, attempt: u32) -> Duration {
+pub fn retry_delay_for_error(err: &ProviderError, attempt: u32) -> Duration {
     const MAX_REQUESTED_RETRY_DELAY: Duration = Duration::from_secs(60);
 
     if let ProviderError::Api {
@@ -102,7 +100,7 @@ fn get_jitter() -> f64 {
     (normalized * 0.20) - 0.10
 }
 
-pub(crate) fn get_backoff_delay(attempt: u32) -> Duration {
+pub fn get_backoff_delay(attempt: u32) -> Duration {
     let exponent = (attempt.saturating_sub(1)).min(10);
     let base_ms = 200 * (1 << exponent);
 
@@ -128,7 +126,7 @@ fn value_to_duration_seconds(val: &Value) -> Option<Duration> {
     }
 }
 
-pub(crate) fn extract_requested_delay_from_json(json: &Value) -> Option<Duration> {
+pub fn extract_requested_delay_from_json(json: &Value) -> Option<Duration> {
     if let Some(val) = json.get("requested_delay_ms").and_then(Value::as_u64) {
         return Some(Duration::from_millis(val));
     }

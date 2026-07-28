@@ -6,7 +6,7 @@ pub mod oauth;
 mod provider;
 mod providers;
 mod sse;
-mod transport;
+pub mod transport;
 
 pub use errors::ProviderError;
 pub use navi_core::ProviderId;
