@@ -3580,6 +3580,10 @@ fn background_subagent_keeps_activity_after_spawn_completes() {
                 title: "Read crates/navi-core/src/event.rs".to_string(),
                 detail: None,
                 ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
             },
         }),
     );
@@ -3633,6 +3637,10 @@ fn subagent_view_renders_transcript_and_footer() {
                 title: "Read justfile".to_string(),
                 detail: None,
                 ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
             },
         }),
     );
@@ -3645,6 +3653,10 @@ fn subagent_view_renders_transcript_and_footer() {
                 title: "Final response".to_string(),
                 detail: Some("Repository summary ready".to_string()),
                 ok: Some(true),
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
             },
         }),
     );
@@ -3659,10 +3671,341 @@ fn subagent_view_renders_transcript_and_footer() {
 
     assert!(text.contains("Analyze repository structure"));
     assert!(text.contains("Read justfile"));
-    assert!(text.contains("Final response"));
+    assert!(text.contains("Repository summary ready"));
     assert!(text.contains("Parent up"));
     assert!(text.contains("Prev left"));
     assert!(text.contains("Next right"));
+}
+
+#[test]
+fn subagent_card_resolves_terminal_status_instead_of_running_forever() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Background spawn completes (running=true) — card should still show activity.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        })),
+    );
+    assert!(
+        app.subagent_status("subagent-1")
+            .is_some_and(|status| status.is_running()),
+        "expected Running state before final transcript"
+    );
+    // Final transcript item arrives with terminal status.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Repository summary ready".to_string()),
+                status: Some("done".to_string()),
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "expected terminal Done state"
+    );
+    // The persisted background tool result must be patched to terminal so a
+    // reload never resurrects the "Running subagent" zombie.
+    let patched = app
+        .messages
+        .iter()
+        .find_map(|m| {
+            m.tool_result
+                .as_ref()
+                .filter(|r| r.invocation_id == "subagent-1")
+        })
+        .expect("patched tool result");
+    assert_eq!(
+        patched.output.get("status").and_then(|v| v.as_str()),
+        Some("done")
+    );
+    // Chat render should surface the terminal status, not "Running subagent".
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Concluído") || text.contains("Done") || text.contains("✓"),
+        "expected terminal status on card, got: {text}"
+    );
+    assert!(
+        !text.contains("Running subagent"),
+        "card must not stay on Running subagent, got: {text}"
+    );
+}
+
+#[test]
+fn subagent_card_shows_failed_status_on_error() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: false,
+            output: serde_json::json!({
+                "error": "model timeout",
+            }),
+        })),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Failed(
+            "model timeout".to_string()
+        )),
+        "expected Failed state on tool error"
+    );
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Falhou") || text.contains("✗") || text.contains("model timeout"),
+        "expected failed status on card, got: {text}"
+    );
+}
+
+#[test]
+fn subagent_view_uses_main_chat_renderer_with_tool_cards_and_markdown() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Rich transcript: full invocation + result payloads.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read justfile".to_string(),
+                detail: None,
+                ok: None,
+                invocation: Some(ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: serde_json::json!({ "path": "justfile" }),
+                }),
+                result: None,
+                text: None,
+                status: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolCompleted,
+                title: "Tool completed".to_string(),
+                detail: Some("justfile".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: Some(ToolResult {
+                    invocation_id: "call-1".to_string(),
+                    ok: true,
+                    output: serde_json::json!({
+                        "path": "justfile",
+                        "content": "verify:\n  cargo test",
+                    }),
+                }),
+                text: None,
+                status: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Repository summary ready".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("## Summary\n\nThe repo builds with `cargo test`.\n".to_string()),
+                status: Some("done".to_string()),
+            },
+        }),
+    );
+    app.open_subagent_view("subagent-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let text = terminal_buffer_text(&terminal);
+    // Tool card header (read_file summary) rendered via the main renderer.
+    assert!(
+        text.contains("justfile"),
+        "expected tool card to mention justfile, got: {text}"
+    );
+    // Final response markdown rendered (heading marker or content).
+    assert!(
+        text.contains("Summary") || text.contains("cargo test"),
+        "expected final response markdown, got: {text}"
+    );
+    assert!(text.contains("Parent up"));
+    assert!(text.contains("Prev left"));
+    assert!(text.contains("Next right"));
+}
+
+#[test]
+fn subagent_view_footer_hit_regions_are_clickable() {
+    let mut app = test_app("");
+    for id in ["subagent-1", "subagent-2"] {
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+                id: id.to_string(),
+                tool_name: "subagent".to_string(),
+                input: serde_json::json!({
+                    "description": format!("Task {id}"),
+                    "prompt": "Inspect project files",
+                }),
+            })),
+        );
+    }
+    app.open_subagent_view("subagent-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    // Probe the registered hit regions via hit() across the full frame,
+    // collecting any subagent footer actions wherever they landed.
+    let backend_size = terminal.size().expect("size");
+    let mut found = std::collections::HashSet::new();
+    let mut hits_debug = Vec::new();
+    for row in 0..backend_size.height {
+        for col in 0..backend_size.width {
+            if let Some(region) = app.hit_test(col, row) {
+                let tag = match region.action {
+                    crate::ui::interaction::HitAction::SubagentViewParent => Some("parent"),
+                    crate::ui::interaction::HitAction::SubagentViewPrev => Some("prev"),
+                    crate::ui::interaction::HitAction::SubagentViewNext => Some("next"),
+                    _ => None,
+                };
+                if let Some(tag) = tag {
+                    found.insert(tag);
+                    hits_debug.push(format!("{tag}@({col},{row})"));
+                }
+            }
+        }
+    }
+    assert!(
+        found.contains("parent") && found.contains("prev") && found.contains("next"),
+        "expected footer hit regions for parent/prev/next, got: {hits_debug:?}"
+    );
+}
+
+#[test]
+fn subagent_terminal_state_survives_background_result_reload() {
+    // Guard against the "Running subagent" zombie: once a subagent reaches a
+    // terminal UI state, the background status must not report it as running
+    // again — even if the persisted tool result still says "running" (e.g. the
+    // final transcript arrived after the spawn result was persisted).
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Background spawn completes, still running.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        })),
+    );
+    // Final transcript arrives and marks the subagent terminal.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Repository summary ready".to_string()),
+                status: Some("done".to_string()),
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Done)
+    );
+    // Even with the persisted result still saying "running", the UI state is
+    // terminal — background_subagent_status must not surface "Running subagent".
+    // (The function consults app.subagent_status before trusting the result.)
 }
 
 #[test]

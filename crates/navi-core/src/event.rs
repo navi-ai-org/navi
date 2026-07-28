@@ -18,6 +18,19 @@ pub struct SubagentTranscriptItem {
     /// Optional success state for completed work.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ok: Option<bool>,
+    /// Full tool invocation for `ToolRequested` items (drives the rich drill-in view).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invocation: Option<ToolInvocation>,
+    /// Full tool result for `ToolCompleted` items (drives the rich drill-in view).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ToolResult>,
+    /// Full final response text for `Text` items (not the one-line `detail`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Terminal lifecycle status for `Text` items: "done" | "failed" | "cancelled".
+    /// Lets the UI resolve background-subagent cards without polling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// Display item kind for a transient subagent transcript.

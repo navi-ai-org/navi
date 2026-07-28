@@ -24,7 +24,7 @@ use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
     OAuthUiState, PluginApprovalRequest, QuestionUiState, QueuedUserMessage, SelectionState,
-    SubagentTranscript, ThinkingLevel, UsageUiState,
+    SubagentStatus, SubagentTranscript, SubagentUiState, ThinkingLevel, UsageUiState,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::ModalStack;
@@ -96,6 +96,8 @@ pub struct TuiApp {
     pub(crate) subagent_activity: HashMap<String, String>,
     pub(crate) subagent_transcripts: HashMap<String, SubagentTranscript>,
     pub(crate) subagent_order: Vec<String>,
+    /// Per-subagent lifecycle state (status + real elapsed), keyed by invocation id.
+    pub(crate) subagent_states: HashMap<String, SubagentUiState>,
     pub(crate) chat_view: ChatView,
     pub(crate) pending_approvals: Vec<ApprovalRequest>,
     pub(crate) pending_questions: Vec<QuestionUiState>,
@@ -411,6 +413,7 @@ impl TuiApp {
             subagent_activity: HashMap::new(),
             subagent_transcripts: HashMap::new(),
             subagent_order: Vec::new(),
+            subagent_states: HashMap::new(),
             chat_view: ChatView::Parent,
             pending_approvals: Vec::new(),
             pending_questions: Vec::new(),
@@ -641,6 +644,60 @@ impl TuiApp {
 
     pub(crate) fn hit_test(&self, col: u16, row: u16) -> Option<HitRegion<HitAction>> {
         self.interaction_registry.borrow().hit(col, row)
+    }
+
+    /// Real elapsed for a subagent invocation, falling back to the turn clock.
+    pub(crate) fn subagent_elapsed_ms(&self, invocation_id: &str) -> Option<u64> {
+        self.subagent_states
+            .get(invocation_id)
+            .map(SubagentUiState::elapsed_ms)
+    }
+
+    /// Render-facing snapshot of every subagent's lifecycle (id → status + elapsed).
+    pub(crate) fn subagent_card_states(
+        &self,
+    ) -> HashMap<String, crate::render::markdown::SubagentCardState> {
+        self.subagent_states
+            .iter()
+            .map(|(id, state)| {
+                let status = match &state.status {
+                    SubagentStatus::Running => crate::render::markdown::SubagentCardStatus::Running,
+                    SubagentStatus::Done => crate::render::markdown::SubagentCardStatus::Done,
+                    SubagentStatus::Failed(_) => {
+                        crate::render::markdown::SubagentCardStatus::Failed
+                    }
+                    SubagentStatus::Cancelled => {
+                        crate::render::markdown::SubagentCardStatus::Cancelled
+                    }
+                };
+                (
+                    id.clone(),
+                    crate::render::markdown::SubagentCardState {
+                        status,
+                        elapsed_ms: state.elapsed_ms(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    pub(crate) fn subagent_status(&self, invocation_id: &str) -> Option<&SubagentStatus> {
+        self.subagent_states
+            .get(invocation_id)
+            .map(|state| &state.status)
+    }
+
+    /// Mark a subagent terminal (done/failed/cancelled), freezing its elapsed clock.
+    pub(crate) fn set_subagent_terminal(&mut self, invocation_id: &str, status: SubagentStatus) {
+        let entry = self
+            .subagent_states
+            .entry(invocation_id.to_string())
+            .or_insert_with(SubagentUiState::running);
+        entry.status = status;
+        if entry.ended_at.is_none() {
+            entry.ended_at = Some(std::time::Instant::now());
+        }
+        self.chat_render_cache.borrow_mut().signature_hash = 0;
     }
 
     pub(crate) fn open_subagent_view(&mut self, invocation_id: impl Into<String>) {

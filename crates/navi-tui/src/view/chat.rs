@@ -13,7 +13,7 @@ use crate::TuiApp;
 use crate::render::clear_modal_area;
 use crate::render::markdown::build_chat_render_for_messages;
 use crate::render::text::display_width;
-use crate::state::{ChatLineSource, ChatView, Mode};
+use crate::state::{ChatLineSource, ChatMessage, ChatRole, ChatView, Mode};
 use crate::theme::*;
 use crate::ui::interaction::{HitAction, line_rect};
 
@@ -282,17 +282,12 @@ fn render_subagent_chat_area(
             .wrap(Wrap { trim: false }),
         body,
     );
-    frame.render_widget(
-        Paragraph::new(Line::from(subagent_footer_spans(
-            app,
-            invocation_id,
-            inner.width as usize,
-        )))
-        .style(Style::default().bg(panel())),
-        footer,
-    );
+    render_subagent_footer(frame, app, footer, invocation_id, inner.width as usize);
 }
 
+/// Build the drill-in body by converting the transcript into synthetic chat
+/// messages and running the **same renderer as the main chat**, so tool cards
+/// and the final response look/behave identically (clone of the parent page).
 fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let index = app
@@ -324,7 +319,15 @@ fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<
         })
         .unwrap_or("Subagent");
 
-    lines.push(Line::from(vec![
+    // Header: title + index + lifecycle status badge.
+    let (badge, badge_color) = match app.subagent_status(invocation_id) {
+        Some(crate::state::SubagentStatus::Running) => ("Running", accent()),
+        Some(crate::state::SubagentStatus::Done) => ("Done", code_operator()),
+        Some(crate::state::SubagentStatus::Failed(_)) => ("Failed", red()),
+        Some(crate::state::SubagentStatus::Cancelled) => ("Cancelled", muted()),
+        None => ("", muted()),
+    };
+    let mut header = vec![
         Span::styled(
             " Subagent ",
             Style::default().fg(accent()).add_modifier(Modifier::BOLD),
@@ -334,10 +337,26 @@ fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<
             Style::default().fg(muted()),
         ),
         Span::styled(
-            truncate_display(title, width.saturating_sub(20).max(8)),
+            truncate_display(title, width.saturating_sub(24).max(8)),
             Style::default().fg(text()).add_modifier(Modifier::BOLD),
         ),
-    ]));
+    ];
+    if !badge.is_empty() {
+        header.push(Span::styled("  ", Style::default()));
+        header.push(Span::styled(
+            badge.to_string(),
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        if let Some(elapsed) = app.subagent_elapsed_ms(invocation_id) {
+            header.push(Span::styled(
+                format!(" · {}", crate::background::format_duration_ms(elapsed)),
+                Style::default().fg(code_number()),
+            ));
+        }
+    }
+    lines.push(Line::from(header));
     lines.push(Line::from(""));
 
     let Some(transcript) = app.subagent_transcripts.get(invocation_id) else {
@@ -356,48 +375,112 @@ fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<
         return lines;
     }
 
+    // Convert transcript items into synthetic chat messages for the main renderer.
+    let mut messages: Vec<ChatMessage> = Vec::new();
+    let mut pending_invocation: Option<navi_sdk::ToolInvocation> = None;
     for item in &transcript.items {
-        let (marker, color) = match item.kind {
-            SubagentTranscriptKind::ToolRequested => ("→", code_type()),
-            SubagentTranscriptKind::ToolCompleted => {
-                if item.ok == Some(false) {
-                    ("✗", red())
+        match item.kind {
+            SubagentTranscriptKind::ToolRequested => {
+                if let Some(inv) = &item.invocation {
+                    pending_invocation = Some(inv.clone());
                 } else {
-                    ("✓", code_operator())
+                    // Legacy/lean transcript (no invocation payload): keep the
+                    // one-line summary so the drill-in still shows the step.
+                    messages.push(ChatMessage::new(
+                        ChatRole::Assistant,
+                        format!("→ {}", item.title),
+                    ));
+                }
+            }
+            SubagentTranscriptKind::ToolCompleted => {
+                if let Some(result) = &item.result {
+                    let invocation = pending_invocation
+                        .take()
+                        .or_else(|| synthesize_invocation_for_result(result));
+                    if let Some(inv) = invocation {
+                        messages.push(ChatMessage {
+                            status: Some("tool result".to_string()),
+                            tool_invocation: Some(inv),
+                            tool_result: Some(result.clone()),
+                            ..ChatMessage::new(ChatRole::Assistant, String::new())
+                        });
+                    }
+                } else {
+                    // Legacy/lean transcript: one-line ✓/✗ summary + detail.
+                    let marker = if item.ok == Some(false) { "✗" } else { "✓" };
+                    let mut text = format!("{marker} {}", item.title);
+                    if let Some(detail) = &item.detail
+                        && !detail.trim().is_empty()
+                    {
+                        text.push_str(&format!("\n\n{detail}"));
+                    }
+                    messages.push(ChatMessage::new(ChatRole::Assistant, text));
                 }
             }
             SubagentTranscriptKind::Text => {
-                if item.ok == Some(false) {
-                    ("✗", red())
-                } else {
-                    ("●", accent())
+                let text = item
+                    .text
+                    .clone()
+                    .or_else(|| item.detail.clone())
+                    .unwrap_or_else(|| item.title.clone());
+                if !text.trim().is_empty() {
+                    messages.push(ChatMessage::new(ChatRole::Assistant, text));
                 }
             }
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("{marker} "), Style::default().fg(color)),
-            Span::styled(
-                truncate_display(&item.title, width.saturating_sub(4).max(8)),
-                Style::default().fg(color).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        if let Some(detail) = &item.detail
-            && !detail.trim().is_empty()
-        {
-            lines.push(Line::from(vec![
-                Span::styled("  ↳ ", Style::default().fg(ghost())),
-                Span::styled(
-                    truncate_display(detail, width.saturating_sub(5).max(8)),
-                    Style::default().fg(muted()),
-                ),
-            ]));
         }
     }
 
+    // Render via the main chat renderer (local tool cache; no live running tools).
+    let empty_running: std::collections::HashMap<String, navi_sdk::ToolInvocation> =
+        Default::default();
+    let empty_activity: std::collections::HashMap<String, String> = Default::default();
+    let empty_states: std::collections::HashMap<
+        String,
+        crate::render::markdown::SubagentCardState,
+    > = Default::default();
+    let mut tool_cache: std::collections::HashMap<String, Vec<Line<'static>>> = Default::default();
+    let output = crate::render::markdown::build_chat_render_for_messages(
+        &messages,
+        width,
+        app.full_tool_view,
+        app.show_thinking,
+        app.compact_tool_visible_limit,
+        &app.expanded_tool_results,
+        &app.collapsed_tool_results,
+        &empty_running,
+        &empty_activity,
+        &empty_states,
+        &mut tool_cache,
+        None,
+    );
+    lines.extend(output.lines);
     lines
 }
 
-fn subagent_footer_spans(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<Span<'static>> {
+/// Fallback: reconstruct a minimal invocation when the transcript lacks the
+/// `ToolRequested` payload (older events), so the tool card can still render.
+fn synthesize_invocation_for_result(
+    result: &navi_sdk::ToolResult,
+) -> Option<navi_sdk::ToolInvocation> {
+    Some(navi_sdk::ToolInvocation {
+        id: result.invocation_id.clone(),
+        tool_name: result
+            .output
+            .get("tool")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tool")
+            .to_string(),
+        input: serde_json::Value::Null,
+    })
+}
+
+fn render_subagent_footer(
+    frame: &mut Frame<'_>,
+    app: &TuiApp,
+    footer: Rect,
+    invocation_id: &str,
+    width: usize,
+) {
     let index = app
         .subagent_order
         .iter()
@@ -407,17 +490,43 @@ fn subagent_footer_spans(app: &TuiApp, invocation_id: &str, width: usize) -> Vec
     let total = app.subagent_order.len().max(1);
     let left = format!("  Subagent ({index} of {total})");
     let right = "Parent up   Prev left   Next right";
+    let left_w = display_width(&left) as u16;
     let gap = width.saturating_sub(display_width(&left) + display_width(right));
-    vec![
-        Span::styled(left, Style::default().fg(text()).bg(panel())),
-        Span::styled(" ".repeat(gap), Style::default().fg(muted()).bg(panel())),
-        Span::styled("Parent ", Style::default().fg(text()).bg(panel())),
-        Span::styled("up   ", Style::default().fg(muted()).bg(panel())),
-        Span::styled("Prev ", Style::default().fg(text()).bg(panel())),
-        Span::styled("left   ", Style::default().fg(muted()).bg(panel())),
-        Span::styled("Next ", Style::default().fg(text()).bg(panel())),
-        Span::styled("right", Style::default().fg(muted()).bg(panel())),
-    ]
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(left, Style::default().fg(text()).bg(panel())),
+            Span::styled(" ".repeat(gap), Style::default().fg(muted()).bg(panel())),
+            Span::styled("Parent ", Style::default().fg(text()).bg(panel())),
+            Span::styled("up   ", Style::default().fg(muted()).bg(panel())),
+            Span::styled("Prev ", Style::default().fg(text()).bg(panel())),
+            Span::styled("left   ", Style::default().fg(muted()).bg(panel())),
+            Span::styled("Next ", Style::default().fg(text()).bg(panel())),
+            Span::styled("right", Style::default().fg(muted()).bg(panel())),
+        ]))
+        .style(Style::default().bg(panel())),
+        footer,
+    );
+
+    // Clickable footer segments: hit regions align with the rendered labels.
+    // Layout: [left][gap][Parent up   ][Prev left   ][Next right]
+    let mut x = footer.x;
+    let row_h = footer.height.max(1);
+    x = x.saturating_add(left_w + gap as u16);
+    let segs = [
+        ("Parent up   ", HitAction::SubagentViewParent),
+        ("Prev left   ", HitAction::SubagentViewPrev),
+        ("Next right", HitAction::SubagentViewNext),
+    ];
+    for (label, action) in segs {
+        let w = display_width(label) as u16;
+        if w == 0 {
+            continue;
+        }
+        let rect = Rect::new(x, footer.y, w, row_h);
+        app.register_hit(rect, 6, "subagent footer", action);
+        x = x.saturating_add(w);
+    }
 }
 
 fn truncate_display(value: &str, max_width: usize) -> String {
@@ -720,6 +829,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
         };
 
         if can_reuse_history || tail_idx > 0 {
+            let subagent_card_states = app.subagent_card_states();
             let history_render = if can_reuse_history {
                 None
             } else {
@@ -733,6 +843,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
                     &app.collapsed_tool_results,
                     &app.running_tools,
                     &app.subagent_activity,
+                    &subagent_card_states,
                     &mut app.chat_render_cache.borrow_mut().tool_render_cache,
                     app.loading_start
                         .map(|start| start.elapsed().as_millis() as u64),
@@ -749,6 +860,7 @@ fn ensure_chat_cache(app: &mut TuiApp, chat_width: usize) {
                 &app.collapsed_tool_results,
                 &app.running_tools,
                 &app.subagent_activity,
+                &subagent_card_states,
                 &mut app.chat_render_cache.borrow_mut().tool_render_cache,
                 app.loading_start
                     .map(|start| start.elapsed().as_millis() as u64),
@@ -990,6 +1102,7 @@ fn build_chat_render(
     app: &mut TuiApp,
     chat_width: usize,
 ) -> crate::render::markdown::ChatRenderOutput {
+    let subagent_card_states = app.subagent_card_states();
     build_chat_render_for_messages(
         &app.messages,
         chat_width,
@@ -1000,6 +1113,7 @@ fn build_chat_render(
         &app.collapsed_tool_results,
         &app.running_tools,
         &app.subagent_activity,
+        &subagent_card_states,
         &mut app.chat_render_cache.borrow_mut().tool_render_cache,
         app.loading_start
             .map(|start| start.elapsed().as_millis() as u64),

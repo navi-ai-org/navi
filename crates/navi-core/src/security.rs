@@ -920,6 +920,10 @@ fn redact_subagent_transcript_item(item: &SubagentTranscriptItem) -> SubagentTra
         title: redact_secrets(&item.title),
         detail: item.detail.as_ref().map(|detail| redact_secrets(detail)),
         ok: item.ok,
+        invocation: item.invocation.as_ref().map(redact_tool_invocation),
+        result: item.result.as_ref().map(redact_tool_result),
+        text: item.text.as_ref().map(|text| redact_secrets(text)),
+        status: item.status.clone(),
     }
 }
 

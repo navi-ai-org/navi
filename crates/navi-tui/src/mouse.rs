@@ -920,6 +920,15 @@ fn dispatch_hit(app: &mut TuiApp, hit: HitRegion<HitAction>) {
                 app.close_subagent_view();
             }
         }
+        HitAction::SubagentViewParent => {
+            app.close_subagent_view();
+        }
+        HitAction::SubagentViewPrev => {
+            app.select_adjacent_subagent(-1);
+        }
+        HitAction::SubagentViewNext => {
+            app.select_adjacent_subagent(1);
+        }
         HitAction::MessageAction(index) => {
             run_message_action(app, index);
         }

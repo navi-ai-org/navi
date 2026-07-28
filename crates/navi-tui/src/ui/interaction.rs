@@ -45,6 +45,12 @@ pub enum HitAction {
     ToolResult(String),
     ToolGroup(Vec<String>),
     Subagent(String),
+    /// Subagent drill-in footer: back to the parent chat.
+    SubagentViewParent,
+    /// Subagent drill-in footer: jump to the previous subagent.
+    SubagentViewPrev,
+    /// Subagent drill-in footer: jump to the next subagent.
+    SubagentViewNext,
     /// Return keyboard focus to the main composer.
     ///
     /// This is a dedicated hit instead of relying on the empty-space fallback:

@@ -4,6 +4,21 @@ use std::collections::{HashMap, HashSet};
 
 use navi_sdk::{ToolInvocation, ToolResult};
 
+/// Render-facing snapshot of a subagent's lifecycle (avoids depending on app state types).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SubagentCardStatus {
+    Running,
+    Done,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SubagentCardState {
+    pub(crate) status: SubagentCardStatus,
+    pub(crate) elapsed_ms: u64,
+}
+
 use crate::state::{ChatLineSource, ChatMessage, ChatRole};
 use crate::theme::*;
 
@@ -40,6 +55,7 @@ pub(crate) fn build_chat_render_for_messages(
     collapsed_tool_results: &HashSet<String>,
     running_tools: &HashMap<String, ToolInvocation>,
     subagent_activity: &HashMap<String, String>,
+    subagent_states: &HashMap<String, SubagentCardState>,
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
     loading_elapsed_ms: Option<u64>,
 ) -> ChatRenderOutput {
@@ -70,6 +86,7 @@ pub(crate) fn build_chat_render_for_messages(
                 tool_render_cache,
                 loading_elapsed_ms,
                 subagent_activity,
+                subagent_states,
             );
             for (line, source) in rendered_tool {
                 rendered_lines.push(line);
@@ -239,6 +256,7 @@ pub(crate) fn build_chat_render_for_messages(
         &mut line_sources,
         running_tools,
         subagent_activity,
+        subagent_states,
         chat_width,
         loading_elapsed_ms,
     );
@@ -530,6 +548,7 @@ fn push_running_tools(
     line_sources: &mut Vec<ChatLineSource>,
     running_tools: &HashMap<String, ToolInvocation>,
     subagent_activity: &HashMap<String, String>,
+    subagent_states: &HashMap<String, SubagentCardState>,
     chat_width: usize,
     loading_elapsed_ms: Option<u64>,
 ) {
@@ -540,10 +559,9 @@ fn push_running_tools(
     let mut tools = running_tools.values().collect::<Vec<_>>();
     tools.sort_by(|left, right| left.id.cmp(&right.id));
 
-    let elapsed = loading_elapsed_ms.unwrap_or_default();
-    let spinner = super::status::running_diamond_prefix(elapsed);
+    let turn_elapsed = loading_elapsed_ms.unwrap_or_default();
+    let spinner = super::status::running_diamond_prefix(turn_elapsed);
     let spin_color = super::status::running_diamond_color(code_operator());
-    let elapsed_label = crate::background::format_duration_ms(elapsed);
 
     for invocation in tools {
         push_block_gap(rendered_lines, line_sources);
@@ -560,6 +578,17 @@ fn push_running_tools(
         } else {
             tool_running_text(invocation)
         };
+
+        // Per-tool elapsed: subagents track their own start; others use the turn clock.
+        let elapsed = if is_subagent {
+            subagent_states
+                .get(&invocation.id)
+                .map(|state| state.elapsed_ms)
+                .unwrap_or(turn_elapsed)
+        } else {
+            turn_elapsed
+        };
+        let elapsed_label = crate::background::format_duration_ms(elapsed);
 
         // `◆ Run cargo test · 3s` — diamond pulses via spinner frame + elapsed.
         let width = chat_width.max(12);
@@ -595,13 +624,14 @@ fn push_running_tools(
         rendered_lines.push(Line::from(spans));
         line_sources.push(source.clone());
 
-        // Subagent live detail under the header.
+        // Subagent live detail under the header: latest activity when present,
+        // otherwise the task prompt so the card is never an empty placeholder.
         if is_subagent {
             let task = subagent_task_label(invocation);
             let detail = subagent_activity
                 .get(&invocation.id)
                 .cloned()
-                .unwrap_or_else(|| subagent_detail_label(invocation, &task));
+                .unwrap_or_else(|| subagent_fallback_detail(invocation, &task));
             if !detail.is_empty() {
                 let detail_width = width.saturating_sub(4).max(8);
                 rendered_lines.push(Line::from(vec![
@@ -633,7 +663,7 @@ fn subagent_task_label(invocation: &ToolInvocation) -> String {
         .unwrap_or_else(|| "Working".to_string())
 }
 
-fn subagent_detail_label(invocation: &ToolInvocation, task: &str) -> String {
+fn subagent_fallback_detail(invocation: &ToolInvocation, task: &str) -> String {
     let prompt = invocation
         .input
         .get("prompt")
@@ -641,12 +671,7 @@ fn subagent_detail_label(invocation: &ToolInvocation, task: &str) -> String {
         .map(one_line)
         .unwrap_or_default();
     if prompt.is_empty() || prompt == task {
-        invocation
-            .input
-            .get("profile")
-            .and_then(|value| value.as_str())
-            .map(|profile| format!("Profile {profile}"))
-            .unwrap_or_default()
+        "Starting subagent…".to_string()
     } else {
         prompt
     }
@@ -666,6 +691,7 @@ fn render_compact_tool_result(
     tool_render_cache: &mut HashMap<String, Vec<Line<'static>>>,
     loading_elapsed_ms: Option<u64>,
     subagent_activity: &HashMap<String, String>,
+    subagent_states: &HashMap<String, SubagentCardState>,
 ) -> Vec<(Line<'static>, ChatLineSource)> {
     use super::tool_policy::{tool_auto_expand, tool_body_visible};
 
@@ -690,22 +716,51 @@ fn render_compact_tool_result(
         source.clone(),
     ));
 
-    // Background-spawned subagents keep publishing activity after ToolCompleted.
-    // Surface the latest status under the card so progress is still visible.
-    if invocation.tool_name == "subagent"
-        && tool_result_still_running(result)
-        && let Some(detail) = subagent_activity.get(&result.invocation_id)
-    {
-        let detail = detail.trim();
-        if !detail.is_empty() {
-            let detail_width = chat_width.saturating_sub(4).max(8);
+    // Subagent lifecycle line under the card.
+    // Terminal states (done/failed/cancelled) always win so the card never sits
+    // on a stale "Running subagent" after completion — including across errors.
+    if invocation.tool_name == "subagent" {
+        let detail_width = chat_width.saturating_sub(4).max(8);
+        let card_state = subagent_states.get(&result.invocation_id);
+        let status_line: Option<(String, Style)> = match card_state.map(|c| c.status) {
+            Some(SubagentCardStatus::Done) => Some((
+                format!(
+                    "✓ Concluído · {}",
+                    crate::background::format_duration_ms(
+                        card_state.map(|c| c.elapsed_ms).unwrap_or(0)
+                    )
+                ),
+                Style::default().fg(code_operator()),
+            )),
+            Some(SubagentCardStatus::Failed) => {
+                let err = result
+                    .output
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("subagent failed");
+                Some((
+                    format!("✗ Falhou: {}", one_line(err)),
+                    Style::default().fg(red()),
+                ))
+            }
+            Some(SubagentCardStatus::Cancelled) => {
+                Some(("■ Cancelado".to_string(), Style::default().fg(muted())))
+            }
+            _ => {
+                // Still running (foreground in-flight or background after spawn):
+                // surface the latest activity if present.
+                subagent_activity
+                    .get(&result.invocation_id)
+                    .map(|detail| detail.trim().to_string())
+                    .filter(|detail| !detail.is_empty())
+                    .map(|detail| (format!("↳ {detail}"), Style::default().fg(muted())))
+            }
+        };
+        if let Some((text, style)) = status_line {
             lines.push((
                 Line::from(vec![
-                    Span::styled("  ↳ ".to_string(), Style::default().fg(ghost())),
-                    Span::styled(
-                        truncate_chars(detail, detail_width),
-                        Style::default().fg(muted()),
-                    ),
+                    Span::styled("  ".to_string(), Style::default().fg(ghost())),
+                    Span::styled(truncate_chars(&text, detail_width), style),
                 ]),
                 source.clone(),
             ));
@@ -2594,6 +2649,7 @@ mod tests {
             &HashSet::new(),
             &running,
             &HashMap::new(),
+            &HashMap::new(),
             &mut HashMap::new(),
             Some(3_200), // 10 pulse frames
         );
@@ -2665,6 +2721,7 @@ mod tests {
             0,
             &HashSet::new(),
             &HashSet::new(),
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
             &mut HashMap::new(),

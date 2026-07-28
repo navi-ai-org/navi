@@ -397,6 +397,7 @@ impl SubagentTool {
             Ok(output) => output,
             Err(err) => format!("Subagent failed: {err:#}"),
         };
+        let failed = text.starts_with("Subagent failed:");
         emit_subagent_transcript(
             &parent_event_tx,
             &invocation_id,
@@ -404,7 +405,11 @@ impl SubagentTool {
                 kind: SubagentTranscriptKind::Text,
                 title: "Final response".to_string(),
                 detail: Some(one_line(&text)),
-                ok: Some(!text.starts_with("Subagent failed:")),
+                ok: Some(!failed),
+                invocation: None,
+                result: None,
+                text: Some(text.clone()),
+                status: Some(if failed { "failed" } else { "done" }.to_string()),
             },
         );
 
@@ -551,6 +556,7 @@ impl SubagentTool {
                 Ok(output) => output,
                 Err(err) => format!("Background subagent failed: {err:#}"),
             };
+            let failed = output.starts_with("Background subagent failed:");
             emit_subagent_transcript(
                 &parent_event_tx,
                 &parent_invocation_id,
@@ -558,7 +564,11 @@ impl SubagentTool {
                     kind: SubagentTranscriptKind::Text,
                     title: "Final response".to_string(),
                     detail: Some(one_line(&output)),
-                    ok: Some(!output.starts_with("Background subagent failed:")),
+                    ok: Some(!failed),
+                    invocation: None,
+                    result: None,
+                    text: Some(output.clone()),
+                    status: Some(if failed { "failed" } else { "done" }.to_string()),
                 },
             );
             let _ = result_tx.send(output);
@@ -814,6 +824,10 @@ fn subagent_transcript_item(event: &AgentEvent) -> Option<SubagentTranscriptItem
             title: format_tool_activity(invocation),
             detail: None,
             ok: None,
+            invocation: Some(invocation.clone()),
+            result: None,
+            text: None,
+            status: None,
         }),
         AgentEvent::ToolCompleted(result) => Some(SubagentTranscriptItem {
             kind: SubagentTranscriptKind::ToolCompleted,
@@ -824,6 +838,10 @@ fn subagent_transcript_item(event: &AgentEvent) -> Option<SubagentTranscriptItem
             },
             detail: Some(compact_result_detail(result)),
             ok: Some(result.ok),
+            invocation: None,
+            result: Some(result.clone()),
+            text: None,
+            status: None,
         }),
         _ => None,
     }

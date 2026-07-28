@@ -325,6 +325,47 @@ pub(crate) enum ChatView {
     },
 }
 
+/// Lifecycle status shown on the subagent card / drill-in header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SubagentStatus {
+    Running,
+    Done,
+    Failed(String),
+    Cancelled,
+}
+
+impl SubagentStatus {
+    pub(crate) fn is_running(&self) -> bool {
+        matches!(self, SubagentStatus::Running)
+    }
+}
+
+/// Per-subagent UI state: drives the card status line and real elapsed time.
+#[derive(Debug, Clone)]
+pub(crate) struct SubagentUiState {
+    pub(crate) status: SubagentStatus,
+    pub(crate) started_at: Instant,
+    pub(crate) ended_at: Option<Instant>,
+}
+
+impl SubagentUiState {
+    pub(crate) fn running() -> Self {
+        Self {
+            status: SubagentStatus::Running,
+            started_at: Instant::now(),
+            ended_at: None,
+        }
+    }
+
+    /// Elapsed ms while running; frozen at end time once terminal.
+    pub(crate) fn elapsed_ms(&self) -> u64 {
+        match self.ended_at {
+            Some(end) => end.saturating_duration_since(self.started_at).as_millis() as u64,
+            None => self.started_at.elapsed().as_millis() as u64,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SubagentTranscript {
     pub(crate) title: String,

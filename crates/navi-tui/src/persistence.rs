@@ -201,6 +201,7 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
     app.subagent_activity.clear();
     app.subagent_transcripts.clear();
     app.subagent_order.clear();
+    app.subagent_states.clear();
     app.chat_view = crate::state::ChatView::Parent;
     app.tool_invocations.clear();
     app.pending_images.clear();

@@ -414,6 +414,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 if !app.subagent_order.iter().any(|id| id == &invocation.id) {
                     app.subagent_order.push(invocation.id.clone());
                 }
+                app.subagent_states
+                    .entry(invocation.id.clone())
+                    .or_insert_with(crate::state::SubagentUiState::running);
                 app.subagent_transcripts
                     .entry(invocation.id.clone())
                     .or_insert_with(|| SubagentTranscript::new(subagent_title(&invocation)));
@@ -426,6 +429,26 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             // Background subagents keep emitting activity after the spawn tool returns.
             if !still_running_background {
                 app.subagent_activity.remove(&result.invocation_id);
+                // Foreground subagent (or any terminal subagent tool call): resolve card.
+                if app
+                    .tool_invocations
+                    .get(&result.invocation_id)
+                    .is_some_and(|inv| inv.tool_name == "subagent")
+                {
+                    let status = if result.ok {
+                        crate::state::SubagentStatus::Done
+                    } else {
+                        crate::state::SubagentStatus::Failed(
+                            result
+                                .output
+                                .get("error")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("subagent failed")
+                                .to_string(),
+                        )
+                    };
+                    app.set_subagent_terminal(&result.invocation_id, status);
+                }
             }
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
                 // Check if this is a background bash command that's still running
@@ -493,6 +516,42 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             invocation_id,
             item,
         } => {
+            // Terminal lifecycle marker (background subagents): resolve the card
+            // and stop the "Running subagent" status even across errors.
+            if let Some(status_str) = item.status.as_deref() {
+                let status = match status_str {
+                    "done" => crate::state::SubagentStatus::Done,
+                    "cancelled" => crate::state::SubagentStatus::Cancelled,
+                    _ => crate::state::SubagentStatus::Failed(
+                        item.detail
+                            .clone()
+                            .unwrap_or_else(|| "subagent failed".to_string()),
+                    ),
+                };
+                app.set_subagent_terminal(&invocation_id, status);
+                app.subagent_activity.remove(&invocation_id);
+                // Patch the persisted background-spawn tool result so the terminal
+                // status survives a reload (kills the "Running subagent" zombie).
+                for message in app.messages.iter_mut().rev() {
+                    let is_match = message
+                        .tool_result
+                        .as_ref()
+                        .is_some_and(|result| result.invocation_id == invocation_id);
+                    if !is_match {
+                        continue;
+                    }
+                    if let Some(result) = message.tool_result.as_mut()
+                        && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
+                    {
+                        result.output["status"] = serde_json::Value::String(status_str.to_string());
+                        if let Some(detail) = item.detail.clone() {
+                            result.output["result"] = serde_json::Value::String(detail);
+                        }
+                        result.ok = status_str == "done";
+                    }
+                    break;
+                }
+            }
             app.subagent_transcripts
                 .entry(invocation_id.clone())
                 .or_insert_with(|| SubagentTranscript::new("Subagent".to_string()))

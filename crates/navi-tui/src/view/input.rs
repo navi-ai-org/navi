@@ -687,6 +687,13 @@ fn background_subagent_status(app: &TuiApp) -> Option<String> {
         let Some(result) = message.tool_result.as_ref() else {
             continue;
         };
+        // Live UI state wins: a terminal subagent never reports as running again,
+        // even if an older persisted result still said "running".
+        if let Some(status) = app.subagent_status(&invocation.id)
+            && !status.is_running()
+        {
+            continue;
+        }
         let still_running = result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
             && result
                 .output

@@ -99,6 +99,7 @@ pub(crate) fn cancel_stream(app: &mut TuiApp) {
     app.pending_approvals.clear();
     app.running_tools.clear();
     app.subagent_activity.clear();
+    app.subagent_states.clear();
     app.queued_user_messages.clear();
     app.queued_message_selected = 0;
     app.queued_message_scroll = 0;
