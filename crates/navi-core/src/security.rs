@@ -923,6 +923,7 @@ fn redact_subagent_transcript_item(item: &SubagentTranscriptItem) -> SubagentTra
         invocation: item.invocation.as_ref().map(redact_tool_invocation),
         result: item.result.as_ref().map(redact_tool_result),
         text: item.text.as_ref().map(|text| redact_secrets(text)),
+        thinking: item.thinking.as_ref().map(|t| redact_secrets(t)),
         status: item.status.clone(),
     }
 }

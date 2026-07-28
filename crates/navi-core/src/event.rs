@@ -27,6 +27,9 @@ pub struct SubagentTranscriptItem {
     /// Full final response text for `Text` items (not the one-line `detail`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Accumulated thinking/reasoning text (for ThinkingDelta + Text items).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<String>,
     /// Terminal lifecycle status for `Text` items: "done" | "failed" | "cancelled".
     /// Lets the UI resolve background-subagent cards without polling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -39,6 +42,10 @@ pub enum SubagentTranscriptKind {
     ToolRequested,
     ToolCompleted,
     Text,
+    /// Streaming text delta from the subagent's model.
+    ModelDelta,
+    /// Streaming thinking/reasoning delta from the subagent's model.
+    ThinkingDelta,
 }
 
 /// A versioned runtime event emitted during agent execution.

@@ -424,9 +424,45 @@ fn build_subagent_lines(app: &TuiApp, invocation_id: &str, width: usize) -> Vec<
                     .or_else(|| item.detail.clone())
                     .unwrap_or_else(|| item.title.clone());
                 if !text.trim().is_empty() {
-                    messages.push(ChatMessage::new(ChatRole::Assistant, text));
+                    let mut msg = ChatMessage::new(ChatRole::Assistant, text);
+                    // Preserve thinking content if present in the final text item.
+                    if let Some(thinking) = &item.thinking
+                        && !thinking.trim().is_empty()
+                    {
+                        msg.thinking_content = thinking.clone();
+                    }
+                    messages.push(msg);
                 }
             }
+            // ModelDelta and ThinkingDelta are accumulated into streaming buffers
+            // (handled below), not stored as discrete items.
+            SubagentTranscriptKind::ModelDelta | SubagentTranscriptKind::ThinkingDelta => {}
+        }
+    }
+
+    // Live streaming text/thinking: render as a single growing assistant message
+    // so the user sees the subagent's model response in real time (like the main chat).
+    let has_streaming = !transcript.streaming_text.is_empty()
+        || (!transcript.streaming_thinking.is_empty() && app.show_thinking);
+    if has_streaming {
+        let mut stream_content = String::new();
+        if app.show_thinking && !transcript.streaming_thinking.is_empty() {
+            stream_content.push_str("> ");
+            stream_content.push_str(&transcript.streaming_thinking);
+            stream_content.push_str(
+                "
+
+",
+            );
+        }
+        stream_content.push_str(&transcript.streaming_text);
+        if !stream_content.trim().is_empty() {
+            messages.push(ChatMessage {
+                role: ChatRole::Assistant,
+                content: stream_content,
+                status: Some("receiving".to_string()),
+                ..ChatMessage::new(ChatRole::Assistant, String::new())
+            });
         }
     }
 
@@ -493,16 +529,60 @@ fn render_subagent_footer(
     let left_w = display_width(&left) as u16;
     let gap = width.saturating_sub(display_width(&left) + display_width(right));
 
+    let hover_parent = app.hover_subagent_footer.as_ref() == Some(&HitAction::SubagentViewParent);
+    let hover_prev = app.hover_subagent_footer.as_ref() == Some(&HitAction::SubagentViewPrev);
+    let hover_next = app.hover_subagent_footer.as_ref() == Some(&HitAction::SubagentViewNext);
+    let hover_bg = accent();
+    let parent_style = if hover_parent {
+        Style::default()
+            .fg(bg())
+            .bg(hover_bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(text()).bg(panel())
+    };
+    let prev_style = if hover_prev {
+        Style::default()
+            .fg(bg())
+            .bg(hover_bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(text()).bg(panel())
+    };
+    let next_style = if hover_next {
+        Style::default()
+            .fg(bg())
+            .bg(hover_bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(text()).bg(panel())
+    };
+    let parent_dim = if hover_parent {
+        Style::default().fg(bg()).bg(hover_bg)
+    } else {
+        Style::default().fg(muted()).bg(panel())
+    };
+    let prev_dim = if hover_prev {
+        Style::default().fg(bg()).bg(hover_bg)
+    } else {
+        Style::default().fg(muted()).bg(panel())
+    };
+    let next_dim = if hover_next {
+        Style::default().fg(bg()).bg(hover_bg)
+    } else {
+        Style::default().fg(muted()).bg(panel())
+    };
+
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(left, Style::default().fg(text()).bg(panel())),
             Span::styled(" ".repeat(gap), Style::default().fg(muted()).bg(panel())),
-            Span::styled("Parent ", Style::default().fg(text()).bg(panel())),
-            Span::styled("up   ", Style::default().fg(muted()).bg(panel())),
-            Span::styled("Prev ", Style::default().fg(text()).bg(panel())),
-            Span::styled("left   ", Style::default().fg(muted()).bg(panel())),
-            Span::styled("Next ", Style::default().fg(text()).bg(panel())),
-            Span::styled("right", Style::default().fg(muted()).bg(panel())),
+            Span::styled("Parent ", parent_style),
+            Span::styled("up   ", parent_dim),
+            Span::styled("Prev ", prev_style),
+            Span::styled("left   ", prev_dim),
+            Span::styled("Next ", next_style),
+            Span::styled("right", next_dim),
         ]))
         .style(Style::default().bg(panel())),
         footer,

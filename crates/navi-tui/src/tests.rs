@@ -3584,6 +3584,7 @@ fn background_subagent_keeps_activity_after_spawn_completes() {
                 result: None,
                 text: None,
                 status: None,
+                thinking: None,
             },
         }),
     );
@@ -3641,6 +3642,7 @@ fn subagent_view_renders_transcript_and_footer() {
                 result: None,
                 text: None,
                 status: None,
+                thinking: None,
             },
         }),
     );
@@ -3657,6 +3659,7 @@ fn subagent_view_renders_transcript_and_footer() {
                 result: None,
                 text: None,
                 status: None,
+                thinking: None,
             },
         }),
     );
@@ -3724,6 +3727,7 @@ fn subagent_card_resolves_terminal_status_instead_of_running_forever() {
                 result: None,
                 text: Some("Repository summary ready".to_string()),
                 status: Some("done".to_string()),
+                thinking: None,
             },
         }),
     );
@@ -3837,6 +3841,7 @@ fn subagent_view_uses_main_chat_renderer_with_tool_cards_and_markdown() {
                 result: None,
                 text: None,
                 status: None,
+                thinking: None,
             },
         }),
     );
@@ -3860,6 +3865,7 @@ fn subagent_view_uses_main_chat_renderer_with_tool_cards_and_markdown() {
                 }),
                 text: None,
                 status: None,
+                thinking: None,
             },
         }),
     );
@@ -3876,6 +3882,7 @@ fn subagent_view_uses_main_chat_renderer_with_tool_cards_and_markdown() {
                 result: None,
                 text: Some("## Summary\n\nThe repo builds with `cargo test`.\n".to_string()),
                 status: Some("done".to_string()),
+                thinking: None,
             },
         }),
     );
@@ -3996,6 +4003,7 @@ fn subagent_terminal_state_survives_background_result_reload() {
                 result: None,
                 text: Some("Repository summary ready".to_string()),
                 status: Some("done".to_string()),
+                thinking: None,
             },
         }),
     );

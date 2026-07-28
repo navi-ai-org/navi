@@ -552,11 +552,37 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                     break;
                 }
             }
-            app.subagent_transcripts
-                .entry(invocation_id.clone())
-                .or_insert_with(|| SubagentTranscript::new("Subagent".to_string()))
-                .items
-                .push(item);
+            {
+                let transcript = app
+                    .subagent_transcripts
+                    .entry(invocation_id.clone())
+                    .or_insert_with(|| SubagentTranscript::new("Subagent".to_string()));
+                match item.kind {
+                    // Streaming deltas: accumulate into live text/thinking buffers
+                    // instead of stacking as discrete items. The drill-in view
+                    // renders them as a single growing assistant message.
+                    navi_sdk::SubagentTranscriptKind::ModelDelta => {
+                        if let Some(text) = &item.text {
+                            transcript.streaming_text.push_str(text);
+                        }
+                    }
+                    navi_sdk::SubagentTranscriptKind::ThinkingDelta => {
+                        if let Some(thinking) = &item.thinking {
+                            transcript.streaming_thinking.push_str(thinking);
+                        }
+                    }
+                    // Final text: clear streaming buffers (the final response
+                    // supersedes the in-flight deltas) and push as a real item.
+                    navi_sdk::SubagentTranscriptKind::Text => {
+                        transcript.streaming_text.clear();
+                        transcript.streaming_thinking.clear();
+                        transcript.items.push(item);
+                    }
+                    _ => {
+                        transcript.items.push(item);
+                    }
+                }
+            }
             if !app.subagent_order.iter().any(|id| id == &invocation_id) {
                 app.subagent_order.push(invocation_id);
             }

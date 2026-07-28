@@ -370,6 +370,10 @@ impl SubagentUiState {
 pub(crate) struct SubagentTranscript {
     pub(crate) title: String,
     pub(crate) items: Vec<SubagentTranscriptItem>,
+    /// Accumulated streaming text from ModelDelta items (live model response).
+    pub(crate) streaming_text: String,
+    /// Accumulated streaming thinking from ThinkingDelta items.
+    pub(crate) streaming_thinking: String,
 }
 
 /// Model is still generating tool-call arguments (before ToolRequested).
@@ -385,6 +389,8 @@ impl SubagentTranscript {
         Self {
             title,
             items: Vec::new(),
+            streaming_text: String::new(),
+            streaming_thinking: String::new(),
         }
     }
 }

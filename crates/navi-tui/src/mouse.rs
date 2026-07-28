@@ -489,6 +489,7 @@ fn handle_mouse_moved(app: &mut TuiApp, col: u16, row: u16) -> bool {
             app.hover_context_usage = false;
             app.hover_plan_more = false;
             app.hover_queued_messages = false;
+            app.hover_subagent_footer = None;
             needs_redraw = true;
         }
     }
@@ -532,6 +533,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         app.hover_context_usage = false;
         app.hover_plan_more = false;
         app.hover_queued_messages = false;
+        app.hover_subagent_footer = None;
         return false;
     }
 
@@ -540,11 +542,18 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
     let prev_usage = app.hover_context_usage;
     let prev_plan_more = app.hover_plan_more;
     let prev_queued = app.hover_queued_messages;
+    let prev_sub_footer = app.hover_subagent_footer.clone();
 
     app.hovered_chat_source = chat_source_for_action(&hit.action);
     app.hover_context_usage = matches!(hit.action, HitAction::ContextUsage);
     app.hover_plan_more = matches!(hit.action, HitAction::ExpandPlanMore);
     app.hover_queued_messages = matches!(hit.action, HitAction::OpenMessageQueue);
+    app.hover_subagent_footer = match &hit.action {
+        HitAction::SubagentViewParent
+        | HitAction::SubagentViewPrev
+        | HitAction::SubagentViewNext => Some(hit.action.clone()),
+        _ => None,
+    };
     match &hit.action {
         HitAction::QuestionOption(index) => {
             app.hover_index = Some(*index);
@@ -582,6 +591,7 @@ fn apply_non_image_hover(app: &mut TuiApp, hit: &HitRegion<HitAction>) -> bool {
         || prev_usage != app.hover_context_usage
         || prev_plan_more != app.hover_plan_more
         || prev_queued != app.hover_queued_messages
+        || prev_sub_footer != app.hover_subagent_footer
 }
 
 fn chat_source_for_action(action: &HitAction) -> Option<crate::state::ChatLineSource> {
