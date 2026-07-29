@@ -16,6 +16,15 @@
 #   @navi-agent/navi-darwin-arm64
 #   @navi-agent/navi-win32-x64
 #
+# NAPI packages (@navi-agent/napi*) are published by the publish-napi job in
+# release.yml. If using OIDC, these also need trusted publisher config:
+#   @navi-agent/napi
+#   @navi-agent/napi-linux-x64
+#   @navi-agent/napi-linux-arm64
+#   @navi-agent/napi-darwin-x64
+#   @navi-agent/napi-darwin-arm64
+#   @navi-agent/napi-win32-x64
+#
 # Trigger:
 #   - Called from release.yml after the GitHub Release is created (preferred)
 #   - release: published (fallback if someone creates a release outside release.yml)
