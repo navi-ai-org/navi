@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-28
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.3...v0.4.4
+
+### Fixed
+
+- **Harness auto-activation lockout** — Installing a harness-flagged skill no longer locks the root session and blocks core tools like `edit` with "tool `edit` is not in the allowed tool set for the active harness". The TUI was seeding `app.active_skills` from `config.skills.active` (catalog visibility) on startup and persisting it back on every save, so any installed harness skill soft-applied its allowlist to the root turn without the user opting in. Session-active skills now come only from explicit activation (`--skill` CLI flag or TUI toggle); `config.skills.active` stays catalog-only, and `app.active_skills` is no longer written back to config on save.
+
 ## [0.4.3] - 2026-07-25
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.2...v0.4.3
