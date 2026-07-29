@@ -208,6 +208,9 @@ pub struct SystemPromptInput {
     pub skill_pools: Vec<SkillPool>,
     /// Optional harness pack developer card (loop/graph soft policy).
     pub harness_card: Option<String>,
+    /// Per-session system prompt override. When set, replaces the base
+    /// identity for this session only.
+    pub system_prompt: Option<String>,
 }
 
 fn normalize_cache_path(path: &Path) -> PathBuf {
@@ -284,6 +287,7 @@ mod tests {
             active_skills: Vec::new(),
             skill_pools: Vec::new(),
             harness_card: None,
+            system_prompt: None,
         };
 
         let first = renderer.render(input());

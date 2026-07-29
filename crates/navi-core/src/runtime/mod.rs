@@ -325,6 +325,9 @@ pub struct AgentRuntimeOptions {
     /// provided tool executor. Used by host tool profiles (`chat_only`,
     /// `host_tools_only`) so the host's filtered tool set is preserved.
     pub skip_auto_tool_bootstrap: bool,
+    /// Per-session system prompt override. When set, replaces the base
+    /// identity for this session only. `None` uses the engine's prompt profile.
+    pub system_prompt: Option<String>,
 }
 
 /// The core agent runtime that manages sessions, turns, approvals, and events.
@@ -385,6 +388,8 @@ pub struct AgentRuntime {
     harness_card: Option<String>,
     /// Soft graph + skill allowlist merged (None = no extra lock).
     harness_allow_tools: Option<Vec<String>>,
+    /// Per-session system prompt override (None = use prompt profile).
+    system_prompt: Option<String>,
 }
 
 impl AgentRuntime {
@@ -472,6 +477,7 @@ impl AgentRuntime {
             harness_token_budget: None,
             harness_card: None,
             harness_allow_tools: None,
+            system_prompt: options.system_prompt,
         }
     }
 
@@ -2150,6 +2156,7 @@ impl AgentRuntime {
             is_subagent: false,
             memory_manager: self.memory_manager.clone(),
             harness_card: self.harness_card.clone(),
+            system_prompt: self.system_prompt.clone(),
         });
 
         let policy = select_harness_policy(&self.loaded_config.config);

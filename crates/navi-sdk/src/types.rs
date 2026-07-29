@@ -32,6 +32,14 @@ pub struct NaviSessionRequest {
     pub initial_updated_at: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_goal: Option<navi_core::SessionGoal>,
+    /// Per-session system prompt that overrides the engine's prompt profile.
+    ///
+    /// When set, this replaces the base identity (`rendered.instructions`)
+    /// for this session only. Skills, context packets, memory injection, and
+    /// AGENTS.md still attach as developer messages on top. When `None`,
+    /// the engine's `prompt_profile` (CodeAgent / Assistant / Custom) is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
 }
 
 /// Build a [`NaviSessionRequest`] that reopens a saved snapshot with full

@@ -94,6 +94,9 @@ pub struct TurnContext {
     pub memory_manager: Arc<std::sync::Mutex<Option<Arc<crate::memory::MemoryManager>>>>,
     /// Optional harness pack card injected into developer context.
     pub harness_card: Option<String>,
+    /// Per-session system prompt override. When set, replaces the base
+    /// identity (`rendered.instructions`) for this session only.
+    pub system_prompt: Option<String>,
 }
 
 impl TurnContext {
@@ -338,15 +341,22 @@ async fn ensure_system_prompt(ctx: &TurnContext, messages: &mut Vec<ModelMessage
         active_skills,
         skill_pools,
         harness_card: ctx.harness_card.clone(),
+        system_prompt: ctx.system_prompt.clone(),
     };
     let prompt = ctx.components.prompt.clone();
     let prompt_cache = ctx.prompt_cache.clone();
-    let rendered = tokio::task::spawn_blocking(move || prompt.build(input, prompt_cache))
+    let mut rendered = tokio::task::spawn_blocking(move || prompt.build(input, prompt_cache))
         .await
         .unwrap_or_else(|_| crate::prompt::RenderedPrompt {
             instructions: "Default NAVI base instructions".to_string(),
             developer_messages: Vec::new(),
         });
+
+    // Per-session system prompt override: replace the base identity while
+    // keeping developer messages (skills, context packets, memory, AGENTS.md).
+    if let Some(ref custom) = ctx.system_prompt {
+        rendered.instructions = custom.clone();
+    }
 
     // Store the stable base instructions on the turn context so
     // `build_model_request` can place them in the provider's

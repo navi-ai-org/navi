@@ -1097,6 +1097,7 @@ mod tests {
             is_subagent: false,
             memory_manager: std::sync::Arc::new(std::sync::Mutex::new(None)),
             harness_card: None,
+            system_prompt: None,
         });
 
         let policy = crate::harness::policy_for_profile(

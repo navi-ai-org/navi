@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-07-29
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.6...v0.4.7
+
+### Added
+
+- **Per-session system prompt override** — `NaviSessionRequest` now accepts a
+  `systemPrompt` field (Rust) / `systemPrompt` property (NAPI) that replaces the
+  base system prompt identity for a single session, without affecting other
+  sessions on the same engine. Skills, context packets, memory injection, and
+  AGENTS.md still attach as developer messages on top. This complements the
+  engine-level `customPromptProfile` (0.4.5) which sets a fixed identity for all
+  sessions — `systemPrompt` on the request wins for that session only.
+
 ## [0.4.6] - 2026-07-29
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.5...v0.4.6

@@ -105,6 +105,9 @@ pub struct JsSessionRequest {
     pub initial_created_at: Option<i64>,
     pub initial_updated_at: Option<i64>,
     pub initial_goal: Option<JsonValue>,
+    /// Per-session system prompt override. Replaces the base identity for this
+    /// session only. Skills, context packets, and memory still attach on top.
+    pub system_prompt: Option<String>,
 }
 
 #[napi(object)]
@@ -2301,6 +2304,7 @@ fn parse_session_request(opts: JsSessionRequest) -> Result<NaviSessionRequest> {
         initial_created_at: opts.initial_created_at.map(|n| n as u64),
         initial_updated_at: opts.initial_updated_at.map(|n| n as u64),
         initial_goal,
+        system_prompt: opts.system_prompt,
     })
 }
 

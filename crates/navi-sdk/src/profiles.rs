@@ -293,6 +293,7 @@ mod tests {
             active_skills: Vec::new(),
             skill_pools: Vec::new(),
             harness_card: None,
+            system_prompt: None,
         };
         let code = ProfilePromptBuilder::new(NaviPromptProfile::CodeAgent)
             .build(input(), cache.clone())
@@ -320,6 +321,7 @@ mod tests {
             active_skills: Vec::new(),
             skill_pools: Vec::new(),
             harness_card: None,
+            system_prompt: None,
         };
         let custom = "You are a Game Master narrating a roleplay session.";
         let rendered = ProfilePromptBuilder::new(NaviPromptProfile::Custom(custom.into()))

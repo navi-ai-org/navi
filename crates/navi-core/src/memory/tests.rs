@@ -760,6 +760,7 @@ None.
         is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
+        system_prompt: None,
     };
 
     let mut messages = vec![ModelMessage {

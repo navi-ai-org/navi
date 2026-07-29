@@ -563,6 +563,7 @@ impl NaviEngine {
             runtime_components: Some(runtime_components),
             session_title_handle: Some(session_title_handle),
             skip_auto_tool_bootstrap: !install_code_agent_extras,
+            system_prompt: request.system_prompt,
         });
         let events = runtime.stream_events();
         let session_id = runtime.start_session()?;

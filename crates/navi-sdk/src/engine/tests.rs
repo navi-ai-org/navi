@@ -1411,6 +1411,7 @@ fn assistant_prompt_profile_differs_from_code_agent() {
         active_skills: Vec::new(),
         skill_pools: Vec::new(),
         harness_card: None,
+        system_prompt: None,
     };
     let code = ProfilePromptBuilder::new(NaviPromptProfile::CodeAgent)
         .build(mk_input(), cache.clone())

@@ -296,6 +296,7 @@ async fn test_turn_loop_with_parallel_tools() {
         is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
+        system_prompt: None,
     };
 
     let mut messages = vec![];
@@ -584,6 +585,7 @@ async fn malformed_tool_arguments_stop_the_turn() {
         is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
+        system_prompt: None,
     };
     let policy = crate::harness::policy_for_profile(
         &crate::config::HarnessConfig {
@@ -684,6 +686,7 @@ fn build_test_ctx(project_dir: PathBuf) -> TurnContext {
         is_subagent: false,
         memory_manager: Arc::new(std::sync::Mutex::new(None)),
         harness_card: None,
+        system_prompt: None,
     }
 }
 

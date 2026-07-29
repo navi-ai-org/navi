@@ -93,6 +93,13 @@ export interface StartSessionRequest {
   initialCreatedAt?: number | null;
   initialUpdatedAt?: number | null;
   initialGoal?: JsonValue | null;
+  /**
+   * Per-session system prompt override. Replaces the base identity for this
+   * session only. Skills, context packets, and memory injection still attach
+   * as developer messages on top. When omitted, the engine's prompt profile
+   * (code_agent / assistant / custom) is used.
+   */
+  systemPrompt?: string | null;
 }
 
 /** Custom OpenAI-compatible provider upsert (e.g. Ollama). */

@@ -385,6 +385,7 @@ impl SubagentTool {
             is_subagent: true,
             memory_manager: Arc::new(std::sync::Mutex::new(None)),
             harness_card: None,
+            system_prompt: None,
         };
 
         let policy =
@@ -547,6 +548,7 @@ impl SubagentTool {
                 is_subagent: true,
                 memory_manager: Arc::new(std::sync::Mutex::new(None)),
                 harness_card: None,
+                system_prompt: None,
             };
 
             let policy =
