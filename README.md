@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>The coding agent engine that lives in your terminal.</strong><br/>
-  Same harness for TUI, headless, edge, and apps. Multi-provider. Built in Rust. Under ~35&nbsp;MB RAM.
+  Same harness for TUI, headless, edge, and apps. Multi-provider. Built in Rust. Under ~12&nbsp;MB RAM.
 </p>
 
 <p align="center">
