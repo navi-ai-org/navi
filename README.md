@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/brand/navi-icon.jpg" width="160" height="160" alt="NAVI logo" />
+
 </p>
 
 <h1 align="center">NAVI</h1>
