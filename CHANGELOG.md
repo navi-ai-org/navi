@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-29
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.5...v0.4.6
+
+### Fixed
+
+- **NAPI TypeScript declarations missing `customPromptProfile`** — The 0.4.5
+  npm package shipped a stale `index.d.ts` that did not declare the new
+  `customPromptProfile` builder method, even though the native `.node` binary
+  contained it. The TypeScript type `PromptProfile` now includes `'custom'`,
+  and `NaviNapiEngineBuilder.customPromptProfile(prompt: string): void` is
+  declared. Also published `@navi-agent/napi@0.4.6` to npm (0.4.5's NAPI
+  package was published with the old declarations).
+
 ## [0.4.5] - 2026-07-29
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.4...v0.4.5

@@ -110,7 +110,7 @@ export interface ProviderUpsert {
 /** Tool profile for host embeddings. */
 export type ToolProfile = 'code_agent' | 'host_tools_only' | 'chat_only';
 /** Prompt profile for host embeddings. */
-export type PromptProfile = 'code_agent' | 'assistant';
+export type PromptProfile = 'code_agent' | 'assistant' | 'custom';
 /** Security posture for host embeddings. */
 export type SecurityProfile = 'code_agent' | 'host_app';
 
@@ -130,6 +130,12 @@ export class NaviNapiEngineBuilder {
   denyTools(names: string[]): void;
   /** `code_agent` | `assistant` */
   promptProfile(profile: PromptProfile | string): void;
+  /**
+   * Custom system prompt — replaces the base identity entirely.
+   * Skills, context packets, and memory injection still attach as developer
+   * messages on top of this custom base. Overrides any prior `promptProfile`.
+   */
+  customPromptProfile(prompt: string): void;
   /** `code_agent` | `host_app` (restricted writes) */
   securityProfile(profile: SecurityProfile | string): void;
   /** `restricted` | `accept-edits` | `auto` | `yolo` */
