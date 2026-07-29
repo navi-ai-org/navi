@@ -45,7 +45,7 @@ impl NaviToolProfile {
 }
 
 /// Base system-prompt identity for a host-built engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NaviPromptProfile {
     /// Default terminal code agent (inspect, edit, verify).
@@ -53,6 +53,13 @@ pub enum NaviPromptProfile {
     CodeAgent,
     /// Non-code assistant / creative conversational agent.
     Assistant,
+    /// Host-supplied system prompt — full control over base identity.
+    ///
+    /// Skills, AGENTS.md, context packets, and memory injection still flow
+    /// through the default renderer as developer messages on top of this
+    /// custom base. Use this when the host application needs to own the
+    /// system prompt entirely (e.g. roleplay / GM personas).
+    Custom(String),
 }
 
 impl NaviPromptProfile {
@@ -64,10 +71,11 @@ impl NaviPromptProfile {
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Self::CodeAgent => "code_agent",
             Self::Assistant => "assistant",
+            Self::Custom(_) => "custom",
         }
     }
 }
@@ -195,13 +203,13 @@ impl ProfilePromptBuilder {
     }
 
     pub fn profile(&self) -> NaviPromptProfile {
-        self.profile
+        self.profile.clone()
     }
 }
 
 impl PromptBuilder for ProfilePromptBuilder {
     fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt {
-        match self.profile {
+        match &self.profile {
             NaviPromptProfile::CodeAgent => DefaultPromptBuilder.build(input, cache),
             NaviPromptProfile::Assistant => {
                 let project = input.project_dir.display().to_string();
@@ -209,6 +217,14 @@ impl PromptBuilder for ProfilePromptBuilder {
                 // Replace the code-agent base identity while keeping dynamic
                 // developer messages (skills, context packets, memory).
                 rendered.instructions = assistant_system_prompt(&project);
+                rendered
+            }
+            NaviPromptProfile::Custom(prompt) => {
+                let mut rendered = DefaultPromptBuilder.build(input, cache);
+                // Replace the base identity with the host-supplied prompt.
+                // Developer messages (skills, context packets, memory, AGENTS.md)
+                // are preserved from the default renderer.
+                rendered.instructions = prompt.clone();
                 rendered
             }
         }
@@ -288,6 +304,37 @@ mod tests {
         assert!(assistant.contains("assistant mode"));
         assert_ne!(code, assistant);
         assert!(!assistant.contains("autonomous code agent"));
+    }
+
+    #[test]
+    fn custom_prompt_replaces_base_identity() {
+        let cache = Arc::new(PromptCache::new());
+        let input = || SystemPromptInput {
+            config: NaviConfig::default(),
+            project_dir: PathBuf::from("/tmp/proj"),
+            memory_injection: None,
+            tools: Vec::new(),
+            include_tool_prompt_manifest: false,
+            context_packets: Vec::new(),
+            available_skills: Vec::new(),
+            active_skills: Vec::new(),
+            skill_pools: Vec::new(),
+            harness_card: None,
+        };
+        let custom = "You are a Game Master narrating a roleplay session.";
+        let rendered = ProfilePromptBuilder::new(NaviPromptProfile::Custom(custom.into()))
+            .build(input(), cache)
+            .instructions;
+        assert_eq!(rendered, custom);
+        assert!(!rendered.contains("code agent"));
+        assert!(!rendered.contains("assistant mode"));
+        assert!(!rendered.contains("autonomous"));
+    }
+
+    #[test]
+    fn custom_profile_as_str_returns_custom() {
+        assert_eq!(NaviPromptProfile::Custom("test".into()).as_str(), "custom");
+        assert_eq!(NaviPromptProfile::CodeAgent.as_str(), "code_agent");
     }
 
     #[test]
