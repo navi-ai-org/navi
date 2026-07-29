@@ -113,7 +113,7 @@ enum Commands {
         #[command(subcommand)]
         action: RegistryAction,
     },
-    /// Headless browser tool backend (CloakBrowser / Chrome / CDP)
+    /// Headless browser tool backend (Chrome / Chromium / CDP)
     Browser {
         #[command(subcommand)]
         action: BrowserAction,
@@ -240,7 +240,7 @@ pub enum BrowserAction {
     Status,
     /// Diagnose binary discovery and print install hints (JSON)
     Doctor,
-    /// Print install instructions for CloakBrowser / Chrome / cloakserve
+    /// Print install instructions for Chrome / Chromium / CDP
     Install,
 }
 

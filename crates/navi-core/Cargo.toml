@@ -45,8 +45,6 @@ tempfile.workspace = true
 default = ["code-vfs", "browser"]
 code-vfs = ["dep:navi-vfs"]
 browser = ["dep:navi-browser"]
-# Prefer CloakBrowser Rust client (playwright-rs + stealth binary).
-browser-cloak = ["browser", "navi-browser/cloakbrowser"]
 embeddings = [
     "dep:candle-core",
     "dep:candle-transformers",

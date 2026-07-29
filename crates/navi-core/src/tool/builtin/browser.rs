@@ -43,7 +43,6 @@ impl BrowserTool {
             proxy: c.proxy.clone(),
             timeout_ms: c.timeout_ms,
             binary_path: c.binary_path.clone(),
-            humanize: c.humanize,
         }
     }
 
@@ -76,7 +75,7 @@ impl Tool for BrowserTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "browser",
-            "Control a headless browser via the pluggable NAVI browser engine (CloakBrowser Rust binding when registered; CDP fallback otherwise). \
+            "Control a headless browser via CDP (Chrome/Chromium or an existing CDP endpoint). \
 Actions: status, open, goto, snapshot, screenshot, click, type, press, content, evaluate, close, doctor. \
 Use to test local web UIs, research pages, and capture screenshots. Screenshots are saved under the NAVI data directory.",
             ToolKind::Command,

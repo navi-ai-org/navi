@@ -3,23 +3,20 @@ name = "navi-browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Pluggable browser backend for NAVI (CloakBrowser-first engine contract)."
+description = "CDP-only browser backend for the NAVI `browser` tool."
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
 
 [features]
 default = ["cdp-fallback"]
-# Temporary CDP/Chrome process backend.
+# CDP/Chrome process backend.
 cdp-fallback = [
     "dep:base64",
     "dep:futures-util",
     "dep:reqwest",
     "dep:tokio-tungstenite",
 ]
-# CloakBrowser Rust client (PR https://github.com/CloakHQ/CloakBrowser/pull/438).
-# Path points at a local checkout of the PR branch; switch to git/crates.io after merge.
-cloakbrowser = ["dep:cloakbrowser", "dep:playwright-rs"]
 
 [dependencies]
 anyhow.workspace = true
@@ -39,14 +36,6 @@ tokio-tungstenite = { version = "0.30", default-features = false, optional = tru
     "connect",
     "rustls-tls-webpki-roots",
 ] }
-
-# CloakBrowser Rust client (community PR #438). Override path via:
-#   [patch] or CARGO_HOME path, or change this path after merge.
-# Local PR checkout (enrell lab). After upstream merge, switch to git/crates.io.
-# version required for crates.io packaging; local path used in-tree. The
-# feature is optional and off by default (stub package is not published).
-cloakbrowser = { version = "0.0.0", path = "vendor/cloakbrowser", optional = true }
-playwright-rs = { version = "0.14", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

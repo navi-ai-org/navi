@@ -39,8 +39,6 @@ navi-voice = { workspace = true, default-features = false }
 # embeddings come from navi-core dep features above (not a cargo feature flag).
 default = []
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
-# CloakBrowser Rust engine (requires local PR checkout path or git dep).
-browser-cloak = ["navi-core/browser-cloak"]
 
 [dev-dependencies]
 wiremock.workspace = true

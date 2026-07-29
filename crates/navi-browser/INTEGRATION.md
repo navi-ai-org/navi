@@ -1,39 +1,14 @@
-# Integrating a CloakBrowser Rust binding with NAVI
+# Integrating an external browser engine with NAVI
 
-Upstream PR: [CloakHQ/CloakBrowser#438](https://github.com/CloakHQ/CloakBrowser/pull/438)
-(community Rust client under `rust/`, playwright-rs + stealth binary).
-
-NAVI does **not** depend on Python/Node CloakBrowser wrappers for the preferred
-path. The agent-facing tool (`browser`) talks only to the traits in this crate.
-
-## Built-in adapter (feature `cloakbrowser`)
-
-With `navi-browser` feature `cloakbrowser` enabled, NAVI ships
-`engines/cloakbrowser.rs` which implements the contract against the PR crate:
-
-```toml
-# crates/navi-browser/Cargo.toml (already wired)
-cloakbrowser = { path = "vendor/cloakbrowser", optional = true }
-# For a real CloakBrowser PR checkout, patch in root Cargo.toml:
-# [patch.crates-io]  # or path override:
-# cloakbrowser = { path = "../../../lab/CloakBrowser-rust/rust/cloakbrowser" }
-```
-
-Enable from the binary:
-
-```bash
-cargo run -p navi-cli --features browser-cloak
-# or
-cargo build -p navi-core --features browser-cloak
-```
-
-After the PR merges, switch the dep to git/crates.io and drop the local path.
+`navi-browser` exposes a small `BrowserEngine` / `BrowserEngineFactory` trait
+contract. The built-in backend uses CDP (Chrome DevTools Protocol) to drive a
+local Chrome/Chromium process or connect to an existing `cdp_url`. If you want
+to add a custom browser engine, implement the traits and register your factory
+at process startup.
 
 ## What you implement
 
 ### 1. `BrowserEngine` — live session
-
-Map CloakBrowser APIs onto:
 
 | Method | Purpose |
 |---|---|
@@ -51,8 +26,8 @@ Map CloakBrowser APIs onto:
 
 | Method | Purpose |
 |---|---|
-| `id` | Stable id, use `"cloakbrowser"` |
-| `available` | Binary/license present for this config? |
+| `id` | Stable backend id |
+| `available` | Can this factory serve the current config? |
 | `doctor` | JSON-friendly diagnostics + hints |
 | `create` | Return `Arc<dyn BrowserEngine>` using `EngineContext` |
 
@@ -71,40 +46,29 @@ In the host that links both crates (`navi-cli`, `navi-sdk` consumer, tests):
 use std::sync::Arc;
 
 fn main() {
-    // Your crate:
-    navi_browser::set_engine_factory(Arc::new(cloakbrowser_navi::Factory::default()));
+    navi_browser::set_engine_factory(Arc::new(my_engine::Factory::default()));
 
-    // Then start NAVI as usual…
+    // Then start NAVI as usual...
 }
 ```
 
-With `backend = "auto"`, the primary factory is preferred when `available` is true.
-CDP fallback (feature `cdp-fallback`) is only used if no primary is registered or it is unavailable.
-
-## Suggested crate layout
-
-```text
-cloakbrowser/           # low-level FFI / binding to stealth Chromium
-cloakbrowser-navi/      # optional: implements BrowserEngineFactory
-navi (navi-browser)     # traits + session + tool
-```
-
-Or implement the traits directly inside the binding crate under a `navi` feature.
+With `backend = "auto"`, the registered factory is preferred when `available`
+is true. The built-in CDP fallback is used when no external factory is
+registered or it reports unavailable.
 
 ## Config knobs (already in NAVI)
 
 ```toml
 [browser]
 enabled = true
-backend = "auto"          # or "cloakbrowser" once factory id matches
+backend = "auto"          # or "cdp" for the built-in CDP backend
 headless = true
 allow_private_network = true
 proxy = ""
 timeout_ms = 30000
-binary_path = ""          # optional override for the stealth binary
+binary_path = ""          # optional override for the browser binary
+cdp_url = ""              # existing CDP endpoint, e.g. http://127.0.0.1:9222
 ```
-
-Pass `BrowserRuntimeConfig` fields into your launcher (headless, proxy, binary_path, timeout).
 
 ## URL safety
 
@@ -114,25 +78,10 @@ pre-validated but should still fail closed on `file://` if called directly.
 
 ## Checklist for the binding author
 
-- [ ] Implement `BrowserEngine` + `BrowserEngineFactory` (`id = "cloakbrowser"`)
+- [ ] Implement `BrowserEngine` + `BrowserEngineFactory`
 - [ ] Honor `EngineContext.profile_dir` / `artifacts_dir` (no project-local state)
 - [ ] Support headless + optional proxy from `BrowserRuntimeConfig`
 - [ ] Call `navi_browser::set_engine_factory` from the host binary (or provide a
       `navi-sdk` hook / feature that does it)
 - [ ] `doctor()` returns clear install/license hints
 - [ ] Tests with a mock page or recorded fixture (no network in CI if possible)
-
-## Enabling in Cargo (when ready)
-
-In `crates/navi-browser/Cargo.toml`:
-
-```toml
-[features]
-cloakbrowser = ["dep:your-cloakbrowser-crate"]
-
-[dependencies]
-your-cloakbrowser-crate = { path = "../../../cloakbrowser", optional = true }
-```
-
-Then implement `src/engines/cloakbrowser.rs` as a thin adapter, **or** keep
-registration host-side only (preferred for decoupling versioning).

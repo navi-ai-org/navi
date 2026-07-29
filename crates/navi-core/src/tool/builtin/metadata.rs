@@ -185,7 +185,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                     "browser.navigate".to_string(),
                     "network.external".to_string(),
                 ],
-                tags: vec!["browser", "web", "screenshot", "cdp", "cloakbrowser"]
+                tags: vec!["browser", "web", "screenshot", "cdp"]
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect(),

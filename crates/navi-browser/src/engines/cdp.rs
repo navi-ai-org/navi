@@ -1,6 +1,6 @@
-//! CDP fallback engine (Chrome / CloakBrowser binary via remote debugging).
+//! CDP engine (Chrome / Chromium / any CDP-compatible browser).
 //!
-//! This is temporary until the CloakBrowser Rust binding is wired as the primary factory.
+//! Connects to an existing CDP endpoint or launches a local browser process.
 
 mod launch {
     include!("cdp_launch.rs");
@@ -18,10 +18,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
-use launch::{
-    BrowserBackendKind, LaunchOptions, LaunchedBrowser, cdp_http_ready, discover_browser,
-    launch_browser,
-};
+use launch::{LaunchOptions, LaunchedBrowser, cdp_http_ready, discover_browser, launch_browser};
 use protocol::{CdpConnection, new_page_ws};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -54,22 +51,13 @@ impl BrowserEngineFactory for CdpEngineFactory {
         let mut hints = Vec::new();
         if !config.cdp_url.trim().is_empty() {
             hints.push(format!(
-                "CDP URL configured: {} — ensure cloakserve/Chrome remote debugging is running.",
+                "CDP URL configured: {} — ensure Chrome/Chromium remote debugging is running.",
                 config.cdp_url
             ));
         } else if binary.is_none() {
             hints.push(
-                "CDP fallback: no Chrome/Chromium/CloakBrowser binary found. \
-                 Prefer the CloakBrowser Rust binding when ready."
-                    .into(),
-            );
-        } else if matches!(
-            binary.as_ref().map(|b| b.kind),
-            Some(BrowserBackendKind::CloakBrowser)
-        ) {
-            hints.push(
-                "Found CloakBrowser *binary* (CDP process launch). \
-                 Still prefer the native Rust binding for full API/stealth control."
+                "CDP: no Chrome/Chromium binary found. Install a Chromium-compatible browser \
+                 or set an existing CDP endpoint with `cdp_url`."
                     .into(),
             );
         }
@@ -360,8 +348,8 @@ impl CdpEngine {
                 &self.config.backend,
             )
             .context(
-                "no browser binary for CDP fallback — register CloakBrowser Rust binding \
-                     via navi_browser::set_engine_factory, or install Chrome/Chromium",
+                "no browser binary for CDP — install Chrome/Chromium or configure an existing \
+                     CDP endpoint with `cdp_url`",
             )?;
             let launched = launch_browser(
                 &binary,

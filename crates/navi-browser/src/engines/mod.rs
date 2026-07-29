@@ -1,10 +1,7 @@
 //! Built-in engine implementations.
 //!
-//! Prefer registering an external CloakBrowser Rust binding via
-//! [`crate::set_engine_factory`]. CDP is only a temporary fallback.
+//! CDP is the only built-in backend. External engines can still be registered
+//! via [`crate::set_engine_factory`].
 
 #[cfg(feature = "cdp-fallback")]
 pub mod cdp;
-
-#[cfg(feature = "cloakbrowser")]
-pub mod cloakbrowser;
