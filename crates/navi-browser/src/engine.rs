@@ -1,8 +1,7 @@
 //! Stable engine contract for browser backends.
 //!
-//! The CloakBrowser Rust binding (or any other driver) implements
-//! [`BrowserEngine`] / [`BrowserEngineFactory`] and registers via
-//! [`crate::set_engine_factory`].
+//! Any browser driver can implement [`BrowserEngine`] / [`BrowserEngineFactory`]
+//! and register via [`crate::set_engine_factory`]. The built-in backend uses CDP.
 
 use crate::config::BrowserRuntimeConfig;
 use anyhow::Result;
@@ -74,11 +73,11 @@ pub struct DoctorReport {
 
 /// High-level browser driver used by the NAVI `browser` tool.
 ///
-/// Implement this on top of the CloakBrowser Rust binding (preferred) or any
-/// other automation stack. Keep methods stable — the tool schema maps 1:1.
+/// Implement this on top of any automation stack. Keep methods stable — the tool
+/// schema maps 1:1.
 #[async_trait]
 pub trait BrowserEngine: Send + Sync {
-    /// Backend id for diagnostics (`cloakbrowser`, `cdp`, …).
+    /// Backend id for diagnostics (e.g. `cdp`).
     fn backend_id(&self) -> &str;
 
     /// Ensure browser + at least one page are ready.
@@ -108,9 +107,9 @@ pub trait BrowserEngine: Send + Sync {
 
 /// Creates [`BrowserEngine`] instances for a given config.
 ///
-/// Register the preferred factory (CloakBrowser binding) at process start:
+/// Register a factory at process start:
 /// ```ignore
-/// navi_browser::set_engine_factory(Arc::new(MyCloakFactory));
+/// navi_browser::set_engine_factory(Arc::new(MyFactory));
 /// ```
 pub trait BrowserEngineFactory: Send + Sync {
     fn id(&self) -> &str;

@@ -1,4 +1,7 @@
 //! Global engine factory registry.
+//!
+//! CDP is the only built-in backend. External engines can be registered via
+//! [`set_engine_factory`]; otherwise the CDP fallback is used.
 
 use crate::config::BrowserRuntimeConfig;
 use crate::engine::{BrowserEngine, BrowserEngineFactory, DoctorReport, EngineContext};
@@ -9,12 +12,9 @@ use std::sync::{Arc, RwLock};
 static FACTORY: RwLock<Option<Arc<dyn BrowserEngineFactory>>> = RwLock::new(None);
 static FALLBACKS: RwLock<Vec<Arc<dyn BrowserEngineFactory>>> = RwLock::new(Vec::new());
 
-/// Install the primary browser engine factory (typically CloakBrowser Rust binding).
+/// Install a primary browser engine factory (e.g. an external CDP-based engine).
 ///
-/// Call once during process startup from the host that links the binding, e.g.:
-/// ```ignore
-/// navi_browser::set_engine_factory(Arc::new(cloakbrowser_navi::Factory::default()));
-/// ```
+/// Call once during process startup from the host that links the binding.
 pub fn set_engine_factory(factory: Arc<dyn BrowserEngineFactory>) {
     if let Ok(mut slot) = FACTORY.write() {
         *slot = Some(factory);
@@ -44,20 +44,9 @@ pub fn primary_factory() -> Option<Arc<dyn BrowserEngineFactory>> {
 
 fn all_factories() -> Vec<Arc<dyn BrowserEngineFactory>> {
     let mut out = Vec::new();
-    // Primary: host-registered factory (set_engine_factory), else built-in CloakBrowser.
+    // Primary: host-registered factory (set_engine_factory).
     if let Some(p) = primary_factory() {
         out.push(p);
-    }
-    #[cfg(feature = "cloakbrowser")]
-    {
-        if !out
-            .iter()
-            .any(|f| f.id() == crate::engines::cloakbrowser::FACTORY_ID)
-        {
-            out.push(Arc::new(
-                crate::engines::cloakbrowser::CloakBrowserEngineFactory,
-            ));
-        }
     }
     if let Ok(list) = FALLBACKS.read() {
         out.extend(list.iter().cloned());
@@ -78,8 +67,8 @@ pub fn resolve_factory(config: &BrowserRuntimeConfig) -> Result<Arc<dyn BrowserE
     let factories = all_factories();
     if factories.is_empty() {
         bail!(
-            "no browser engine factory registered — link the CloakBrowser Rust binding \
-             and call navi_browser::set_engine_factory(...), or enable feature `cdp-fallback`"
+            "no browser engine factory registered — enable feature `cdp-fallback` \
+             or call navi_browser::set_engine_factory(...) with an external engine"
         );
     }
 
@@ -132,16 +121,13 @@ pub fn doctor_report(config: &BrowserRuntimeConfig) -> serde_json::Value {
 
     let mut hints = Vec::new();
     if primary.is_none() {
-        hints.push(
-            "No CloakBrowser Rust binding registered. When your binding is ready, call \
-             navi_browser::set_engine_factory(Arc::new(...)) at process startup."
-                .into(),
-        );
+        hints
+            .push("No external browser engine registered. Using the built-in CDP fallback.".into());
     }
     if !factories.iter().any(|f| f.available(config)) {
         hints.push(
-            "No available browser backend. Install CloakBrowser (via the Rust binding) \
-             or enable/configure the CDP fallback."
+            "No available browser backend. Install Chrome/Chromium or configure an existing \
+             CDP endpoint with `cdp_url`."
                 .into(),
         );
     }

@@ -16,7 +16,6 @@ pub async fn handle_browser_command(
         proxy: c.proxy.clone(),
         timeout_ms: c.timeout_ms,
         binary_path: c.binary_path.clone(),
-        humanize: c.humanize,
     };
 
     match action {
@@ -37,16 +36,10 @@ pub async fn handle_browser_command(
         }
         crate::BrowserAction::Install => {
             println!("Browser backends for the NAVI `browser` tool:\n");
-            println!("  1) CloakBrowser Rust client (preferred) — PR #438");
-            println!("     Build NAVI with the engine feature:");
-            println!("       cargo run -p navi-cli --features browser-cloak");
-            println!("     Point navi-browser at your checkout (default path in Cargo.toml):");
-            println!("       lab/CloakBrowser-rust/rust/cloakbrowser");
-            println!("     First use downloads the stealth Chromium binary (~200MB).");
-            println!("     See crates/navi-browser/INTEGRATION.md\n");
-            println!("  2) CDP fallback (feature cdp-fallback, default without browser-cloak)");
-            println!("     - Google Chrome / Chromium, or:");
-            println!("       docker run -d -p 127.0.0.1:9222:9222 cloakhq/cloakbrowser cloakserve");
+            println!("  CDP (Chrome DevTools Protocol)");
+            println!("     - Google Chrome / Chromium installed locally, or:");
+            println!("     - Any CDP-compatible browser running with remote debugging:");
+            println!("       google-chrome --remote-debugging-port=9222");
             println!("       # [browser] backend = \"cdp\", cdp_url = \"http://127.0.0.1:9222\"");
             println!();
             println!("  Then run: navi browser doctor");

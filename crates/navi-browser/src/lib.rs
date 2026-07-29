@@ -1,20 +1,20 @@
 //! Pluggable browser backend for NAVI.
 //!
-//! # Primary path (preferred)
+//! # Built-in backend
 //!
-//! Implement [`BrowserEngine`] + [`BrowserEngineFactory`] in the CloakBrowser
-//! Rust binding (or a thin adapter crate) and register at process startup:
+//! Feature `cdp-fallback` (default) provides a Chrome/Chromium CDP process
+//! engine, or connects to an existing `cdp_url`.
+//!
+//! # Custom engines
+//!
+//! Implement [`BrowserEngine`] + [`BrowserEngineFactory`] in an adapter crate and
+//! register at process startup:
 //!
 //! ```ignore
-//! navi_browser::set_engine_factory(std::sync::Arc::new(MyCloakFactory));
+//! navi_browser::set_engine_factory(std::sync::Arc::new(MyFactory));
 //! ```
 //!
 //! See [`INTEGRATION.md`](../INTEGRATION.md) for the full contract.
-//!
-//! # Fallback
-//!
-//! Feature `cdp-fallback` (default) provides a temporary Chrome/CloakBrowser
-//! *binary* + CDP process engine until the Rust binding is ready.
 
 mod config;
 mod engine;

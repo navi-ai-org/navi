@@ -9,7 +9,6 @@ use tokio::time::sleep;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserBackendKind {
-    CloakBrowser,
     Chrome,
     Chromium,
 }
@@ -43,73 +42,21 @@ impl Drop for LaunchedBrowser {
     }
 }
 
-/// Find a browser binary: CloakBrowser first, then Chrome/Chromium.
-pub fn discover_browser(
-    cloak_binary_path: Option<&Path>,
-    preferred: &str,
-) -> Option<BrowserBinary> {
+/// Find a Chrome/Chromium binary on the system.
+///
+/// `explicit` is an optional override path from `binary_path` config.
+pub fn discover_browser(explicit: Option<&Path>, preferred: &str) -> Option<BrowserBinary> {
     let preferred = preferred.trim().to_ascii_lowercase();
+    if let Some(p) = explicit && p.is_file() {
+        // Accept any explicit binary the user points at (e.g. a Chromium fork).
+        return Some(BrowserBinary { path: p.to_path_buf(), kind: BrowserBackendKind::Chromium });
+    }
     match preferred.as_str() {
         "chrome" => find_system_chrome(),
         "chromium" => find_system_chromium().or_else(find_system_chrome),
-        "cloakbrowser" => find_cloakbrowser(cloak_binary_path),
-        _ => find_cloakbrowser(cloak_binary_path)
-            .or_else(find_system_chrome)
+        _ => find_system_chrome()
             .or_else(find_system_chromium),
     }
-}
-
-fn find_cloakbrowser(explicit: Option<&Path>) -> Option<BrowserBinary> {
-    if let Some(p) = explicit
-        && p.is_file() {
-            return Some(BrowserBinary {
-                path: p.to_path_buf(),
-                kind: BrowserBackendKind::CloakBrowser,
-            });
-        }
-    if let Ok(env) = std::env::var("CLOAKBROWSER_BINARY_PATH") {
-        let p = PathBuf::from(env);
-        if p.is_file() {
-            return Some(BrowserBinary {
-                path: p,
-                kind: BrowserBackendKind::CloakBrowser,
-            });
-        }
-    }
-    // Common CloakBrowser cache layouts (~/.cloakbrowser/chromium-*/...)
-    let home = dirs_home()?;
-    let cache = home.join(".cloakbrowser");
-    if cache.is_dir()
-        && let Ok(entries) = std::fs::read_dir(&cache) {
-            let mut candidates: Vec<PathBuf> = entries
-                .flatten()
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| n.starts_with("chromium"))
-                })
-                .collect();
-            candidates.sort();
-            candidates.reverse();
-            for dir in candidates {
-                for name in [
-                    "chrome",
-                    "chrome.exe",
-                    "Chromium",
-                    "Chromium.app/Contents/MacOS/Chromium",
-                ] {
-                    let bin = dir.join(name);
-                    if bin.is_file() {
-                        return Some(BrowserBinary {
-                            path: bin,
-                            kind: BrowserBackendKind::CloakBrowser,
-                        });
-                    }
-                }
-            }
-        }
-    None
 }
 
 fn find_system_chrome() -> Option<BrowserBinary> {
@@ -178,12 +125,6 @@ fn which_exists(cmd: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
 }
 
 pub fn pick_free_port() -> Result<u16> {

@@ -54,21 +54,11 @@ run_tests() {
 
 if [[ "${DOCKER:-1}" == "1" ]]; then
   echo "Running binding tests in Docker (rust:bookworm)..."
-  # navi-browser optionally depends on a local CloakBrowser checkout:
-  # crates/navi-browser -> ../../../../lab/CloakBrowser-rust/...
-  # With the repo mounted at /work, that resolves to /lab/...
-  HOST_LAB="$(cd "$ROOT/../../lab" 2>/dev/null && pwd || true)"
-  DOCKER_LAB_MOUNT=()
-  if [[ -n "${HOST_LAB}" && -d "${HOST_LAB}" ]]; then
-    DOCKER_LAB_MOUNT=(-v "${HOST_LAB}:/lab:ro")
-  fi
-
   docker run --rm \
     -v "$ROOT":/work \
     -v navi-cargo-registry:/usr/local/cargo/registry \
     -v navi-cargo-git:/usr/local/cargo/git \
     -v navi-target-cache:/work/target \
-    "${DOCKER_LAB_MOUNT[@]}" \
     -e CARGO_HOME=/usr/local/cargo \
     -e PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e NAVI_NO_REGISTRY_UPDATE=1 \
