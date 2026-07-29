@@ -133,7 +133,11 @@ pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
         .get(app.selected_model)
         .map(|m| m.provider_id.clone())
         .unwrap_or_else(|| app.loaded_config.config.model.provider.clone());
-    app.loaded_config.config.skills.active = app.active_skills.clone();
+    // NOTE: `app.active_skills` (session-active harness skills) is intentionally
+    // NOT persisted to `config.skills.active`. That field controls catalog
+    // visibility (managed by `navi skill install` / config authoring), not
+    // session activation. Persisting here would conflate the two and re-lock the
+    // session on every restart for any harness-flagged skill the user toggled.
     let tui = &mut app.loaded_config.config.tui;
     tui.theme = app.theme_id.config_value().to_string();
     tui.show_thinking = app.show_thinking;

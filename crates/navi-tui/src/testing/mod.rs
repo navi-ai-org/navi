@@ -113,6 +113,7 @@ impl Harness {
             test_loaded_config(config.data_dir.clone()),
             config.project_dir.clone(),
             None,
+            Vec::new(),
             engine,
         )
         .expect("test app");

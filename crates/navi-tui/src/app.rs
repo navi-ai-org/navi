@@ -296,20 +296,27 @@ impl TuiApp {
         loaded_config: LoadedConfig,
         project_dir: PathBuf,
         task: Option<String>,
+        cli_active_skills: Vec<String>,
     ) -> Result<Self> {
         let engine: Arc<dyn EngineDriver> =
             Arc::new(build_engine(&loaded_config, project_dir.clone())?);
-        Self::new_with_engine(loaded_config, project_dir, task, engine)
+        Self::new_with_engine(loaded_config, project_dir, task, cli_active_skills, engine)
     }
 
     /// Construct a [`TuiApp`] with a caller-supplied engine driver.
     ///
     /// Used by tests to inject [`crate::testing::MockEngine`] and skip the real
     /// [`navi_sdk::NaviEngine`] build (registry, tools, session runtime).
+    ///
+    /// `cli_active_skills` carries skills activated via `--skill` on the CLI.
+    /// Unlike `config.skills.active` (catalog visibility only), these are
+    /// session-active and may soft-apply harness packs. Catalog-visible skills
+    /// that the user did not explicitly activate must never lock the session.
     pub fn new_with_engine(
         loaded_config: LoadedConfig,
         project_dir: PathBuf,
         task: Option<String>,
+        cli_active_skills: Vec<String>,
         engine: Arc<dyn EngineDriver>,
     ) -> Result<Self> {
         // Initialize the thread-local registry store from the SQLite cache before
@@ -341,7 +348,12 @@ impl TuiApp {
         let system_prompt = build_system_prompt(&loaded_config.config, &project_dir);
         let log_path = log_path(&loaded_config.data_dir);
         let context_window = effective_context_window(&loaded_config.config);
-        let initial_active_skills = loaded_config.config.skills.active.clone();
+        // Session-active skills come only from explicit activation (`--skill` CLI
+        // flag or TUI toggle). `config.skills.active` controls catalog visibility
+        // (which skills appear in the picker) — it must NOT soft-apply harness
+        // packs, otherwise merely installing a harness-flagged skill locks the
+        // session and blocks core tools like `edit`.
+        let initial_active_skills = cli_active_skills;
         let show_thinking = loaded_config.config.tui.show_thinking;
         let full_tool_view = loaded_config.config.tui.full_tool_view;
         let compact_tool_visible_limit = loaded_config
@@ -577,7 +589,7 @@ impl TuiApp {
     /// Opens the model picker and transitions to the setup interview when
     /// a provider is configured.
     pub fn setup_mode(loaded_config: LoadedConfig, project_dir: PathBuf) -> Result<Self> {
-        let mut app = Self::new(loaded_config, project_dir, None)?;
+        let mut app = Self::new(loaded_config, project_dir, None, Vec::new())?;
         app.setup_phase = Some(crate::state::SetupPhase::ProviderLogin);
         app.mode = Mode::Setup;
         // Open model picker immediately so the user can select a provider.

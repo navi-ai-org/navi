@@ -661,10 +661,12 @@ async fn main() -> Result<()> {
 
     // Onboarding wizard removed — config v2 doesn't track onboarding_completed
     // The TUI will now start normally and prompt for setup if needed.
-    // TUI seeds app.active_skills from loaded_config.config.skills.active (set above when --skill).
+    // `cli_skills` (from --skill) are passed as session-active skills for harness
+    // activation; `config.skills.active` (set above when --skill) controls only
+    // catalog visibility.
 
     tracing::info!(project = %cwd.display(), "starting TUI");
-    navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task)?)?;
+    navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task, cli_skills)?)?;
     Ok(())
 }
 

@@ -79,6 +79,7 @@ pub(crate) fn test_app(input: &str) -> TuiApp {
         },
         PathBuf::from("/tmp/test-project"),
         None,
+        Vec::new(),
         engine,
     )
     .expect("test app");
@@ -150,6 +151,7 @@ fn app_with_missing_provider_key() -> TuiApp {
         },
         PathBuf::from("/tmp/test-project"),
         None,
+        Vec::new(),
         engine,
     )
     .expect("test app")
@@ -1553,6 +1555,7 @@ fn model_picker_clips_long_rows_inside_modal_border() {
         },
         PathBuf::from("/tmp/test-project"),
         None,
+        Vec::new(),
         mock,
     )
     .expect("test app");
@@ -3000,6 +3003,7 @@ fn tui_preferences_load_from_config() {
         },
         PathBuf::from("/tmp/test-project"),
         None,
+        Vec::new(),
         Arc::new(crate::testing::MockEngine::new()),
     )
     .expect("test app");
@@ -3010,7 +3014,11 @@ fn tui_preferences_load_from_config() {
     assert_eq!(app.compact_tool_visible_limit, 8);
     assert_eq!(app.thinking_level, crate::state::ThinkingLevel::Low);
     assert!(app.yolo_mode);
-    assert_eq!(app.active_skills, vec!["demo-skill".to_string()]);
+    // config.skills.active controls catalog visibility, NOT session activation.
+    // The TUI must not seed app.active_skills from it — otherwise merely
+    // installing a harness-flagged skill locks the session and blocks core
+    // tools like `edit`.
+    assert_eq!(app.active_skills, Vec::<String>::new());
 }
 
 #[test]
