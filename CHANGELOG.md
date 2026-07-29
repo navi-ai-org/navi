@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-29
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.4...v0.4.5
+
+### Added
+
+- **Custom system prompt profile** — Host applications can now replace the base
+  system prompt identity entirely via `NaviPromptProfile::Custom(String)` (Rust
+  SDK) or `customPromptProfile(prompt)` (N-API). Previously only `code_agent` and
+  `assistant` identities were available, which forced RP/creative hosts to
+  inherit a "helpful assistant" persona that fought their intended character.
+  Skills, context packets, memory injection, and AGENTS.md still attach as
+  developer messages on top of the custom base, preserving the existing lore and
+  context pipeline. The `promptProfile` getter returns `"custom"` when active.
+
+### Changed
+
+- `NaviPromptProfile` no longer derives `Copy` (the `Custom(String)` variant is
+  not `Copy`). Callers that relied on implicit copies now need `.clone()`.
+  navi-sdk is path-local (not on crates.io), so this only affects in-repo
+  consumers.
+
 ## [0.4.4] - 2026-07-28
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.3...v0.4.4

@@ -205,7 +205,8 @@ impl NaviEngineBuilder {
 
         let mut runtime_components = self.runtime_components;
         if !self.prompt_overridden {
-            runtime_components.prompt = Arc::new(ProfilePromptBuilder::new(self.prompt_profile));
+            runtime_components.prompt =
+                Arc::new(ProfilePromptBuilder::new(self.prompt_profile.clone()));
         }
 
         let host_tool_names: HashSet<String> = self
@@ -254,7 +255,7 @@ impl NaviEngineBuilder {
                 tool_profile: self.tool_profile,
                 allow_tools: self.allow_tools,
                 deny_tools: self.deny_tools,
-                prompt_profile: self.prompt_profile,
+                prompt_profile: self.prompt_profile.clone(),
                 security_profile: self.security_profile,
                 runtime_components,
                 sessions: RwLock::new(HashMap::new()),
@@ -833,7 +834,7 @@ impl NaviEngine {
 
     /// Active prompt profile for this engine.
     pub fn prompt_profile(&self) -> NaviPromptProfile {
-        self.inner.prompt_profile
+        self.inner.prompt_profile.clone()
     }
 
     /// Active security profile for this engine.

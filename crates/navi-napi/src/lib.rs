@@ -132,6 +132,7 @@ pub struct NaviNapiEngineBuilder {
     allow_tools: Option<Vec<String>>,
     deny_tools: Option<Vec<String>>,
     prompt_profile: Option<String>,
+    custom_prompt_profile: Option<String>,
     security_profile: Option<String>,
     permission_mode: Option<String>,
 }
@@ -171,6 +172,7 @@ impl NaviNapiEngineBuilder {
             allow_tools: None,
             deny_tools: None,
             prompt_profile: None,
+            custom_prompt_profile: None,
             security_profile: None,
             permission_mode: None,
         }
@@ -212,6 +214,17 @@ impl NaviNapiEngineBuilder {
     #[napi(js_name = "promptProfile")]
     pub fn prompt_profile(&mut self, profile: String) {
         self.prompt_profile = Some(profile);
+    }
+
+    /// Custom system prompt — replaces the base identity entirely.
+    ///
+    /// Skills, context packets, and memory injection still attach as developer
+    /// messages on top of this custom base. Use this when the host application
+    /// needs full control over the system prompt (e.g. roleplay / GM personas).
+    /// Overrides any prior `promptProfile` setting.
+    #[napi(js_name = "customPromptProfile")]
+    pub fn custom_prompt_profile(&mut self, prompt: String) {
+        self.custom_prompt_profile = Some(prompt);
     }
 
     /// Security profile: `code_agent` | `host_app`.
@@ -326,7 +339,9 @@ impl NaviNapiEngineBuilder {
         if let Some(names) = self.deny_tools.take() {
             builder = builder.deny_tools(names);
         }
-        if let Some(profile) = self.prompt_profile.take() {
+        if let Some(prompt) = self.custom_prompt_profile.take() {
+            builder = builder.prompt_profile(NaviPromptProfile::Custom(prompt));
+        } else if let Some(profile) = self.prompt_profile.take() {
             let p = NaviPromptProfile::parse(&profile).ok_or_else(|| {
                 to_napi_error(anyhow::anyhow!(
                     "invalid prompt profile `{profile}`; expected code_agent or assistant"
