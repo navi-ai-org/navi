@@ -150,6 +150,8 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "delete_saved_session_async",
     "rename_saved_session",
     "rename_saved_session_async",
+    "export_session_atif",
+    "export_session_atif_async",
     // Permissions / host profiles
     "get_permission_mode",
     "set_permission_mode",
@@ -312,6 +314,8 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "delete_saved_session_async",
     "rename_saved_session",
     "rename_saved_session_async",
+    "export_session_atif",
+    "export_session_atif_async",
     // Permissions / host profiles
     "get_permission_mode",
     "set_permission_mode",

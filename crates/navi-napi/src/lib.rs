@@ -1542,6 +1542,33 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
+    /// Exports a persisted session as an ATIF v1.7 trajectory JSON document.
+    ///
+    /// When `redact` is true, secret-like event content is scrubbed before
+    /// folding. The returned string is a complete ATIF trajectory suitable for
+    /// external SFT / RL / analysis pipelines.
+    #[napi]
+    pub async fn export_session_atif(&self, session_id: String, redact: bool) -> Result<String> {
+        self.inner
+            .export_session_atif_async(&session_id, redact)
+            .await
+            .map_err(to_napi_error)
+    }
+
+    /// Async alias of [`Self::export_session_atif`] for explicit non-blocking
+    /// call sites.
+    #[napi]
+    pub async fn export_session_atif_async(
+        &self,
+        session_id: String,
+        redact: bool,
+    ) -> Result<String> {
+        self.inner
+            .export_session_atif_async(&session_id, redact)
+            .await
+            .map_err(to_napi_error)
+    }
+
     #[napi]
     pub async fn rename_saved_session(&self, session_id: String, title: String) -> Result<bool> {
         self.inner

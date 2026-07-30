@@ -567,6 +567,11 @@ const snapshot = await engine.loadSavedSession('saved-session-id');
 
 // Delete a saved session
 const deleted = await engine.deleteSavedSession('saved-session-id');
+
+// Export a saved session as an ATIF v1.7 trajectory (for SFT/RL pipelines)
+const atifJson = await engine.exportSessionAtif('saved-session-id', true);
+// redact=true scrubs secret-like content; pass false to disable redaction
+// atifJson => string (complete ATIF v1.7 trajectory document)
 ```
 
 ---

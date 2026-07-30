@@ -16,6 +16,7 @@ mod memory_cmd;
 mod plugin_cmd;
 mod registry_cmd;
 mod server_cmd;
+mod session_cmd;
 mod skill_cmd;
 mod voice_cmd;
 
@@ -135,6 +136,28 @@ enum Commands {
     },
     /// Serve ACP over stdio so other ACP clients can use NAVI as an agent
     Acp,
+    /// List and export saved sessions (e.g. ATIF trajectory export for SFT/RL)
+    Session {
+        #[command(subcommand)]
+        action: SessionAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SessionAction {
+    /// List saved sessions with their ids, titles, and last-updated timestamps
+    List,
+    /// Export a saved session as an ATIF v1.7 trajectory JSON document
+    Export {
+        /// Session id to export (see `navi session list`)
+        id: String,
+        /// Write to a file instead of stdout
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Disable secret redaction (redaction is on by default)
+        #[arg(long)]
+        no_redact: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -614,6 +637,11 @@ async fn main() -> Result<()> {
         let server = NaviAcpServer::new(engine);
         server.serve_stdio().await?;
         return Ok(());
+    }
+
+    // Handle session list/export subcommand early (offline, no provider needed)
+    if let Some(Commands::Session { action }) = cli.command {
+        return session_cmd::handle_session_command(action, &loaded_config, &cwd);
     }
 
     if cli.print_log_path {

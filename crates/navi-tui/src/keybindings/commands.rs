@@ -197,6 +197,10 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
             copy_session_json(app);
             super::close_all_modals(app);
         }
+        CommandAction::ExportAtif => {
+            export_session_atif(app);
+            super::close_all_modals(app);
+        }
         CommandAction::Rewind => {
             let checkpoints = crate::chat::rewind_checkpoints(app);
             if checkpoints.is_empty() {
@@ -487,6 +491,27 @@ fn copy_session_json(app: &mut TuiApp) {
     };
     copy_text_to_clipboard(app, &json);
     show_notification(app, "Session", "Shareable session JSON copied.");
+}
+
+/// Export the current session as an ATIF v1.7 trajectory and copy it to the
+/// clipboard. The session must be saved first (the exporter reads from the
+/// session store, not the live in-memory state).
+fn export_session_atif(app: &mut TuiApp) {
+    let session_id = app.session_id.as_str().to_string();
+    let redact = app.loaded_config.config.security.redact_secrets_in_sessions;
+    match app.engine().export_session_atif(&session_id, redact) {
+        Ok(json) => {
+            copy_text_to_clipboard(app, &json);
+            show_notification(app, "ATIF", "ATIF v1.7 trajectory copied to clipboard.");
+        }
+        Err(e) => {
+            show_notification(
+                app,
+                "ATIF",
+                format!("Export failed: {e}.\nSave the session first (Ctrl+S)."),
+            );
+        }
+    }
 }
 
 pub(crate) fn session_transcript(app: &TuiApp) -> String {

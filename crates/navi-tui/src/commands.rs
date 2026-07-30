@@ -54,6 +54,8 @@ pub(crate) enum CommandAction {
     /// Copy assistant/tool output after the latest user message.
     CopyLastResponse,
     ShareSession,
+    /// Export the current session as an ATIF v1.7 trajectory (SFT/RL).
+    ExportAtif,
     /// Open rewind modal: pick a past user prompt and restore history + files.
     Rewind,
     SwitchModel,
@@ -191,6 +193,13 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Export JSON",
         shortcut: None,
         action: CommandAction::ShareSession,
+        hub: Some(CommandHub::Session),
+        visibility: CommandVisibility::Always,
+    },
+    CommandItem {
+        label: "Export ATIF",
+        shortcut: None,
+        action: CommandAction::ExportAtif,
         hub: Some(CommandHub::Session),
         visibility: CommandVisibility::Always,
     },
@@ -508,6 +517,7 @@ fn action_keywords(action: CommandAction) -> &'static str {
             "copy clipboard last response output turn since user message"
         }
         CommandAction::ShareSession => "export json dump",
+        CommandAction::ExportAtif => "atif trajectory sft rl export agent",
         CommandAction::SetGoal => "goal set objective start auto continue",
         CommandAction::PauseGoal => "goal pause stop auto continue",
         CommandAction::ResumeGoal => "goal resume continue active",

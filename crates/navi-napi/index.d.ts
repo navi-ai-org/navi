@@ -426,6 +426,9 @@ export class NaviNapiEngine {
   deleteSavedSession(sessionId: string): Promise<boolean>;
   renameSavedSession(sessionId: string, title: string): Promise<boolean>;
   renameSavedSessionAsync(sessionId: string, title: string): Promise<boolean>;
+  /** Export a saved session as an ATIF v1.7 trajectory JSON string (SFT/RL). */
+  exportSessionAtif(sessionId: string, redact: boolean): Promise<string>;
+  exportSessionAtifAsync(sessionId: string, redact: boolean): Promise<string>;
   // Auto-memory CRUD
   memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
   memoryRead(id: string): JsonValue;
@@ -471,6 +474,7 @@ export class NaviNapiEngine {
   listSavedSessionsAsync(): Promise<JsonValue>;
   loadSavedSessionAsync(sessionId: string): Promise<JsonValue>;
   deleteSavedSessionAsync(sessionId: string): Promise<boolean>;
+  exportSessionAtifAsync(sessionId: string, redact: boolean): Promise<string>;
   // Notifications / self-update
   notify(title: string, body: string, desktop?: boolean, urgency?: string, category?: string): JsonValue;
   notifySimple(title: string, body: string, desktop?: boolean): JsonValue;

@@ -28,4 +28,10 @@ async function readFirstEvent(): Promise<RuntimeEvent | null> {
   return engine.subscribeEvents(session.id).next();
 }
 
+// ATIF export surface is typed through the .d.ts boundary.
+async function exportAtif(): Promise<string> {
+  return engine.exportSessionAtif('saved-session-id', true);
+}
+void exportAtif();
+
 void readFirstEvent();

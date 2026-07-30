@@ -53,7 +53,7 @@ The binding exposes the full `NaviEngine` SDK surface:
 | Usage | `usageReport` |
 | Skills | `listSkills`, `setSessionSkills` |
 | MCP | `listMcpServers`, `listMcpTools` |
-| Saved sessions | `listSavedSessions`, `loadSavedSession`, `deleteSavedSession` |
+| Saved sessions | `listSavedSessions`, `loadSavedSession`, `deleteSavedSession`, `exportSessionAtif` |
 | Registry & plugins | `syncRegistry`, `reloadWasmPlugins` |
 | Config | `loadedConfig` |
 | Host tools | `builder.hostTool(definition, handler)` |

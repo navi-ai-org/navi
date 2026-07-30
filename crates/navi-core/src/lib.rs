@@ -1,3 +1,4 @@
+pub mod atif;
 pub mod attachment_store;
 pub mod benchmark;
 pub mod cancel;
@@ -48,6 +49,11 @@ pub mod turn;
 pub mod update;
 pub mod verifier;
 
+pub use atif::{
+    ATIF_VERSION, Agent as AtifAgent, AtifContentPart, AtifExportOptions, FinalMetrics, Message,
+    Metrics as AtifMetrics, Observation, ObservationResult, Step, StepSource, ToolCall, Trajectory,
+    build_trajectory, to_json as atif_to_json,
+};
 pub use capability::{
     Capability, CapabilityDecision, CapabilityGrant, CapabilityLedger, CapabilityLedgerEntry,
     CapabilityScope, capabilities_from_tool_metadata,

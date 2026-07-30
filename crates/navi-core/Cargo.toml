@@ -37,6 +37,7 @@ mlua.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest.workspace = true
 
 [features]
 # embeddings (candle/tokenizers) is opt-in: default-off keeps CI/local unit

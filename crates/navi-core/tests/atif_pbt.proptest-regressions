@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1305852205ee3bed32a9d9b6d8271af4dcfeff8bd66478251ecb8d84ed113ee9 # shrinks to actions = [ToolResult(ToolResult { invocation_id: "orphan", ok: true, output: String("r") })]

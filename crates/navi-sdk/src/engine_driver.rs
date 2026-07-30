@@ -198,6 +198,10 @@ pub trait EngineDriver: Send + Sync {
     /// Delete a saved session. Returns `true` if a session was removed.
     fn delete_saved_session(&self, session_id: &str) -> Result<bool>;
 
+    /// Export a saved session as an ATIF v1.7 trajectory JSON string.
+    /// When `redact` is true, secret-like content is scrubbed.
+    fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String>;
+
     /// Take ownership of TUI component panels registered by native plugins.
     ///
     /// Returns `Box<dyn TuiComponent>` instances that the TUI can register
@@ -392,6 +396,10 @@ impl EngineDriver for crate::NaviEngine {
 
     fn delete_saved_session(&self, session_id: &str) -> Result<bool> {
         crate::NaviEngine::delete_saved_session(self, session_id)
+    }
+
+    fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String> {
+        crate::NaviEngine::export_session_atif(self, session_id, redact)
     }
 
     fn take_tui_panels(

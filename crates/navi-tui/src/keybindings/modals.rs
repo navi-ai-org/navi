@@ -995,6 +995,30 @@ pub(crate) fn handle_sessions_key(
             list_state.clamp(sessions.len());
             list_state.sync_scroll(10);
         }
+        KeyCode::Char('e') => {
+            let session_id = sessions.get(app.selected_session).map(|s| s.id.clone());
+            drop(sessions);
+            if let Some(id) = session_id {
+                let redact = app.loaded_config.config.security.redact_secrets_in_sessions;
+                match app.engine().export_session_atif(id.as_str(), redact) {
+                    Ok(json) => {
+                        crate::mouse::copy_text_to_clipboard(app, &json);
+                        crate::notifications::show_notification(
+                            app,
+                            "ATIF",
+                            "ATIF v1.7 trajectory copied to clipboard.",
+                        );
+                    }
+                    Err(e) => {
+                        crate::notifications::show_notification(
+                            app,
+                            "ATIF",
+                            format!("Export failed: {e}"),
+                        );
+                    }
+                }
+            }
+        }
         _ => {
             let before = app.session_filter.clone();
             if handle_text_input_key(session_filter_ref(app), code, modifiers, false)

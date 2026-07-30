@@ -3,13 +3,14 @@ use anyhow::Context;
 type Result<T> = std::result::Result<T, NaviError>;
 use navi_core::registry::types::{RegistryModel, RegistryProvider};
 use navi_core::{
-    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, CredentialStore, LoadedConfig,
-    ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent, SessionGoal,
-    SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool, SkillManifest,
-    available_model_options, canonical_provider_id, config::effective_context_window,
-    discover_configured_skills, model_can_run_publicly, provider_catalog, registry,
-    registry::RegistryStore, resolve_provider_api_key, resolve_provider_config,
-    resolve_provider_credential_status, save_global_config, save_project_config,
+    AgentRuntime, AgentRuntimeOptions, ApprovalDecision, AtifExportOptions, CredentialStore,
+    LoadedConfig, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent,
+    SessionGoal, SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool,
+    SkillManifest, atif_to_json, available_model_options, build_trajectory, canonical_provider_id,
+    config::effective_context_window, discover_configured_skills, model_can_run_publicly,
+    provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
+    resolve_provider_config, resolve_provider_credential_status, save_global_config,
+    save_project_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 
@@ -1664,6 +1665,52 @@ impl NaviEngine {
         )
         .load_async(session_id.to_string())
         .await?)
+    }
+
+    /// Exports a persisted session as an ATIF v1.7 trajectory JSON document,
+    /// suitable for external SFT / RL / analysis pipelines.
+    ///
+    /// When `redact` is true, secret-like event content is scrubbed before
+    /// folding (shares the same policy as `SessionStore`). The agent version is
+    /// the NAVI SDK version and the model name is taken from the loaded config.
+    pub fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String> {
+        let loaded_config = self.loaded_config();
+        let snapshot = SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .load(session_id)?;
+        let opts = AtifExportOptions {
+            agent_version: env!("CARGO_PKG_VERSION"),
+            model_name: &loaded_config.config.model.name,
+            redact_secrets: redact,
+        };
+        let trajectory = build_trajectory(&snapshot, &opts);
+        Ok(atif_to_json(&trajectory)?)
+    }
+
+    /// Exports a persisted session as ATIF v1.7 JSON without blocking the
+    /// async runtime. See [`Self::export_session_atif`].
+    pub async fn export_session_atif_async(
+        &self,
+        session_id: &str,
+        redact: bool,
+    ) -> Result<String> {
+        let loaded_config = self.loaded_config();
+        let snapshot = SessionStore::with_redaction(
+            loaded_config.data_dir,
+            loaded_config.config.security.redact_secrets_in_sessions,
+        )
+        .load_async(session_id.to_string())
+        .await?;
+        let model_name = loaded_config.config.model.name.clone();
+        let opts = AtifExportOptions {
+            agent_version: env!("CARGO_PKG_VERSION"),
+            model_name: &model_name,
+            redact_secrets: redact,
+        };
+        let trajectory = build_trajectory(&snapshot, &opts);
+        Ok(atif_to_json(&trajectory)?)
     }
 
     /// Deletes a persisted session. Returns `true` if a session was removed.

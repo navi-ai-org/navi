@@ -60,6 +60,10 @@ pub enum EngineCall {
     },
     ListSkills,
     DeleteSavedSession(String),
+    ExportSessionAtif {
+        session_id: String,
+        redact: bool,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, NaviError>;
@@ -538,6 +542,23 @@ impl EngineDriver for MockEngine {
             .calls
             .push(EngineCall::DeleteSavedSession(session_id.to_string()));
         Ok(false)
+    }
+
+    fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String> {
+        self.state
+            .lock()
+            .unwrap()
+            .calls
+            .push(EngineCall::ExportSessionAtif {
+                session_id: session_id.to_string(),
+                redact,
+            });
+        Ok(serde_json::json!({
+            "schema_version": "ATIF-v1.7",
+            "agent": { "name": "navi", "version": "test" },
+            "steps": []
+        })
+        .to_string())
     }
 
     fn take_tui_panels(

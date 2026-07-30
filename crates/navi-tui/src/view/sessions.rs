@@ -132,7 +132,8 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     }
 
     frame.render_widget(
-        Paragraph::new("del delete").style(Style::default().fg(text()).bg(modal_bg())),
+        Paragraph::new("del delete  ·  e export ATIF  ·  enter load")
+            .style(Style::default().fg(text()).bg(modal_bg())),
         rows[2],
     );
 }

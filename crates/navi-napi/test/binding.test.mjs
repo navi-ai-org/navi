@@ -13,7 +13,7 @@ test('exports public NAPI classes', () => {
   assert.equal(typeof napi.NaviNapiEngine, 'function');
 });
 
-test('builder creates a runtime with TypeScript tools and hooks', () => {
+test('builder creates a runtime with TypeScript tools and hooks', async () => {
   const workspace = mkdtempSync(join(tmpdir(), 'navi-napi-'));
   const builder = new napi.NaviNapiEngineBuilder(workspace);
 
@@ -64,6 +64,14 @@ test('builder creates a runtime with TypeScript tools and hooks', () => {
   // Invalid path should reject cleanly without crashing the binding.
   assert.throws(
     () => engine.pluginInstallPathWithMeta('/tmp/navi-missing-plugin-path', false),
+    /./,
+  );
+
+  // ATIF export surface is wired through the N-API boundary.
+  assert.equal(typeof engine.exportSessionAtif, 'function');
+  assert.equal(typeof engine.exportSessionAtifAsync, 'function');
+  await assert.rejects(
+    engine.exportSessionAtif('nonexistent-session', true),
     /./,
   );
 });
