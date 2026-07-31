@@ -378,6 +378,27 @@ impl ModelProvider for OpenAiProvider {
                     }
                 }
 
+                // Detect a truly-empty 200 OK stream: the inner stream ended
+                // normally (Done or stream close) without yielding any text,
+                // thinking, or tool-call events. Some providers/proxies (e.g.
+                // commandcode under intermittent load) return HTTP 200 with an
+                // SSE body containing only `data: [DONE]` and zero data chunks.
+                // Retry with backoff so the proxy has time to recover, instead
+                // of immediately surfacing an unhelpful "empty content" error.
+                if !failed && !content_yielded && attempt < max_attempts {
+                    let empty_err = ProviderError::Other(
+                        "empty stream: provider returned 200 OK with no data events".to_string(),
+                    );
+                    tracing::warn!(
+                        attempt,
+                        max_attempts,
+                        "provider stream ended with no content events; retrying"
+                    );
+                    let delay = retry_delay_for_error(&empty_err, attempt);
+                    tokio::time::sleep(delay).await;
+                    failed = true;
+                }
+
                 if !failed {
                     break;
                 }

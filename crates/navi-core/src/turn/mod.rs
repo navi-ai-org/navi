@@ -259,7 +259,9 @@ async fn collect_model_output_with_self_repair(
                 RepairAction::RetryWithoutThinking
             } else {
                 RepairAction::ReportToUser {
-                    message: "Model returned empty content and self-repair was exhausted."
+                    message: "The provider returned an empty stream with no content. \
+                        This is usually a transient provider/proxy issue — \
+                        try again, turn thinking off, or switch models."
                         .to_string(),
                 }
             };
@@ -269,7 +271,8 @@ async fn collect_model_output_with_self_repair(
                     "failure_kind": serde_json::to_value(failure_kind).unwrap_or(Value::Null),
                     "repair_action": serde_json::to_value(action).unwrap_or(Value::Null),
                     "summary": format!(
-                        "empty response from {} after {repair_attempts} self-repair attempt(s)",
+                        "empty stream from {} after {repair_attempts} self-repair attempt(s) \
+                        (no text, no reasoning, no tool calls)",
                         ctx.active_model_name()
                     )
                 })));
@@ -599,8 +602,15 @@ fn rewrite_unsupported_attachments(
                     rewritten.push(part);
                 } else {
                     // Never dump base64 into the prompt for non-vision models.
+                    // Instead, persist the attachment to the content-addressed
+                    // store so analyze_attachment can load it by id later.
+                    let attachment_id = store_attachment_for_text_only_model(&ctx.data_dir, &part);
                     rewritten.push(ContentPart::Text {
-                        text: unsupported_attachment_tool_instruction(kind, &part),
+                        text: unsupported_attachment_tool_instruction(
+                            kind,
+                            &part,
+                            attachment_id.as_deref(),
+                        ),
                     });
                 }
             }
@@ -610,7 +620,60 @@ fn rewrite_unsupported_attachments(
         .collect()
 }
 
-fn unsupported_attachment_tool_instruction(kind: AttachmentKind, part: &ContentPart) -> String {
+/// Decode a ContentPart's base64 data and persist it to the attachment store so
+/// a text-only model can later call `analyze_attachment` with the `attachment_id`.
+/// Returns the attachment id on success, or `None` if the part has no data or
+/// storage fails (the placeholder text will still be emitted without an id).
+fn store_attachment_for_text_only_model(
+    data_dir: &std::path::Path,
+    part: &ContentPart,
+) -> Option<String> {
+    use base64::Engine;
+
+    let data = part.data()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .ok()?;
+    let ext = media_type_to_extension(part.media_type());
+    crate::attachment_store::store_bytes(data_dir, &bytes, ext)
+        .map_err(|err| {
+            tracing::warn!(error = %err, "failed to store attachment for text-only model");
+            err
+        })
+        .ok()
+}
+
+/// Map a MIME type to a file extension for the attachment store.
+fn media_type_to_extension(media_type: Option<&str>) -> &'static str {
+    match media_type.unwrap_or("").to_ascii_lowercase().as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        "image/svg+xml" | "image/svg" => "svg",
+        "image/x-icon" | "image/ico" => "ico",
+        "image/tiff" | "image/tif" => "tiff",
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/wave" => "wav",
+        "audio/ogg" => "ogg",
+        "audio/webm" => "webm",
+        "audio/aac" => "aac",
+        "audio/flac" => "flac",
+        "video/mp4" => "mp4",
+        "video/webm" => "webm",
+        "video/ogg" => "ogg",
+        "video/x-matroska" => "mkv",
+        "application/pdf" => "pdf",
+        _ => "bin",
+    }
+}
+
+fn unsupported_attachment_tool_instruction(
+    kind: AttachmentKind,
+    part: &ContentPart,
+    attachment_id: Option<&str>,
+) -> String {
     let media_type = part.media_type().unwrap_or("application/octet-stream");
     // Never inline base64 attachment bytes into the prompt. Free/small models
     // hang or rate-limit when the rewritten text carries multi-MB payloads, and
@@ -623,9 +686,22 @@ fn unsupported_attachment_tool_instruction(kind: AttachmentKind, part: &ContentP
         .name()
         .map(|n| format!(" name={n:?}"))
         .unwrap_or_default();
+    let attachment_hint = match attachment_id {
+        Some(id) => {
+            let kind_str = kind.as_str();
+            format!(
+                "\n\
+                 attachment_id={id}\n\
+                 To analyze this {kind_str} with a specialized model, call analyze_attachment with:\n\
+                 kind=\"{kind_str}\", attachment_id=\"{id}\", prompt=\"<your analysis prompt>\"\n\
+                 (NAVI will load the {kind_str} bytes from its store and send them to the configured attachment model.)"
+            )
+        }
+        None => String::new(),
+    };
     format!(
         "[NAVI attachment unavailable to this chat model]\n\
-         kind={kind} media_type={media_type} approx_bytes={byte_len}{name}\n\
+         kind={kind} media_type={media_type} approx_bytes={byte_len}{name}{attachment_hint}\n\
          This model cannot view {kind} attachments directly. Tell the user to:\n\
          1) switch to a vision-capable model (registry supports_images), or\n\
          2) configure attachment_models.{kind} so analyze_attachment can run on a specialized model.\n\

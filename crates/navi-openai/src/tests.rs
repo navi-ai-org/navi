@@ -1220,6 +1220,69 @@ async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
 }
 
 #[tokio::test]
+async fn empty_200_ok_stream_is_retried_then_succeeds() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    // First attempt: 200 OK with only [DONE] — zero data events (simulates the
+    // commandcode proxy intermittently returning an empty SSE stream).
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .up_to_n_times(1)
+        .mount(&mock_server)
+        .await;
+
+    // Second attempt: a normal stream that yields content.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "commandcode".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+    let request = navi_core::ModelRequest {
+        model: "deepseek/deepseek-v4-flash".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    let mut text = String::new();
+    while let Some(event) = stream.next().await {
+        if let navi_core::ModelStreamEvent::TextDelta { text: t } = event.unwrap() {
+            text.push_str(&t);
+        }
+    }
+    assert_eq!(
+        text, "ok",
+        "empty first attempt should retry and yield content"
+    );
+}
+
+#[tokio::test]
 async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
     use wiremock::matchers::{body_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

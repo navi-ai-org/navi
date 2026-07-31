@@ -491,7 +491,10 @@ pub(crate) fn finalize_active_assistant(app: &mut TuiApp, elapsed_ms: u64, fallb
         }
         if active.content.trim().is_empty() {
             active.content = format!(
-                "No response from `{model_name}` ({provider_id}). The model returned empty content — try again, turn thinking off, or switch models."
+                "No response from `{model_name}` ({provider_id}). \
+                The provider returned an empty stream with no content. \
+                This is usually a transient provider/proxy issue — \
+                try again, turn thinking off, or switch models."
             );
             tracing::warn!(
                 model = %model_name,

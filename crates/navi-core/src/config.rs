@@ -857,6 +857,33 @@ deny_tool_regex = ["^danger_"]
     }
 
     #[test]
+    fn opencode_mimo_free_inherits_vision_from_real_embedded_registry() {
+        let config = NaviConfig::default();
+        let providers = provider_catalog(&config);
+        // Sanity: xiaomi and opencode are both present.
+        assert!(
+            providers.iter().any(|p| p.id == "xiaomi"),
+            "xiaomi provider should be in embedded registry"
+        );
+        assert!(
+            providers.iter().any(|p| p.id == "opencode"),
+            "opencode provider should be in embedded registry"
+        );
+        // The real-world scenario: opencode mimo-v2.5-free should inherit vision
+        // from xiaomi mimo-v2.5 via cross-provider alias + provider defaults.
+        let supports = model_supports_attachment(
+            &config,
+            "opencode",
+            "mimo-v2.5-free",
+            crate::AttachmentKind::Image,
+        );
+        assert!(
+            supports,
+            "opencode mimo-v2.5-free should support images via cross-provider inheritance from xiaomi"
+        );
+    }
+
+    #[test]
     fn model_attachment_family_candidates_peel_versions() {
         let family = model_attachment_family_candidates("grok-4.5");
         assert!(

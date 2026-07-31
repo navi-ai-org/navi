@@ -1146,6 +1146,80 @@ fn rewrite_unsupported_images_do_not_inline_base64() {
 }
 
 #[test]
+fn rewrite_unsupported_images_store_attachment_id_for_text_only_models() {
+    use base64::Engine;
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let mut config = crate::config::NaviConfig::default();
+    config.model.provider = "test-provider".to_string();
+    config.model.name = "text-only-model".to_string();
+    config.providers = vec![crate::config::ProviderConfig {
+        id: "test-provider".to_string(),
+        label: "Test".to_string(),
+        description: String::new(),
+        kind: crate::config::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "TEST_KEY".to_string(),
+        base_url: Some("https://example.test/v1".to_string()),
+        models: vec![crate::config::ProviderModelConfig {
+            name: "text-only-model".to_string(),
+            supports_images: Some(false),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }];
+    *ctx.config.write().unwrap() = config;
+
+    // Use valid base64 so the attachment store can decode and persist it.
+    let raw_bytes = b"\x89PNG\r\n\x1a\nfake-png-header";
+    let encoded = base64::engine::general_purpose::STANDARD.encode(raw_bytes);
+    let messages = vec![ModelMessage::user_multimodal(
+        "describe this image",
+        vec![
+            ContentPart::Text {
+                text: "describe this image".to_string(),
+            },
+            ContentPart::Image {
+                media_type: "image/png".to_string(),
+                data: encoded.clone(),
+            },
+        ],
+    )];
+
+    let rewritten = rewrite_unsupported_attachments(&ctx, &messages);
+    let text = rewritten[0].content_parts[1].as_text().unwrap();
+
+    // The base64 data must NOT appear in the prompt text.
+    assert!(
+        !text.contains(&encoded),
+        "must not dump image base64 into prompt"
+    );
+    // The attachment_id MUST appear so the model can call analyze_attachment.
+    assert!(
+        text.contains("attachment_id="),
+        "placeholder should include attachment_id for text-only models: {text}"
+    );
+    // The attachment_id should be a valid sha256.png format.
+    let id_line = text
+        .lines()
+        .find(|l| l.starts_with("attachment_id="))
+        .expect("attachment_id line");
+    let attachment_id = id_line.trim_start_matches("attachment_id=").trim();
+    assert!(
+        attachment_id.ends_with(".png"),
+        "attachment_id should end with .png: {attachment_id}"
+    );
+    // The bytes should be loadable from the attachment store.
+    let loaded = crate::attachment_store::load_bytes(&ctx.data_dir, attachment_id);
+    assert!(loaded.is_ok(), "attachment should be loadable from store");
+    assert_eq!(
+        loaded.unwrap(),
+        raw_bytes.as_slice(),
+        "loaded bytes should match original"
+    );
+}
+
+#[test]
 fn allowlist_deny_message_distinguishes_subagent_and_harness() {
     let sub = super::tool_allowlist_deny_message(true, "bash");
     let root = super::tool_allowlist_deny_message(false, "bash");
