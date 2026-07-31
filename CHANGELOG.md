@@ -7,6 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-07-31
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.7...v0.4.8
+
+### Added
+
+- **ATIF v1.7 session export** — AgentEvent sequences can now be folded into
+  Trajectory documents (steps, tool_calls, observations, metrics) with secret
+  redaction, suitable for SFT/RL/external analysis pipelines. Available via
+  `navi session export <id>` CLI, `exportSessionAtif` N-API binding, and TUI
+  "Export ATIF" command (`e` key in session picker). Includes property-based
+  tests (proptest), JSON Schema contract tests, and cargo-fuzz targets.
+- **`attachment_id` parameter on `analyze_attachment`** — Text-only chat models
+  can now trigger image/audio/video/document analysis without having the raw
+  base64 data. Stripped attachments are persisted to NAVI's content-addressed
+  store and the model receives a placeholder with an `attachment_id` it can pass
+  to `analyze_attachment` instead of `data`.
+
+### Fixed
+
+- **Empty 200 OK streams retried** — Provider streams that return HTTP 200 with
+  an empty SSE body (only `data: [DONE]`, zero data events) are now retried with
+  backoff instead of surfacing an unhelpful "empty content" error. Fixes
+  intermittent empty-stream errors from the commandcode proxy under load.
+- **Persistent "Running subagent" card** — Background subagent cards no longer
+  stay "Running" after task completion. Poll/cancel now emit a terminal
+  SubagentTranscript for the original spawn's invocation id. Subagent count no
+  longer inflates from poll/cancel/list calls.
+- **DeepSeek V4 thinking toggle on opencode** — DeepSeek V4 models on opencode
+  Zen/Go no longer 400 "Thinking mode does not support this tool_choice" when
+  thinking is off. An explicit `thinking:{type:disabled}` toggle is emitted for
+  deepseek-v4 models, preventing the gateway from defaulting thinking ON.
+- **Stale registry model pruning** — Registry cache no longer lingers models
+  removed from the embedded/remote catalog (e.g. hy3-free). Pruning is guarded
+  by the local-api-sync marker to preserve API-discovered models.
+- **Attachment tool thinking config** — `analyze_attachment` now uses the
+  user's configured `thinking_level` (clamped to the attachment model's registry
+  reasoning support) instead of hardcoded `ThinkingConfig::Off`, preventing
+  request-shape mismatches on providers like opencode zen.
+
+### Changed
+
+- `analyze_attachment` tool schema: `data` and `media_type` are now optional
+  (either `data` or `attachment_id` is accepted). MIME type is inferred from the
+  attachment_id file extension when not provided.
+- OpenAiProvider stream loop detects zero content events before `[DONE]` and
+  treats it as a retryable empty-stream condition.
+- EmptyResponse diagnosis summary now notes "no text, no reasoning, no tool
+  calls" to clarify the failure mode.
+- EngineDriver trait gains `export_session_atif` (sync + async variants).
+
 ## [0.4.7] - 2026-07-29
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.6...v0.4.7
