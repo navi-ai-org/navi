@@ -631,6 +631,59 @@ impl RegistryStore {
         self.upsert_provider_with_sha256(&merged, sha256)
     }
 
+    /// Removes models from a catalog provider that are no longer present in the
+    /// authoritative snapshot.
+    ///
+    /// Unlike [`upsert_provider_union_models`](Self::upsert_provider_union_models)
+    /// (which preserves API-discovered models), this prunes stale models left
+    /// behind after an upstream catalog removal (e.g. `hy3-free` removed from
+    /// the opencode Zen catalog). Safe to call only when the provider's `sha256`
+    /// is **not** the [`LOCAL_API_SYNC_SHA`] marker — providers filled by live
+    /// API sync keep their full model lists.
+    ///
+    /// Returns the number of model rows deleted.
+    pub fn prune_provider_stale_models(
+        &self,
+        provider_id: &str,
+        keep_model_names: &std::collections::HashSet<String>,
+    ) -> Result<usize> {
+        // Never prune a provider whose models came from live API sync — those
+        // extra models are intentionally user/API-discovered, not stale.
+        if self.provider_sha256(provider_id)?.as_deref() == Some(LOCAL_API_SYNC_SHA) {
+            return Ok(0);
+        }
+
+        let keep_lower: std::collections::HashSet<String> = keep_model_names
+            .iter()
+            .map(|n| n.to_ascii_lowercase())
+            .collect();
+
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
+        let mut stmt = conn.prepare("SELECT name FROM models WHERE provider_id = ?1")?;
+        let to_delete: Vec<String> = stmt
+            .query_map(params![provider_id], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .filter(|name| !keep_lower.contains(&name.to_ascii_lowercase()))
+            .collect();
+        drop(stmt);
+
+        let removed = to_delete.len();
+        for name in &to_delete {
+            conn.execute(
+                "DELETE FROM models WHERE provider_id = ?1 AND name = ?2",
+                params![provider_id, name],
+            )?;
+        }
+        if removed > 0 {
+            tracing::info!(
+                provider = provider_id,
+                removed,
+                "pruned stale models from catalog provider"
+            );
+        }
+        Ok(removed)
+    }
+
     /// Re-apply canonical model catalog metadata onto every cached provider model.
     ///
     /// Fixes stale rows written by API sync sibling inheritance (e.g. grok-4.5
@@ -1632,6 +1685,115 @@ mod tests {
         assert!(loaded.contains_key("api-only-model"));
         assert!(loaded.contains_key("test-model-large"));
         assert!(loaded.contains_key("test-model-small"));
+    }
+
+    #[test]
+    fn prune_stale_models_removes_models_not_in_catalog() {
+        let store = RegistryStore::open_memory().expect("open");
+        // Seed provider with 3 models (one stale that will be removed).
+        let mut provider = sample_provider(); // test-model-large, test-model-small
+        provider.models.push(RegistryModel {
+            model_ref: None,
+            api_name: None,
+            name: "stale-model".to_string(),
+            task_size: Some("large".to_string()),
+            context_window_tokens: Some(200_000),
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: Some(false),
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+            supports_attachments: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            attachments: Default::default(),
+            capabilities: Vec::new(),
+            pricing: None,
+        });
+        store
+            .upsert_provider_with_sha256(&provider, Some("catalog-sha-v1"))
+            .expect("seed");
+        assert_eq!(store.model_count().unwrap(), 3);
+
+        // Catalog v2 drops "stale-model" — prune should remove only it.
+        let keep: std::collections::HashSet<String> = [
+            "test-model-large".to_string(),
+            "test-model-small".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let removed = store
+            .prune_provider_stale_models("test-provider", &keep)
+            .expect("prune");
+        assert_eq!(removed, 1);
+        let loaded = store.load_provider_models("test-provider").expect("load");
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.contains_key("test-model-large"));
+        assert!(loaded.contains_key("test-model-small"));
+        assert!(!loaded.contains_key("stale-model"));
+    }
+
+    #[test]
+    fn prune_stale_models_skips_local_api_sync_providers() {
+        let store = RegistryStore::open_memory().expect("open");
+        // Simulate a live API-synced provider with an extra model.
+        let mut provider = sample_provider();
+        provider.models.push(RegistryModel {
+            model_ref: None,
+            api_name: None,
+            name: "api-only-model".to_string(),
+            task_size: Some("large".to_string()),
+            context_window_tokens: Some(200_000),
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: Some(true),
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+            supports_attachments: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            attachments: Default::default(),
+            capabilities: Vec::new(),
+            pricing: None,
+        });
+        store
+            .upsert_provider_with_sha256(&provider, Some(LOCAL_API_SYNC_SHA))
+            .expect("api sync seed");
+        assert_eq!(store.model_count().unwrap(), 3);
+
+        // Prune must be a no-op because the provider is local-api-synced.
+        let keep: std::collections::HashSet<String> =
+            ["test-model-large".to_string()].into_iter().collect();
+        let removed = store
+            .prune_provider_stale_models("test-provider", &keep)
+            .expect("prune");
+        assert_eq!(removed, 0, "local-api-sync providers must not be pruned");
+        let loaded = store.load_provider_models("test-provider").expect("load");
+        assert_eq!(loaded.len(), 3, "all models preserved");
+    }
+
+    #[test]
+    fn prune_stale_models_is_case_insensitive() {
+        let store = RegistryStore::open_memory().expect("open");
+        let provider = sample_provider();
+        store
+            .upsert_provider_with_sha256(&provider, Some("catalog-sha"))
+            .expect("seed");
+        // Keep set with different casing should still match existing models.
+        let keep: std::collections::HashSet<String> = [
+            "TEST-MODEL-LARGE".to_string(),
+            "test-model-small".to_string(),
+        ]
+        .into_iter()
+        .collect();
+        let removed = store
+            .prune_provider_stale_models("test-provider", &keep)
+            .expect("prune");
+        assert_eq!(removed, 0, "case-insensitive match should keep both");
     }
 
     #[test]

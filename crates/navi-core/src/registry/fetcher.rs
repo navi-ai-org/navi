@@ -446,8 +446,19 @@ pub async fn sync_registry(
         for (provider_id, mut provider) in fetched {
             super::resolve::resolve_provider_refs(&mut provider, &catalog);
             let sha = &manifest.providers[&provider_id].sha256;
+            // Check the sha marker *before* the union-merge overwrites it, so we
+            // know whether this provider's models came from live API sync.
+            let is_local_api_sync = store.provider_sha256(&provider_id)?.as_deref()
+                == Some(crate::registry::LOCAL_API_SYNC_SHA);
             // Union-merge so remote catalog refresh cannot wipe API-synced models.
             store.upsert_provider_union_models(&provider, Some(sha))?;
+            // Prune stale models removed from the remote catalog for pure
+            // catalog providers (not local-api-sync).
+            if !is_local_api_sync {
+                let keep: std::collections::HashSet<String> =
+                    provider.models.iter().map(|m| m.name.clone()).collect();
+                store.prune_provider_stale_models(&provider_id, &keep)?;
+            }
             updated += 1;
         }
     }

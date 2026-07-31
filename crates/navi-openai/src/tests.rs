@@ -1177,6 +1177,7 @@ async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
             }],
             "tool_choice": "auto",
             "parallel_tool_calls": true,
+            "thinking": {"type": "disabled"},
             "stream": true,
             "stream_options": {"include_usage": true}
         })))
@@ -2403,6 +2404,68 @@ fn deepseek_v4_alias_also_gets_thinking_toggle() {
     );
     assert_eq!(body["thinking"], json!({ "type": "enabled" }));
     assert_eq!(body["reasoning_effort"], "high");
+}
+
+#[test]
+fn opencode_deepseek_v4_emits_thinking_toggle_when_off() {
+    // DeepSeek V4 on the Zen/Go gateway defaults to thinking ON server-side.
+    // When NAVI thinking is off, we must emit an explicit `thinking: disabled`
+    // toggle so the server doesn't enable thinking and clash with tool_choice.
+    let mut body = json!({ "model": "deepseek-v4-flash-free", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Off,
+            OpenAiApiKind::ChatCompletions,
+            "opencode",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+    // reasoning_effort must NOT be set when thinking is off.
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("extra_body").is_none());
+}
+
+#[test]
+fn opencode_deepseek_v4_emits_thinking_toggle_when_enabled() {
+    let mut body = json!({ "model": "deepseek-v4-flash-free", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::ChatCompletions,
+            "opencode-zen",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode-zen",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(
+        body["extra_body"]["chat_template_kwargs"]["reasoning_effort"],
+        "high"
+    );
+}
+
+#[test]
+fn opencode_non_deepseek_model_has_no_thinking_toggle() {
+    // Non-DeepSeek models on opencode must NOT get the `thinking` toggle —
+    // only DeepSeek V4 needs it to override the server default.
+    let mut body = json!({ "model": "glm-5.2", "messages": [] });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Off,
+            OpenAiApiKind::ChatCompletions,
+            "opencode",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode",
+    );
+    assert!(body.get("thinking").is_none());
+    assert!(body.get("reasoning_effort").is_none());
 }
 
 // ── anthropic_tool_to_json / gemini_tool_to_json structure ────────────────────

@@ -327,6 +327,18 @@ pub(crate) fn apply_thinking_to_body(
             navi_core::ProviderId::OPENCODE
             | navi_core::ProviderId::OPENCODE_ZEN
             | navi_core::ProviderId::OPENCODE_GO => {
+                // DeepSeek V4 models hosted on the Zen/Go gateway default to
+                // thinking mode ON server-side. When thinking is off we must
+                // emit an explicit `thinking: {type: "disabled"}` toggle;
+                // otherwise the server enables thinking, which conflicts with
+                // `tool_choice` when tools are present (400 "Thinking mode does
+                // not support this tool_choice"). Mirror the generic branch.
+                if is_deepseek_v4_model(&model) {
+                    object.insert(
+                        "thinking".to_string(),
+                        json!({ "type": if thinking.enabled { "enabled" } else { "disabled" } }),
+                    );
+                }
                 if thinking.enabled
                     && let Some(effort) = thinking.effort
                 {

@@ -235,7 +235,9 @@ fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
         };
 
         // Prefer union-merge so a smaller embedded snapshot cannot wipe
-        // models discovered via provider APIs (OpenRouter etc.).
+        // models discovered via provider APIs (OpenRouter etc.). Then prune
+        // stale models removed from the embedded catalog for pure catalog
+        // providers (not local-api-sync), so removed models don't linger.
         if let Err(err) = store.upsert_provider_union_models(ep, sha_to_write) {
             tracing::warn!(
                 provider = id,
@@ -243,6 +245,17 @@ fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
                 "failed to upsert embedded provider update"
             );
         } else {
+            if !preserve_api_sync {
+                let keep: std::collections::HashSet<String> =
+                    ep.models.iter().map(|m| m.name.clone()).collect();
+                if let Err(err) = store.prune_provider_stale_models(id, &keep) {
+                    tracing::warn!(
+                        provider = id,
+                        error = %err,
+                        "failed to prune stale models for embedded provider"
+                    );
+                }
+            }
             if preserve_api_sync && let Some(embedded) = embedded_sha {
                 let key = format!("api_sync_catalog_sha:{id}");
                 let _ = store.meta_set(&key, embedded);
