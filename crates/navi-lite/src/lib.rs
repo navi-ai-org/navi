@@ -133,6 +133,7 @@ impl LiteRuntime {
             runtime_components: Some(components),
             session_title_handle: None,
             skip_auto_tool_bootstrap: false,
+            system_prompt: None,
         });
 
         let session_id = runtime.start_session()?.as_str().to_string();
