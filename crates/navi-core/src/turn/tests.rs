@@ -1156,3 +1156,39 @@ fn allowlist_deny_message_distinguishes_subagent_and_harness() {
     );
     assert!(root.contains("for the active harness"), "root deny: {root}");
 }
+
+#[test]
+fn allowlist_deny_message_includes_tool_name() {
+    let sub = super::tool_allowlist_deny_message(true, "write_file");
+    assert!(
+        sub.contains("write_file"),
+        "deny message must include tool name: {sub}"
+    );
+    let root = super::tool_allowlist_deny_message(false, "edit");
+    assert!(
+        root.contains("edit"),
+        "deny message must include tool name: {root}"
+    );
+}
+
+#[test]
+fn allowlist_deny_message_for_empty_tool_name() {
+    let msg = super::tool_allowlist_deny_message(true, "");
+    assert!(
+        msg.contains("for this subagent"),
+        "empty tool name should still produce scoped message: {msg}"
+    );
+}
+
+#[test]
+fn allowlist_deny_message_for_special_char_tool_name() {
+    let msg = super::tool_allowlist_deny_message(false, "tool_with_underscore");
+    assert!(
+        msg.contains("tool_with_underscore"),
+        "special char tool name should be included: {msg}"
+    );
+    assert!(
+        msg.contains("for the active harness"),
+        "harness scope should be present: {msg}"
+    );
+}

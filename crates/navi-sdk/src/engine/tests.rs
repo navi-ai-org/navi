@@ -1580,3 +1580,171 @@ fn api_methods_include_sdk_refactor_surface() {
         );
     }
 }
+
+// ── Subagent type re-export and event variant tests ─────────────────────────
+
+#[test]
+fn sdk_re_exports_subagent_transcript_item_type() {
+    // Verify the SDK re-exports SubagentTranscriptItem from navi_core.
+    let item = navi_core::SubagentTranscriptItem {
+        kind: navi_core::SubagentTranscriptKind::Text,
+        title: "Test".to_string(),
+        detail: None,
+        ok: Some(true),
+        invocation: None,
+        result: None,
+        text: None,
+        thinking: None,
+        status: Some("done".to_string()),
+    };
+    // Verify it can be serialized through the SDK's public type.
+    let s = serde_json::to_string(&item).unwrap();
+    assert!(s.contains("Text"));
+    assert!(s.contains("done"));
+}
+
+#[test]
+fn sdk_re_exports_subagent_transcript_kind_all_variants() {
+    for kind in [
+        navi_core::SubagentTranscriptKind::ToolRequested,
+        navi_core::SubagentTranscriptKind::ToolCompleted,
+        navi_core::SubagentTranscriptKind::Text,
+        navi_core::SubagentTranscriptKind::ModelDelta,
+        navi_core::SubagentTranscriptKind::ThinkingDelta,
+    ] {
+        let s = serde_json::to_string(&kind).unwrap();
+        let back: navi_core::SubagentTranscriptKind = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, kind, "roundtrip failed for {kind:?}");
+    }
+}
+
+#[test]
+fn sdk_agent_event_subagent_activity_serde_roundtrip() {
+    let event = AgentEvent::SubagentActivity {
+        invocation_id: "sdk-inv-1".to_string(),
+        message: "Working on task".to_string(),
+    };
+    let s = serde_json::to_string(&event).unwrap();
+    let back: AgentEvent = serde_json::from_str(&s).unwrap();
+    match back {
+        AgentEvent::SubagentActivity {
+            invocation_id,
+            message,
+        } => {
+            assert_eq!(invocation_id, "sdk-inv-1");
+            assert_eq!(message, "Working on task");
+        }
+        other => panic!("expected SubagentActivity, got {other:?}"),
+    }
+}
+
+#[test]
+fn sdk_agent_event_subagent_transcript_serde_roundtrip() {
+    let event = AgentEvent::SubagentTranscript {
+        invocation_id: "sdk-inv-2".to_string(),
+        item: navi_core::SubagentTranscriptItem {
+            kind: navi_core::SubagentTranscriptKind::ToolCompleted,
+            title: "Tool completed".to_string(),
+            detail: Some("ok".to_string()),
+            ok: Some(true),
+            invocation: None,
+            result: None,
+            text: None,
+            thinking: None,
+            status: None,
+        },
+    };
+    let s = serde_json::to_string(&event).unwrap();
+    let back: AgentEvent = serde_json::from_str(&s).unwrap();
+    match back {
+        AgentEvent::SubagentTranscript {
+            invocation_id,
+            item,
+        } => {
+            assert_eq!(invocation_id, "sdk-inv-2");
+            assert_eq!(item.kind, navi_core::SubagentTranscriptKind::ToolCompleted);
+            assert_eq!(item.ok, Some(true));
+        }
+        other => panic!("expected SubagentTranscript, got {other:?}"),
+    }
+}
+
+#[test]
+fn sdk_subagent_transcript_item_with_terminal_status() {
+    // Terminal status values are the key mechanism for resolving background
+    // subagent cards in the TUI. Verify they survive SDK serialization.
+    for status in ["done", "failed", "cancelled"] {
+        let item = navi_core::SubagentTranscriptItem {
+            kind: navi_core::SubagentTranscriptKind::Text,
+            title: "Final".to_string(),
+            detail: None,
+            ok: None,
+            invocation: None,
+            result: None,
+            text: None,
+            thinking: None,
+            status: Some(status.to_string()),
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        let back: navi_core::SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.status.as_deref(), Some(status));
+    }
+}
+
+#[test]
+fn sdk_subagent_transcript_item_with_nested_tool_invocation() {
+    // Verify the SDK can serialize transcript items containing full tool
+    // invocations (used for the rich drill-in view in the TUI).
+    let item = navi_core::SubagentTranscriptItem {
+        kind: navi_core::SubagentTranscriptKind::ToolRequested,
+        title: "Read justfile".to_string(),
+        detail: None,
+        ok: None,
+        invocation: Some(navi_core::ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "justfile" }),
+        }),
+        result: None,
+        text: None,
+        thinking: None,
+        status: None,
+    };
+    let s = serde_json::to_string(&item).unwrap();
+    let back: navi_core::SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+    assert_eq!(back.kind, navi_core::SubagentTranscriptKind::ToolRequested);
+    assert_eq!(back.invocation.as_ref().unwrap().tool_name, "read_file");
+    assert_eq!(
+        back.invocation.as_ref().unwrap().input["path"],
+        serde_json::json!("justfile")
+    );
+}
+
+#[test]
+fn sdk_subagent_transcript_item_with_nested_tool_result() {
+    // Verify the SDK can serialize transcript items containing full tool
+    // results (used for the rich drill-in view in the TUI).
+    let item = navi_core::SubagentTranscriptItem {
+        kind: navi_core::SubagentTranscriptKind::ToolCompleted,
+        title: "Tool completed".to_string(),
+        detail: Some("justfile".to_string()),
+        ok: Some(true),
+        invocation: None,
+        result: Some(navi_core::ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({ "content": "verify:\n  cargo test" }),
+        }),
+        text: None,
+        thinking: None,
+        status: None,
+    };
+    let s = serde_json::to_string(&item).unwrap();
+    let back: navi_core::SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+    assert_eq!(back.ok, Some(true));
+    assert_eq!(back.result.as_ref().unwrap().ok, true);
+    assert_eq!(
+        back.result.as_ref().unwrap().output["content"],
+        serde_json::json!("verify:\n  cargo test")
+    );
+}

@@ -410,7 +410,7 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             // Tool runtime is not generation — pause active t/s clock.
             app.usage_state.pause_stream_throughput();
             clear_streaming_tool_call(app, Some(&invocation.id), Some(&invocation.tool_name));
-            if invocation.tool_name == "subagent" {
+            if invocation.tool_name == "subagent" && is_subagent_spawn(&invocation) {
                 if !app.subagent_order.iter().any(|id| id == &invocation.id) {
                     app.subagent_order.push(invocation.id.clone());
                 }
@@ -429,11 +429,13 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             // Background subagents keep emitting activity after the spawn tool returns.
             if !still_running_background {
                 app.subagent_activity.remove(&result.invocation_id);
-                // Foreground subagent (or any terminal subagent tool call): resolve card.
+                // Foreground subagent spawn (or any terminal subagent spawn call):
+                // resolve card. Polls/cancels/lists are not spawns — skip them so
+                // they don't create phantom terminal entries in subagent_states.
                 if app
                     .tool_invocations
                     .get(&result.invocation_id)
-                    .is_some_and(|inv| inv.tool_name == "subagent")
+                    .is_some_and(|inv| inv.tool_name == "subagent" && is_subagent_spawn(inv))
                 {
                     let status = if result.ok {
                         crate::state::SubagentStatus::Done
@@ -1122,6 +1124,28 @@ fn tool_result_is_background_running(result: &navi_sdk::ToolResult) -> bool {
             .is_some_and(|status| {
                 status.eq_ignore_ascii_case("running") || status.eq_ignore_ascii_case("pending")
             })
+}
+
+/// Returns true if this `subagent` tool invocation is a **spawn** (creates a
+/// new subagent), as opposed to a poll / cancel / list action on an existing
+/// background task.
+///
+/// The subagent tool's `anyOf` schema requires one of:
+/// - `prompt` → spawn (foreground or background)
+/// - `task_id` → poll or cancel
+/// - `action: "list"` → list background tasks
+///
+/// Only spawns should be tracked in `subagent_order` / `subagent_states` /
+/// `subagent_transcripts`. Polls and cancels are operations on existing
+/// subagents — tracking them inflates the count and creates phantom "Running"
+/// cards that never resolve.
+fn is_subagent_spawn(invocation: &navi_sdk::ToolInvocation) -> bool {
+    // Spawns carry `prompt` and never `task_id`. `action: "list"` is a list
+    // call, not a spawn. Polls/cancels carry `task_id` and are filtered by the
+    // second clause; an absent `action` (typical for spawns) is fine.
+    invocation.input.get("prompt").is_some()
+        && invocation.input.get("task_id").is_none()
+        && invocation.input.get("action").and_then(|v| v.as_str()) != Some("list")
 }
 
 fn is_turn_cancelled_error(message: &str) -> bool {

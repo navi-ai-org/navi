@@ -4067,6 +4067,437 @@ fn subagent_view_keyboard_navigation_and_context_isolation() {
     assert_eq!(app.events.len(), event_len);
 }
 
+// ---------------------------------------------------------------------------
+// Edge case tests for sub-agent tracking fix:
+// poll / cancel / list must NOT be tracked as spawns. Only spawns (calls with
+// `prompt` and no `task_id`) should appear in subagent_order / subagent_states
+// / subagent_transcripts. Terminal transcripts emitted by poll/cancel must
+// resolve the *original spawn's* card, not the poll's.
+// ---------------------------------------------------------------------------
+
+/// Helper: send a `subagent` ToolRequested with the given id and input.
+fn subagent_tool_requested(id: &str, input: serde_json::Value) -> AsyncEvent {
+    AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+        id: id.to_string(),
+        tool_name: "subagent".to_string(),
+        input,
+    }))
+}
+
+/// Helper: send a `subagent` ToolCompleted with the given id and output.
+fn subagent_tool_completed(id: &str, ok: bool, output: serde_json::Value) -> AsyncEvent {
+    AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+        invocation_id: id.to_string(),
+        ok,
+        output,
+    }))
+}
+
+#[test]
+fn subagent_poll_not_tracked_as_spawn() {
+    // A poll call (has task_id, no prompt) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    assert!(
+        !app.subagent_order.contains(&"poll-1".to_string()),
+        "poll must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll must not create a subagent_states entry"
+    );
+    assert!(
+        app.subagent_transcripts.get("poll-1").is_none(),
+        "poll must not create a subagent_transcripts entry"
+    );
+}
+
+#[test]
+fn subagent_cancel_not_tracked_as_spawn() {
+    // A cancel call (has task_id, action=cancel) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "cancel-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "cancel" }),
+        ),
+    );
+    assert!(
+        !app.subagent_order.contains(&"cancel-1".to_string()),
+        "cancel must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("cancel-1").is_none(),
+        "cancel must not create a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_list_not_tracked_as_spawn() {
+    // A list call (action=list, no prompt) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested("list-1", serde_json::json!({ "action": "list" })),
+    );
+    assert!(
+        !app.subagent_order.contains(&"list-1".to_string()),
+        "list must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("list-1").is_none(),
+        "list must not create a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_poll_toolcompleted_no_phantom_terminal() {
+    // A poll's ToolCompleted must NOT call set_subagent_terminal — that would
+    // create a phantom terminal entry in subagent_states for the poll's id.
+    let mut app = test_app("");
+    // First, spawn a real background subagent.
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    // Then, a poll on that task — its ToolCompleted should not create a
+    // terminal entry for "poll-1".
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "poll-1",
+            true,
+            serde_json::json!({ "task_id": "bg_1", "status": "done", "result": "finished" }),
+        ),
+    );
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll ToolCompleted must not create a phantom subagent_states entry"
+    );
+    // The spawn's card should still be Running (not resolved by the poll).
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "spawn card should still be Running after poll (no terminal transcript yet)"
+    );
+}
+
+#[test]
+fn subagent_multiple_polls_dont_inflate_count() {
+    // Multiple polls on the same background task must not inflate
+    // subagent_order — only the spawn should be tracked.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    for i in 0..5 {
+        let poll_id = format!("poll-{i}");
+        handle_async_event(
+            &mut app,
+            subagent_tool_requested(
+                &poll_id,
+                serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+            ),
+        );
+        handle_async_event(
+            &mut app,
+            subagent_tool_completed(
+                &poll_id,
+                true,
+                serde_json::json!({ "task_id": "bg_1", "status": "running" }),
+            ),
+        );
+    }
+    assert_eq!(
+        app.subagent_order.len(),
+        1,
+        "only the spawn should be in subagent_order, got: {:?}",
+        app.subagent_order
+    );
+    assert_eq!(app.subagent_order[0], "spawn-1");
+}
+
+#[test]
+fn subagent_spawn_with_action_field_not_list_is_tracked() {
+    // A spawn that includes an `action` field (but not "list") should still
+    // be tracked as a spawn — the action field is only meaningful for
+    // poll/cancel/list, but a spawn with a stray action must not be silently
+    // dropped.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "action": "poll" }),
+        ),
+    );
+    assert!(
+        app.subagent_order.contains(&"spawn-1".to_string()),
+        "spawn with prompt + action=poll should still be tracked (prompt takes precedence)"
+    );
+}
+
+#[test]
+fn subagent_terminal_transcript_resolves_spawn_not_poll() {
+    // When a poll emits a terminal SubagentTranscript for the *spawn's*
+    // invocation_id, the TUI should resolve the spawn's card — not the
+    // poll's (which was never tracked).
+    let mut app = test_app("");
+    // Spawn a background subagent.
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "spawn should be Running before terminal transcript"
+    );
+    // Poll arrives (not tracked as a subagent).
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    // Terminal transcript arrives with the SPAWN's invocation_id (emitted by
+    // the core's emit_terminal_transcript_for_task).
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Task complete".to_string()),
+                status: Some("done".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    // The spawn's card must now be Done.
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "spawn card must be resolved to Done by terminal transcript"
+    );
+    // The poll was never tracked — no state for it.
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll must not have a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_mixed_spawn_poll_cancel_only_counts_spawns() {
+    // Realistic scenario: 1 spawn + 3 polls + 1 cancel = only 1 in
+    // subagent_order. This is the exact bug the user reported (4 subagents
+    // shown when only 1 was spawned).
+    let mut app = test_app("");
+    // Spawn
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    // 3 polls
+    for i in 0..3 {
+        handle_async_event(
+            &mut app,
+            subagent_tool_requested(
+                &format!("poll-{i}"),
+                serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+            ),
+        );
+    }
+    // 1 cancel
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "cancel-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "cancel" }),
+        ),
+    );
+    assert_eq!(
+        app.subagent_order.len(),
+        1,
+        "only the spawn should be tracked, got: {:?}",
+        app.subagent_order
+    );
+}
+
+#[test]
+fn subagent_cancel_terminal_transcript_resolves_spawn() {
+    // A cancel emits a terminal transcript with status=cancelled for the
+    // spawn's invocation_id — the spawn card should show Cancelled.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    // Cancel emits terminal transcript for spawn-1.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Cancelled by user".to_string()),
+                ok: Some(false),
+                invocation: None,
+                result: None,
+                text: Some("Cancelled".to_string()),
+                status: Some("cancelled".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Cancelled),
+        "spawn card must be Cancelled after cancel terminal transcript"
+    );
+}
+
+#[test]
+fn subagent_failed_terminal_transcript_resolves_spawn() {
+    // A poll on a failed task emits a terminal transcript with status=failed
+    // — the spawn card should show Failed with the error message.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    // Failed terminal transcript for spawn-1.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("model error".to_string()),
+                ok: Some(false),
+                invocation: None,
+                result: None,
+                text: Some("model error".to_string()),
+                status: Some("failed".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Failed(
+            "model error".to_string()
+        )),
+        "spawn card must be Failed after failed terminal transcript"
+    );
+}
+
+#[test]
+fn subagent_foreground_spawn_resolved_by_toolcompleted() {
+    // A foreground spawn (no background:true) is resolved directly by its
+    // own ToolCompleted — no terminal transcript needed. This verifies the
+    // is_subagent_spawn guard doesn't break the foreground path.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested("spawn-1", serde_json::json!({ "prompt": "do work" })),
+    );
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "foreground spawn should be Running before ToolCompleted"
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed("spawn-1", true, serde_json::json!({ "result": "done" })),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "foreground spawn should be Done after its own ToolCompleted"
+    );
+}
+
 #[test]
 fn compact_tool_render_expands_only_clicked_tool_result() {
     let mut app = test_app("");

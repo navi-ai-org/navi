@@ -2497,6 +2497,167 @@ mod tests {
         assert!(!json.contains("github_pat_1234567890abcdef12"));
     }
 
+    // ── Subagent event redaction ──────────────────────────────────────────────
+
+    #[test]
+    fn redacts_subagent_activity_message_with_secret() {
+        let events = vec![AgentEvent::SubagentActivity {
+            invocation_id: "inv-1".to_string(),
+            message: "Read file with token sk-proj-1234567890abcdef".to_string(),
+        }];
+        let redacted = redact_snapshot_events(&events);
+        match &redacted[0] {
+            AgentEvent::SubagentActivity {
+                invocation_id,
+                message,
+            } => {
+                assert_eq!(invocation_id, "inv-1");
+                assert!(
+                    !message.contains("sk-proj-1234567890abcdef"),
+                    "secret must be redacted from activity message: {message}"
+                );
+            }
+            other => panic!("expected SubagentActivity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redacts_subagent_transcript_text_fields() {
+        let events = vec![AgentEvent::SubagentTranscript {
+            invocation_id: "inv-2".to_string(),
+            item: crate::event::SubagentTranscriptItem {
+                kind: crate::event::SubagentTranscriptKind::Text,
+                title: "Response with sk-proj-1234567890abcdef".to_string(),
+                detail: Some("Detail with ghp_1234567890abcdef1234".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Text with github_pat_1234567890abcdef12".to_string()),
+                thinking: Some("Thinking with bearer ghp_1234567890abcdef1234".to_string()),
+                status: Some("done".to_string()),
+            },
+        }];
+        let redacted = redact_snapshot_events(&events);
+        let json = serde_json::to_string(&redacted).unwrap();
+        assert!(!json.contains("sk-proj-1234567890abcdef"));
+        assert!(!json.contains("ghp_1234567890abcdef1234"));
+        assert!(!json.contains("github_pat_1234567890abcdef12"));
+    }
+
+    #[test]
+    fn redacts_subagent_transcript_nested_invocation() {
+        let events = vec![AgentEvent::SubagentTranscript {
+            invocation_id: "inv-3".to_string(),
+            item: crate::event::SubagentTranscriptItem {
+                kind: crate::event::SubagentTranscriptKind::ToolRequested,
+                title: "Read file".to_string(),
+                detail: None,
+                ok: None,
+                invocation: Some(crate::tool::ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: serde_json::json!({
+                        "path": "config.toml",
+                        "content": "api_key=sk-proj-1234567890abcdef"
+                    }),
+                }),
+                result: None,
+                text: None,
+                thinking: None,
+                status: None,
+            },
+        }];
+        let redacted = redact_snapshot_events(&events);
+        let json = serde_json::to_string(&redacted).unwrap();
+        assert!(
+            !json.contains("sk-proj-1234567890abcdef"),
+            "secret in nested invocation input must be redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn redacts_subagent_transcript_nested_result() {
+        let events = vec![AgentEvent::SubagentTranscript {
+            invocation_id: "inv-4".to_string(),
+            item: crate::event::SubagentTranscriptItem {
+                kind: crate::event::SubagentTranscriptKind::ToolCompleted,
+                title: "Tool completed".to_string(),
+                detail: None,
+                ok: Some(true),
+                invocation: None,
+                result: Some(crate::tool::ToolResult {
+                    invocation_id: "call-2".to_string(),
+                    ok: true,
+                    output: serde_json::json!({
+                        "content": "token=ghp_1234567890abcdef1234"
+                    }),
+                }),
+                text: None,
+                thinking: None,
+                status: None,
+            },
+        }];
+        let redacted = redact_snapshot_events(&events);
+        let json = serde_json::to_string(&redacted).unwrap();
+        assert!(
+            !json.contains("ghp_1234567890abcdef1234"),
+            "secret in nested result output must be redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn redacts_subagent_transcript_preserves_non_secret_fields() {
+        let events = vec![AgentEvent::SubagentTranscript {
+            invocation_id: "inv-5".to_string(),
+            item: crate::event::SubagentTranscriptItem {
+                kind: crate::event::SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("All good".to_string()),
+                thinking: None,
+                status: Some("done".to_string()),
+            },
+        }];
+        let redacted = redact_snapshot_events(&events);
+        match &redacted[0] {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "inv-5");
+                assert_eq!(item.kind, crate::event::SubagentTranscriptKind::Text);
+                assert_eq!(item.title, "Final response");
+                assert_eq!(item.detail.as_deref(), Some("Done"));
+                assert_eq!(item.ok, Some(true));
+                assert_eq!(item.text.as_deref(), Some("All good"));
+                assert_eq!(item.status.as_deref(), Some("done"));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redacts_subagent_activity_no_secret_unchanged() {
+        let events = vec![AgentEvent::SubagentActivity {
+            invocation_id: "inv-6".to_string(),
+            message: "Read justfile".to_string(),
+        }];
+        let redacted = redact_snapshot_events(&events);
+        match &redacted[0] {
+            AgentEvent::SubagentActivity {
+                invocation_id,
+                message,
+            } => {
+                assert_eq!(invocation_id, "inv-6");
+                assert_eq!(message, "Read justfile");
+            }
+            other => panic!("expected SubagentActivity, got {other:?}"),
+        }
+    }
+
     // ── Regression tests ──────────────────────────────────────────────────────
 
     fn non_restricted_policy(project_root: PathBuf, data_dir: PathBuf) -> SecurityPolicy {

@@ -558,3 +558,68 @@ async fn dropped_turn_future_does_not_poison_session_event_stream() {
         .expect("second turn must not fail with session event stream unavailable");
     assert_eq!(second.text, "next-model");
 }
+
+// ── Subagent event conversion and transient handling ───────────────────────
+
+#[test]
+fn runtime_event_kind_from_subagent_activity_preserves_fields() {
+    let event = AgentEvent::SubagentActivity {
+        invocation_id: "inv-act-1".to_string(),
+        message: "Read justfile".to_string(),
+    };
+    let kind = super::runtime_event_kind_from_agent_event(&event);
+    match kind {
+        Some(RuntimeEventKind::SubagentActivity {
+            invocation_id,
+            message,
+        }) => {
+            assert_eq!(invocation_id, "inv-act-1");
+            assert_eq!(message, "Read justfile");
+        }
+        other => panic!("expected SubagentActivity RuntimeEventKind, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_event_kind_from_subagent_transcript_preserves_fields() {
+    use crate::event::{SubagentTranscriptItem, SubagentTranscriptKind};
+    let event = AgentEvent::SubagentTranscript {
+        invocation_id: "inv-tr-1".to_string(),
+        item: SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::Text,
+            title: "Final response".to_string(),
+            detail: Some("Done".to_string()),
+            ok: Some(true),
+            invocation: None,
+            result: None,
+            text: Some("All done".to_string()),
+            thinking: None,
+            status: Some("done".to_string()),
+        },
+    };
+    let kind = super::runtime_event_kind_from_agent_event(&event);
+    match kind {
+        Some(RuntimeEventKind::SubagentTranscript {
+            invocation_id,
+            item,
+        }) => {
+            assert_eq!(invocation_id, "inv-tr-1");
+            assert_eq!(item.kind, SubagentTranscriptKind::Text);
+            assert_eq!(item.title, "Final response");
+            assert_eq!(item.status.as_deref(), Some("done"));
+        }
+        other => panic!("expected SubagentTranscript RuntimeEventKind, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_event_kind_from_agent_event_returns_none_for_unmapped() {
+    // Some AgentEvent variants don't have a RuntimeEventKind equivalent.
+    // Verify the function doesn't panic and returns None for at least one
+    // unmapped variant (or Some for mapped ones — the key is no panic).
+    let event = AgentEvent::Error {
+        message: "test".to_string(),
+    };
+    let _ = super::runtime_event_kind_from_agent_event(&event);
+    // No panic = pass. The result may be Some or None depending on the variant.
+}

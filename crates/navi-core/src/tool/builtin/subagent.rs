@@ -83,6 +83,10 @@ impl SubagentTool {
 
 struct SubagentBackgroundTask {
     task_id: String,
+    /// Invocation id of the original `subagent(background: true)` spawn call.
+    /// Used to emit terminal `SubagentTranscript` events for poll/cancel so
+    /// the TUI can resolve the spawn's card (not the poll's).
+    parent_invocation_id: String,
     prompt: String,
     description: Option<String>,
     elapsed_ms: std::sync::Mutex<u64>,
@@ -271,7 +275,7 @@ impl Tool for SubagentTool {
             let action = helpers::optional_string(&invocation.input, "action")
                 .unwrap_or_else(|| "poll".to_string());
             return self
-                .handle_background_action(invocation.id, &task_id, &action)
+                .handle_background_action(invocation.id, &task_id, &action, context.event_tx)
                 .await;
         }
 
@@ -467,6 +471,7 @@ impl SubagentTool {
         let task_cancel = parent_cancel.unwrap_or_default();
         let task = Arc::new(SubagentBackgroundTask {
             task_id: task_id.clone(),
+            parent_invocation_id: invocation_id.clone(),
             prompt: prompt.clone(),
             description: description.clone(),
             elapsed_ms: std::sync::Mutex::new(0),
@@ -598,6 +603,7 @@ impl SubagentTool {
         invocation_id: String,
         task_id: &str,
         action: &str,
+        parent_event_tx: Option<mpsc::UnboundedSender<AgentEvent>>,
     ) -> Result<ToolResult> {
         let tasks = self.background_tasks.lock().await;
         let Some(task) = tasks.get(task_id).cloned() else {
@@ -612,6 +618,11 @@ impl SubagentTool {
             "poll" => {
                 let _ = task.try_read_result();
                 let obs = task.observation_json().await;
+                // When the task has reached a terminal state, emit a terminal
+                // SubagentTranscript for the *original spawn's* invocation id so
+                // the TUI resolves the spawn card (polls have a different
+                // invocation id and must not be tracked as subagents).
+                emit_terminal_transcript_for_task(&task, &parent_event_tx);
                 Ok(helpers::ok(invocation_id, obs))
             }
             "cancel" => {
@@ -623,6 +634,9 @@ impl SubagentTool {
                     }
                 }
                 let obs = task.observation_json().await;
+                // Cancel always reaches a terminal state — emit the transcript
+                // so the TUI stops showing "Running subagent" for this task.
+                emit_terminal_transcript_for_task(&task, &parent_event_tx);
                 Ok(helpers::ok(invocation_id, obs))
             }
             _ => Ok(helpers::ok(
@@ -804,6 +818,42 @@ fn emit_subagent_transcript(
             item,
         });
     }
+}
+
+/// Emit a terminal `SubagentTranscript` for a background task's *original
+/// spawn* invocation id when the task has reached a final state (done / failed
+/// / cancelled). This lets poll and cancel calls resolve the spawn's TUI card
+/// — without it the card stays "Running" because the poll's `ToolCompleted`
+/// uses a different invocation id.
+fn emit_terminal_transcript_for_task(
+    task: &SubagentBackgroundTask,
+    parent_event_tx: &Option<mpsc::UnboundedSender<AgentEvent>>,
+) {
+    let state = task.state.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if !state.is_final() {
+        return;
+    }
+    let (status_str, detail) = match state.status {
+        SubagentBgStatus::Done => ("done", "Background subagent completed".to_string()),
+        SubagentBgStatus::Failed => ("failed", state.error.clone()),
+        SubagentBgStatus::Cancelled => ("cancelled", "Cancelled by user".to_string()),
+        SubagentBgStatus::Running => return,
+    };
+    emit_subagent_transcript(
+        parent_event_tx,
+        &task.parent_invocation_id,
+        SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::Text,
+            title: "Final response".to_string(),
+            detail: Some(one_line(&detail)),
+            ok: Some(state.status == SubagentBgStatus::Done),
+            invocation: None,
+            result: None,
+            text: Some(detail),
+            thinking: None,
+            status: Some(status_str.to_string()),
+        },
+    );
 }
 
 fn subagent_activity_message(event: &AgentEvent) -> Option<String> {
@@ -1265,5 +1315,663 @@ mod tests {
 
         assert!(first.starts_with("subagent-session-"));
         assert_ne!(first, second);
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge case tests for emit_terminal_transcript_for_task and
+    // parent_invocation_id storage.
+    // -----------------------------------------------------------------------
+
+    /// Build a `SubagentBackgroundTask` in the given state for testing.
+    fn make_test_task(state: SubagentBgState) -> Arc<SubagentBackgroundTask> {
+        Arc::new(SubagentBackgroundTask {
+            task_id: "bg_test".to_string(),
+            parent_invocation_id: "spawn-original".to_string(),
+            prompt: "test prompt".to_string(),
+            description: Some("test".to_string()),
+            elapsed_ms: std::sync::Mutex::new(100),
+            state: std::sync::Mutex::new(state),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        })
+    }
+
+    #[test]
+    fn emit_terminal_transcript_noop_for_running_state() {
+        // A Running task must NOT emit a terminal transcript — the card
+        // should stay "Running" until the task actually finishes.
+        let task = make_test_task(SubagentBgState::running());
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        emit_terminal_transcript_for_task(&task, &Some(tx));
+        assert!(
+            rx.try_recv().is_err(),
+            "no transcript should be emitted for Running state"
+        );
+    }
+
+    #[test]
+    fn emit_terminal_transcript_emits_done_for_done_state() {
+        let task = make_test_task(SubagentBgState::done());
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        emit_terminal_transcript_for_task(&task, &Some(tx));
+        let event = rx
+            .try_recv()
+            .expect("transcript should be emitted for Done");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(
+                    invocation_id, "spawn-original",
+                    "transcript must use parent_invocation_id, not task_id"
+                );
+                assert_eq!(item.kind, SubagentTranscriptKind::Text);
+                assert_eq!(item.status.as_deref(), Some("done"));
+                assert_eq!(item.ok, Some(true));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_terminal_transcript_emits_failed_for_failed_state() {
+        let task = make_test_task(SubagentBgState {
+            status: SubagentBgStatus::Failed,
+            error: "model crashed".to_string(),
+        });
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        emit_terminal_transcript_for_task(&task, &Some(tx));
+        let event = rx
+            .try_recv()
+            .expect("transcript should be emitted for Failed");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "spawn-original");
+                assert_eq!(item.status.as_deref(), Some("failed"));
+                assert_eq!(item.ok, Some(false));
+                assert!(
+                    item.detail
+                        .as_deref()
+                        .is_some_and(|d| d.contains("model crashed")),
+                    "failed transcript should include the error: {item:?}"
+                );
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_terminal_transcript_emits_cancelled_for_cancelled_state() {
+        let task = make_test_task(SubagentBgState::cancelled());
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        emit_terminal_transcript_for_task(&task, &Some(tx));
+        let event = rx
+            .try_recv()
+            .expect("transcript should be emitted for Cancelled");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "spawn-original");
+                assert_eq!(item.status.as_deref(), Some("cancelled"));
+                assert_eq!(item.ok, Some(false));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn emit_terminal_transcript_noop_when_no_event_tx() {
+        // When parent_event_tx is None (no event bus), the helper must not
+        // panic — it should silently do nothing.
+        let task = make_test_task(SubagentBgState::done());
+        emit_terminal_transcript_for_task(&task, &None);
+        // No panic = pass.
+    }
+
+    #[test]
+    fn background_task_stores_parent_invocation_id() {
+        // Verify that the parent_invocation_id field is correctly stored and
+        // accessible — it's used by emit_terminal_transcript_for_task to
+        // route the terminal event to the spawn's card.
+        let task = make_test_task(SubagentBgState::done());
+        assert_eq!(
+            task.parent_invocation_id, "spawn-original",
+            "parent_invocation_id must match the original spawn's invocation id"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_on_nonexistent_task_returns_error_no_panic() {
+        // Polling a task_id that doesn't exist must return an error result,
+        // not panic. No terminal transcript should be emitted (there's no
+        // task to emit for).
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let (event_tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let result = tool
+            .handle_background_action(
+                "poll-invocation".to_string(),
+                "nonexistent_task",
+                "poll",
+                Some(event_tx),
+            )
+            .await
+            .expect("poll should not error on missing task");
+        assert!(
+            result.output.get("error").is_some(),
+            "poll on missing task should return an error in output"
+        );
+        // No transcript should be emitted for a nonexistent task.
+        assert!(
+            rx.try_recv().is_err(),
+            "no transcript should be emitted for nonexistent task"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_on_nonexistent_task_returns_error_no_panic() {
+        // Cancelling a task_id that doesn't exist must return an error result,
+        // not panic.
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let result = tool
+            .handle_background_action(
+                "cancel-invocation".to_string(),
+                "nonexistent_task",
+                "cancel",
+                None,
+            )
+            .await
+            .expect("cancel should not error on missing task");
+        assert!(
+            result.output.get("error").is_some(),
+            "cancel on missing task should return an error in output"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_on_done_task_emits_terminal_transcript_with_parent_id() {
+        // End-to-end: insert a Done task into the tool's background_tasks map,
+        // then poll it. The poll should emit a terminal SubagentTranscript
+        // with the parent_invocation_id (the spawn's id), not the poll's id.
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        // Insert a Done task with a known parent_invocation_id.
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_done".to_string(),
+            parent_invocation_id: "spawn-xyz".to_string(),
+            prompt: "done work".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(500),
+            state: std::sync::Mutex::new(SubagentBgState::done()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_done".to_string(), task);
+
+        let (event_tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let result = tool
+            .handle_background_action("poll-abc".to_string(), "bg_done", "poll", Some(event_tx))
+            .await
+            .expect("poll should succeed");
+
+        // The tool result should be ok with status=done.
+        assert!(result.ok, "poll on done task should return ok");
+
+        // A terminal transcript should be emitted for the SPAWN's id.
+        let event = rx
+            .try_recv()
+            .expect("terminal transcript should be emitted for done task");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(
+                    invocation_id, "spawn-xyz",
+                    "transcript must use the spawn's invocation_id, not the poll's"
+                );
+                assert_eq!(item.status.as_deref(), Some("done"));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn poll_on_running_task_does_not_emit_terminal_transcript() {
+        // Polling a still-running task should NOT emit a terminal transcript.
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_running".to_string(),
+            parent_invocation_id: "spawn-running".to_string(),
+            prompt: "still working".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(100),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_running".to_string(), task);
+
+        let (event_tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let _result = tool
+            .handle_background_action(
+                "poll-running".to_string(),
+                "bg_running",
+                "poll",
+                Some(event_tx),
+            )
+            .await
+            .expect("poll should succeed");
+
+        assert!(
+            rx.try_recv().is_err(),
+            "no terminal transcript should be emitted for a Running task"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancel_on_running_task_emits_cancelled_transcript() {
+        // Cancelling a running task should set state to Cancelled and emit
+        // a terminal transcript with status=cancelled for the spawn's id.
+        struct NoopProvider;
+        impl ModelProvider for NoopProvider {
+            fn stream(&self, _req: crate::model::ModelRequest) -> crate::model::ModelStream {
+                Box::pin(futures_util::stream::empty())
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(NoopProvider) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_cancel".to_string(),
+            parent_invocation_id: "spawn-cancel".to_string(),
+            prompt: "cancel me".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(50),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_cancel".to_string(), task);
+
+        let (event_tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        let _result = tool
+            .handle_background_action(
+                "cancel-inv".to_string(),
+                "bg_cancel",
+                "cancel",
+                Some(event_tx),
+            )
+            .await
+            .expect("cancel should succeed");
+
+        let event = rx
+            .try_recv()
+            .expect("cancelled transcript should be emitted");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "spawn-cancel");
+                assert_eq!(item.status.as_deref(), Some("cancelled"));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge case tests for subagent_activity_message and subagent_transcript_item
+    // helper functions.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn activity_message_for_tool_requested() {
+        let event = AgentEvent::ToolRequested(ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "src/main.rs" }),
+        });
+        let msg = subagent_activity_message(&event);
+        assert!(
+            msg.as_deref().is_some_and(|m| m.contains("src/main.rs")),
+            "ToolRequested should produce activity message with path: {msg:?}"
+        );
+    }
+
+    #[test]
+    fn activity_message_for_failed_tool_completed() {
+        let event = AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "tool": "bash", "error": "command failed" }),
+        });
+        let msg = subagent_activity_message(&event);
+        assert_eq!(
+            msg.as_deref(),
+            Some("bash failed"),
+            "failed ToolCompleted should produce 'X failed' message"
+        );
+    }
+
+    #[test]
+    fn activity_message_for_failed_tool_without_tool_field() {
+        let event = AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "error": "something went wrong" }),
+        });
+        let msg = subagent_activity_message(&event);
+        assert_eq!(
+            msg.as_deref(),
+            Some("Tool failed"),
+            "failed ToolCompleted without 'tool' field should fall back to 'Tool'"
+        );
+    }
+
+    #[test]
+    fn activity_message_for_successful_tool_completed_is_none() {
+        let event = AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: json!({ "result": "ok" }),
+        });
+        let msg = subagent_activity_message(&event);
+        assert!(
+            msg.is_none(),
+            "successful ToolCompleted should not produce an activity message"
+        );
+    }
+
+    #[test]
+    fn activity_message_for_other_events_is_none() {
+        let events = vec![
+            AgentEvent::ModelDelta {
+                text: "hello".to_string(),
+            },
+            AgentEvent::ModelThinkingDelta {
+                text: "thinking".to_string(),
+            },
+            AgentEvent::SubagentActivity {
+                invocation_id: "inv".to_string(),
+                message: "working".to_string(),
+            },
+            AgentEvent::SubagentTranscript {
+                invocation_id: "inv".to_string(),
+                item: SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::Text,
+                    title: "Done".to_string(),
+                    detail: None,
+                    ok: None,
+                    invocation: None,
+                    result: None,
+                    text: None,
+                    thinking: None,
+                    status: None,
+                },
+            },
+        ];
+        for event in &events {
+            assert!(
+                subagent_activity_message(event).is_none(),
+                "non-tool events should not produce activity messages: {event:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn transcript_item_for_tool_requested() {
+        let event = AgentEvent::ToolRequested(ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: json!({ "path": "justfile" }),
+        });
+        let item = subagent_transcript_item(&event).expect("should produce transcript item");
+        assert_eq!(item.kind, SubagentTranscriptKind::ToolRequested);
+        assert!(item.title.contains("justfile"));
+        assert!(item.invocation.is_some());
+        assert_eq!(item.invocation.as_ref().unwrap().tool_name, "read_file");
+        assert!(item.result.is_none());
+        assert!(item.text.is_none());
+        assert!(item.status.is_none());
+    }
+
+    #[test]
+    fn transcript_item_for_successful_tool_completed() {
+        let event = AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: json!({ "path": "justfile", "content": "verify" }),
+        });
+        let item = subagent_transcript_item(&event).expect("should produce transcript item");
+        assert_eq!(item.kind, SubagentTranscriptKind::ToolCompleted);
+        assert_eq!(item.title, "Tool completed");
+        assert_eq!(item.ok, Some(true));
+        assert!(item.result.is_some());
+        assert!(item.invocation.is_none());
+    }
+
+    #[test]
+    fn transcript_item_for_failed_tool_completed() {
+        let event = AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: false,
+            output: json!({ "error": "permission denied" }),
+        });
+        let item = subagent_transcript_item(&event).expect("should produce transcript item");
+        assert_eq!(item.kind, SubagentTranscriptKind::ToolCompleted);
+        assert_eq!(item.title, "Tool failed");
+        assert_eq!(item.ok, Some(false));
+        assert!(
+            item.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("permission denied"))
+        );
+    }
+
+    #[test]
+    fn transcript_item_for_model_delta() {
+        let event = AgentEvent::ModelDelta {
+            text: "Hello world".to_string(),
+        };
+        let item = subagent_transcript_item(&event).expect("should produce transcript item");
+        assert_eq!(item.kind, SubagentTranscriptKind::ModelDelta);
+        assert_eq!(item.title, "Assistant");
+        assert_eq!(item.text.as_deref(), Some("Hello world"));
+        assert!(item.thinking.is_none());
+    }
+
+    #[test]
+    fn transcript_item_for_model_thinking_delta() {
+        let event = AgentEvent::ModelThinkingDelta {
+            text: "Analyzing...".to_string(),
+        };
+        let item = subagent_transcript_item(&event).expect("should produce transcript item");
+        assert_eq!(item.kind, SubagentTranscriptKind::ThinkingDelta);
+        assert_eq!(item.title, "Thinking");
+        assert_eq!(item.thinking.as_deref(), Some("Analyzing..."));
+        assert!(item.text.is_none());
+    }
+
+    #[test]
+    fn transcript_item_for_other_events_is_none() {
+        let events = vec![
+            AgentEvent::SubagentActivity {
+                invocation_id: "inv".to_string(),
+                message: "working".to_string(),
+            },
+            AgentEvent::SubagentTranscript {
+                invocation_id: "inv".to_string(),
+                item: SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::Text,
+                    title: "Done".to_string(),
+                    detail: None,
+                    ok: None,
+                    invocation: None,
+                    result: None,
+                    text: None,
+                    thinking: None,
+                    status: None,
+                },
+            },
+            AgentEvent::Error {
+                message: "oops".to_string(),
+            },
+        ];
+        for event in &events {
+            assert!(
+                subagent_transcript_item(event).is_none(),
+                "non-tool/model events should not produce transcript items: {event:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn compact_result_detail_for_error_field() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: false,
+            output: json!({ "error": "something failed\nwith newline" }),
+        };
+        let detail = compact_result_detail(&result);
+        assert!(
+            detail.contains("something failed"),
+            "compact_result_detail should extract error: {detail}"
+        );
+        assert!(
+            !detail.contains('\n'),
+            "compact_result_detail should be one line: {detail}"
+        );
+    }
+
+    #[test]
+    fn compact_result_detail_for_path_field() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: json!({ "path": "src/main.rs" }),
+        };
+        let detail = compact_result_detail(&result);
+        assert_eq!(detail, "src/main.rs");
+    }
+
+    #[test]
+    fn compact_result_detail_for_result_field() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: json!({ "result": "task completed\nsuccessfully" }),
+        };
+        let detail = compact_result_detail(&result);
+        assert!(
+            detail.contains("task completed"),
+            "compact_result_detail should extract result: {detail}"
+        );
+    }
+
+    #[test]
+    fn compact_result_detail_for_empty_output() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: json!({}),
+        };
+        let detail = compact_result_detail(&result);
+        assert_eq!(detail, "ok", "empty output should produce 'ok'");
+    }
+
+    #[test]
+    fn compact_result_detail_for_null_output() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: serde_json::Value::Null,
+        };
+        let detail = compact_result_detail(&result);
+        assert_eq!(detail, "ok", "null output should produce 'ok'");
     }
 }

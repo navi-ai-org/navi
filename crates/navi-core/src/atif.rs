@@ -796,6 +796,130 @@ mod tests {
     }
 
     #[test]
+    fn subagent_activity_events_are_dropped_with_count() {
+        let events = vec![
+            AgentEvent::SubagentActivity {
+                invocation_id: "inv-1".to_string(),
+                message: "Read file".to_string(),
+            },
+            AgentEvent::SubagentActivity {
+                invocation_id: "inv-2".to_string(),
+                message: "Write file".to_string(),
+            },
+        ];
+        let t = build_trajectory(&snapshot(events), &opts());
+        assert!(
+            t.steps.is_empty(),
+            "subagent activity should not produce steps"
+        );
+        let notes = t
+            .notes
+            .expect("notes should be present when events dropped");
+        assert!(
+            notes.contains("2 event(s)"),
+            "dropped count should be 2: {notes}"
+        );
+    }
+
+    #[test]
+    fn subagent_transcript_events_are_dropped_with_count() {
+        use crate::event::{SubagentTranscriptItem, SubagentTranscriptKind};
+        let events = vec![
+            AgentEvent::SubagentTranscript {
+                invocation_id: "inv-1".to_string(),
+                item: SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::ToolRequested,
+                    title: "Read justfile".to_string(),
+                    detail: None,
+                    ok: None,
+                    invocation: None,
+                    result: None,
+                    text: None,
+                    thinking: None,
+                    status: None,
+                },
+            },
+            AgentEvent::SubagentTranscript {
+                invocation_id: "inv-1".to_string(),
+                item: SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::Text,
+                    title: "Final response".to_string(),
+                    detail: Some("Done".to_string()),
+                    ok: Some(true),
+                    invocation: None,
+                    result: None,
+                    text: Some("All done".to_string()),
+                    thinking: None,
+                    status: Some("done".to_string()),
+                },
+            },
+        ];
+        let t = build_trajectory(&snapshot(events), &opts());
+        assert!(
+            t.steps.is_empty(),
+            "subagent transcript should not produce steps"
+        );
+        let notes = t
+            .notes
+            .expect("notes should be present when events dropped");
+        assert!(
+            notes.contains("2 event(s)"),
+            "dropped count should be 2: {notes}"
+        );
+        assert!(
+            notes.contains("subagent"),
+            "notes should mention subagent: {notes}"
+        );
+    }
+
+    #[test]
+    fn mixed_subagent_and_normal_events_produce_steps_and_dropped_count() {
+        use crate::event::{SubagentTranscriptItem, SubagentTranscriptKind};
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "do work".to_string(),
+                content_parts: vec![],
+                submitted_at: None,
+            },
+            AgentEvent::SubagentActivity {
+                invocation_id: "inv-1".to_string(),
+                message: "working".to_string(),
+            },
+            AgentEvent::SubagentTranscript {
+                invocation_id: "inv-1".to_string(),
+                item: SubagentTranscriptItem {
+                    kind: SubagentTranscriptKind::Text,
+                    title: "Done".to_string(),
+                    detail: None,
+                    ok: None,
+                    invocation: None,
+                    result: None,
+                    text: None,
+                    thinking: None,
+                    status: None,
+                },
+            },
+            AgentEvent::ModelOutput {
+                text: "finished".to_string(),
+                thinking: None,
+            },
+        ];
+        let t = build_trajectory(&snapshot(events), &opts());
+        // Should have at least one step (user + model output).
+        assert!(
+            !t.steps.is_empty(),
+            "normal events should produce steps: {:?}",
+            t.steps
+        );
+        // 2 subagent events should be dropped.
+        let notes = t.notes.expect("notes should be present");
+        assert!(
+            notes.contains("2 event(s)"),
+            "dropped count should be 2: {notes}"
+        );
+    }
+
+    #[test]
     fn auto_compact_emits_system_step() {
         let events = vec![AgentEvent::AutoCompactCompleted {
             tokens_saved: 500,

@@ -885,3 +885,288 @@ pub enum ApprovalDecision {
         id: String,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::{ToolInvocation, ToolResult};
+    use serde_json::json;
+
+    // ── SubagentTranscriptKind serde ──────────────────────────────────────────
+
+    #[test]
+    fn subagent_transcript_kind_serde_all_variants() {
+        for (kind, expected) in [
+            (SubagentTranscriptKind::ToolRequested, "ToolRequested"),
+            (SubagentTranscriptKind::ToolCompleted, "ToolCompleted"),
+            (SubagentTranscriptKind::Text, "Text"),
+            (SubagentTranscriptKind::ModelDelta, "ModelDelta"),
+            (SubagentTranscriptKind::ThinkingDelta, "ThinkingDelta"),
+        ] {
+            let s = serde_json::to_string(&kind).unwrap();
+            assert!(
+                s.contains(expected),
+                "serialized {kind:?} should contain {expected}: got {s}"
+            );
+            let back: SubagentTranscriptKind = serde_json::from_str(&s).unwrap();
+            assert_eq!(back, kind, "roundtrip failed for {expected}");
+        }
+    }
+
+    // ── SubagentTranscriptItem serde ──────────────────────────────────────────
+
+    #[test]
+    fn subagent_transcript_item_minimal_omits_optional_fields() {
+        let item = SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::Text,
+            title: "Final response".to_string(),
+            detail: None,
+            ok: None,
+            invocation: None,
+            result: None,
+            text: None,
+            thinking: None,
+            status: None,
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        // Optional fields with skip_serializing_if should be absent.
+        assert!(!s.contains("detail"));
+        assert!(!s.contains("ok"));
+        assert!(!s.contains("invocation"));
+        assert!(!s.contains("result"));
+        assert!(!s.contains("text"));
+        assert!(!s.contains("thinking"));
+        assert!(!s.contains("status"));
+        // Required fields must be present.
+        assert!(s.contains("kind"));
+        assert!(s.contains("title"));
+        // Roundtrip.
+        let back: SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.kind, item.kind);
+        assert_eq!(back.title, item.title);
+    }
+
+    #[test]
+    fn subagent_transcript_item_full_roundtrip() {
+        let item = SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::ToolCompleted,
+            title: "Tool completed".to_string(),
+            detail: Some("justfile".to_string()),
+            ok: Some(true),
+            invocation: Some(ToolInvocation {
+                id: "call-1".to_string(),
+                tool_name: "read_file".to_string(),
+                input: json!({ "path": "justfile" }),
+            }),
+            result: Some(ToolResult {
+                invocation_id: "call-1".to_string(),
+                ok: true,
+                output: json!({ "content": "verify:\n  cargo test" }),
+            }),
+            text: Some("done".to_string()),
+            thinking: Some("analyzing...".to_string()),
+            status: Some("done".to_string()),
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        let back: SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.kind, item.kind);
+        assert_eq!(back.title, item.title);
+        assert_eq!(back.detail, item.detail);
+        assert_eq!(back.ok, item.ok);
+        assert_eq!(back.invocation.as_ref().unwrap().id, "call-1");
+        assert_eq!(back.result.as_ref().unwrap().ok, true);
+        assert_eq!(back.text, item.text);
+        assert_eq!(back.thinking, item.thinking);
+        assert_eq!(back.status, item.status);
+    }
+
+    #[test]
+    fn subagent_transcript_item_deserialize_missing_optional_defaults_none() {
+        // JSON with only required fields — optional fields default to None.
+        let s = json!({
+            "kind": "Text",
+            "title": "Hello"
+        });
+        let item: SubagentTranscriptItem = serde_json::from_value(s).unwrap();
+        assert_eq!(item.kind, SubagentTranscriptKind::Text);
+        assert_eq!(item.title, "Hello");
+        assert!(item.detail.is_none());
+        assert!(item.ok.is_none());
+        assert!(item.invocation.is_none());
+        assert!(item.result.is_none());
+        assert!(item.text.is_none());
+        assert!(item.thinking.is_none());
+        assert!(item.status.is_none());
+    }
+
+    #[test]
+    fn subagent_transcript_item_empty_string_fields() {
+        let item = SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::ModelDelta,
+            title: String::new(),
+            detail: Some(String::new()),
+            ok: None,
+            invocation: None,
+            result: None,
+            text: Some(String::new()),
+            thinking: None,
+            status: None,
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        let back: SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.title, "");
+        assert_eq!(back.detail.as_deref(), Some(""));
+        assert_eq!(back.text.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn subagent_transcript_item_special_chars_in_text() {
+        let item = SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::Text,
+            title: "Response with \"quotes\" and \\backslash".to_string(),
+            detail: Some("Unicode: 日本語 \n newline".to_string()),
+            ok: Some(false),
+            invocation: None,
+            result: None,
+            text: Some("Emoji: 🎉 and tabs\ttab".to_string()),
+            thinking: Some("Path: /home/user/secret.key".to_string()),
+            status: Some("failed".to_string()),
+        };
+        let s = serde_json::to_string(&item).unwrap();
+        let back: SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.title, item.title);
+        assert_eq!(back.detail, item.detail);
+        assert_eq!(back.text, item.text);
+        assert_eq!(back.thinking, item.thinking);
+        assert_eq!(back.status, item.status);
+    }
+
+    #[test]
+    fn subagent_transcript_item_terminal_status_values() {
+        for status in ["done", "failed", "cancelled"] {
+            let item = SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final".to_string(),
+                detail: None,
+                ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                thinking: None,
+                status: Some(status.to_string()),
+            };
+            let s = serde_json::to_string(&item).unwrap();
+            let back: SubagentTranscriptItem = serde_json::from_str(&s).unwrap();
+            assert_eq!(back.status.as_deref(), Some(status));
+        }
+    }
+
+    // ── AgentEvent subagent variant serde ─────────────────────────────────────
+
+    #[test]
+    fn agent_event_subagent_activity_serde_roundtrip() {
+        let event = AgentEvent::SubagentActivity {
+            invocation_id: "inv-123".to_string(),
+            message: "Read crates/navi-core/src/event.rs".to_string(),
+        };
+        let s = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&s).unwrap();
+        match back {
+            AgentEvent::SubagentActivity {
+                invocation_id,
+                message,
+            } => {
+                assert_eq!(invocation_id, "inv-123");
+                assert_eq!(message, "Read crates/navi-core/src/event.rs");
+            }
+            other => panic!("expected SubagentActivity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_event_subagent_transcript_serde_roundtrip() {
+        let event = AgentEvent::SubagentTranscript {
+            invocation_id: "inv-456".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read justfile".to_string(),
+                detail: None,
+                ok: None,
+                invocation: Some(ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: json!({ "path": "justfile" }),
+                }),
+                result: None,
+                text: None,
+                thinking: None,
+                status: None,
+            },
+        };
+        let s = serde_json::to_string(&event).unwrap();
+        let back: AgentEvent = serde_json::from_str(&s).unwrap();
+        match back {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "inv-456");
+                assert_eq!(item.kind, SubagentTranscriptKind::ToolRequested);
+                assert_eq!(item.title, "Read justfile");
+                assert_eq!(item.invocation.as_ref().unwrap().tool_name, "read_file");
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    // ── RuntimeEventKind ↔ AgentEvent conversion for subagent events ──────────
+
+    #[test]
+    fn runtime_event_subagent_activity_converts_to_agent_event() {
+        let kind = RuntimeEventKind::SubagentActivity {
+            invocation_id: "inv-1".to_string(),
+            message: "working".to_string(),
+        };
+        let agent = kind.into_agent_event().expect("should convert");
+        match agent {
+            AgentEvent::SubagentActivity {
+                invocation_id,
+                message,
+            } => {
+                assert_eq!(invocation_id, "inv-1");
+                assert_eq!(message, "working");
+            }
+            other => panic!("expected SubagentActivity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_event_subagent_transcript_converts_to_agent_event() {
+        let kind = RuntimeEventKind::SubagentTranscript {
+            invocation_id: "inv-2".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Done".to_string(),
+                detail: None,
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: None,
+                thinking: None,
+                status: Some("done".to_string()),
+            },
+        };
+        let agent = kind.into_agent_event().expect("should convert");
+        match agent {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "inv-2");
+                assert_eq!(item.kind, SubagentTranscriptKind::Text);
+                assert_eq!(item.status.as_deref(), Some("done"));
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+}
