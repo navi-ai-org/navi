@@ -72,6 +72,14 @@ if (targetTriple) {
   cargoArgs.push('--target', targetTriple);
 }
 
+// Disable voice-onnx on Windows: ort-sys links ONNX Runtime native libs
+// compiled with /MD (dynamic MSVC runtime), but esaxx-rs (from embeddings →
+// candle → tokenizers) is compiled with /MT (static runtime). Mixing the two
+// causes LNK1319 mismatches. The NAPI binding doesn't need local ASR.
+if (platform === 'win32') {
+  cargoArgs.push('--no-default-features');
+}
+
 console.log(`Building navi-napi (${profile}${targetTriple ? `, target=${targetTriple}` : ''})...`);
 
 const result = spawnSync('cargo', cargoArgs, {
