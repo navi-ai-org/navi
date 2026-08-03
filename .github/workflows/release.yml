@@ -182,115 +182,35 @@ jobs:
           node scripts/build-native.mjs --release --target ${{ matrix.target }}
           Get-ChildItem npm/${{ matrix.npm_platform }}/
 
-      - name: Upload NAPI binary
+      - name: Stage NAPI binary with release asset name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          src=$(find crates/navi-napi/npm/${{ matrix.npm_platform }} -maxdepth 1 -type f \( -name '*.node' -o -name '*.dll' \) | head -1)
+          if [[ -z "$src" ]]; then
+            echo "error: no .node/.dll produced for ${{ matrix.npm_platform }}" >&2
+            ls -la crates/navi-napi/npm/${{ matrix.npm_platform }}/ >&2
+            exit 1
+          fi
+          ext="${src##*.}"
+          cp "$src" "dist/navi-napi-${{ matrix.npm_platform }}.$ext"
+          ls -lh dist/
+
+      - name: Upload NAPI binary artifact
         uses: actions/upload-artifact@v5
         with:
-          name: napi-${{ matrix.npm_platform }}
-          path: crates/navi-napi/npm/${{ matrix.npm_platform }}/
+          name: napi-dist-${{ matrix.npm_platform }}
+          path: dist/
           if-no-files-found: error
           retention-days: 14
 
   # ── Publish @navi-agent/napi to npm ─────────────────────────────────────────
   #
-  # Collects all platform .node files and publishes @navi-agent/napi-{platform}
-  # then the meta package @navi-agent/napi. Uses OIDC trusted publishing.
-  # Requires trusted publisher config on npmjs.com for each napi package.
-
-  publish-napi:
-    name: Publish @navi-agent/napi
-    needs: [build-napi]
-    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') }}
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
-          package-manager-cache: false
-
-      - name: Ensure npm supports trusted publishing
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install -g npm@latest
-          node -v
-          npm -v
-          npm_ver="$(npm -v)"
-          node -e '
-            const v = process.argv[1].split(".").map(Number);
-            if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) {
-              console.error("npm >= 11.5.1 required, got", process.argv[1]);
-              process.exit(1);
-            }
-          ' "$npm_ver"
-
-      - name: Download NAPI binaries
-        uses: actions/download-artifact@v5
-        with:
-          pattern: napi-*
-          path: crates/navi-napi/npm/
-          merge-multiple: false
-
-      - name: Stage NAPI binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd crates/navi-napi/npm
-          # Artifacts download as napi-{platform}/ containing the .node file.
-          # Move them into the expected {platform}/ directory.
-          for plat in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
-            src="napi-$plat"
-            dst="$plat"
-            if [[ -d "$src" ]]; then
-              mkdir -p "$dst"
-              cp -v "$src"/*.node "$dst/" 2>/dev/null || true
-              cp -v "$src"/*.dll "$dst/" 2>/dev/null || true
-            fi
-          done
-          # Verify at least one binary exists
-          found=0
-          for plat in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
-            if ls "$plat"/*.node 2>/dev/null || ls "$plat"/*.dll 2>/dev/null; then
-              found=$((found + 1))
-            fi
-          done
-          echo "Found binaries for $found platforms"
-          [[ $found -gt 0 ]] || { echo "ERROR: no NAPI binaries found"; exit 1; }
-
-      - name: Publish NAPI packages
-        shell: bash
-        env:
-          NAVI_NPM_OIDC: "1"
-        run: |
-          set -euo pipefail
-          cd crates/navi-napi
-          VERSION="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          VERSION="${VERSION#v}"
-          echo "Publishing @navi-agent/napi@$VERSION"
-
-          # Publish platform packages first
-          for plat in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
-            dir="npm/$plat"
-            if [[ ! -d "$dir" ]] || ! ls "$dir"/*.node "$dir"/*.dll 2>/dev/null >/dev/null; then
-              echo "Skipping $plat (no binary)"
-              continue
-            fi
-            echo "--- Publishing @navi-agent/napi-$plat@$VERSION ---"
-            (cd "$dir" && npm publish --access public --registry https://registry.npmjs.org/)
-          done
-
-          # Publish meta package
-          echo "--- Publishing @navi-agent/napi@$VERSION ---"
-          npm publish --access public --registry https://registry.npmjs.org/
+  # Handled by publish-npm.yml (same trusted-publisher workflow as the CLI
+  # packages). The release job below attaches the napi-dist-* binaries to the
+  # GitHub Release, and the publish-npm job dispatches publish-npm.yml, which
+  # downloads them and publishes @navi-agent/napi*.
 
   # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
 
@@ -588,7 +508,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [build-linux-x64, build-linux-arm64, build-desktop]
+    needs: [build-linux-x64, build-linux-arm64, build-desktop, build-napi]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -629,6 +549,13 @@ jobs:
           path: artifacts/
           merge-multiple: true
 
+      - name: Download NAPI binaries
+        uses: actions/download-artifact@v5
+        with:
+          pattern: napi-dist-*
+          path: artifacts/
+          merge-multiple: true
+
       - name: Generate checksums
         shell: bash
         run: |
@@ -660,6 +587,13 @@ jobs:
             [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { echo "bad hash: $hash"; exit 1; }
             [[ -n "$name" && -f "$name" ]] || { echo "sums name missing file: [$name]"; exit 1; }
           done < SHA256SUMS.txt
+          # NAPI addons ride along as release assets (not checksummed above;
+          # consumers install them via npm, which fetches from this release).
+          for plat in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
+            if ! ls "navi-napi-$plat".* >/dev/null 2>&1; then
+              echo "warning: missing NAPI binary for $plat" >&2
+            fi
+          done
           ls -lh
 
       - name: Install cosign
@@ -741,6 +675,8 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.zip
+            artifacts/navi-napi-*.node
+            artifacts/navi-napi-*.dll
             artifacts/SHA256SUMS.txt
             artifacts/SHA256SUMS.txt.sigstore.json
         env:

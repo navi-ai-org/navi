@@ -17,7 +17,8 @@
 #   @navi-agent/navi-win32-x64
 #
 # NAPI packages (@navi-agent/napi*) are published by the publish-napi job in
-# release.yml. If using OIDC, these also need trusted publisher config:
+# this workflow, so a single workflow filename (publish-npm.yml) is the trusted
+# publisher for every npm package. These also need trusted publisher config:
 #   @navi-agent/napi
 #   @navi-agent/napi-linux-x64
 #   @navi-agent/napi-linux-arm64
@@ -146,3 +147,71 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NAVI_GITHUB_REPO: ${{ github.repository }}
         run: ./scripts/publish-npm-from-release.sh "${{ steps.tag.outputs.tag }}"
+
+  publish-napi:
+    name: Publish @navi-agent/napi
+    runs-on: ubuntu-latest
+    # Same OIDC workflow binding as the CLI packages: npm Trusted Publishing is
+    # configured per-package with workflow filename publish-npm.yml, so the NAPI
+    # packages must also be published from this file (not from release.yml).
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [[ -z "$TAG" ]]; then
+            TAG="${{ github.event.release.tag_name }}"
+          fi
+          if [[ -z "$TAG" ]]; then
+            echo "error: empty release tag" >&2
+            exit 1
+          fi
+          if [[ "$TAG" == *-* && "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "Skipping prerelease tag $TAG"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "Publishing @navi-agent/napi packages for $TAG"
+
+      - name: Checkout
+        if: steps.tag.outputs.skip != 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Node
+        if: steps.tag.outputs.skip != 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Ensure npm supports trusted publishing
+        if: steps.tag.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          node -v
+          npm -v
+          npm_ver="$(npm -v)"
+          node -e '
+            const v = process.argv[1].split(".").map(Number);
+            if (v[0] < 11 || (v[0] === 11 && v[1] < 5) || (v[0] === 11 && v[1] === 5 && v[2] < 1)) {
+              console.error("npm >= 11.5.1 required, got", process.argv[1]);
+              process.exit(1);
+            }
+          ' "$npm_ver"
+
+      - name: Publish NAPI packages from GitHub Release assets
+        if: steps.tag.outputs.skip != 'true'
+        env:
+          NAVI_NPM_OIDC: "1"
+          GH_TOKEN: ${{ github.token }}
+          NAVI_GITHUB_REPO: ${{ github.repository }}
+        run: ./scripts/publish-napi-from-release.sh "${{ steps.tag.outputs.tag }}"
