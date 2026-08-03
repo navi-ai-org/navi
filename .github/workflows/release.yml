@@ -135,7 +135,7 @@ jobs:
             os: ubuntu-24.04-arm
             npm_platform: linux-arm64
           - target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             npm_platform: darwin-x64
           - target: aarch64-apple-darwin
             os: macos-latest
