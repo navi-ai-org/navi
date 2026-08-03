@@ -5,9 +5,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, Event, KeyEventKind,
+    KeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -215,7 +214,13 @@ fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
 /// - `CSI > flags u` — push
 /// - `CSI < u` / `<1u` — pop
 /// - `CSI = flags u` — set in place
+///
+/// On legacy Windows console (no ANSI), skip entirely — the sequences would be
+/// printed as garbage text.
 fn clear_parent_keyboard_stack(w: &mut impl io::Write) -> io::Result<()> {
+    if !keyboard_enhancement_supported() {
+        return Ok(());
+    }
     write!(
         w,
         concat!(
@@ -228,18 +233,51 @@ fn clear_parent_keyboard_stack(w: &mut impl io::Write) -> io::Result<()> {
 }
 
 /// Own the Kitty keyboard protocol for this session (progressive negotiate).
+///
+/// We write the CSI sequence directly instead of using crossterm's
+/// `PushKeyboardEnhancementFlags` command: on Windows that command reports
+/// `is_ansi_code_supported() == false`, so `execute!` routes it to
+/// `execute_winapi()` which always fails with "not implemented for the legacy
+/// Windows API" — even on terminals that fully support ANSI.
 fn enable_navi_keyboard_protocol(w: &mut impl io::Write) -> io::Result<()> {
     clear_parent_keyboard_stack(w)?;
     // Emits `CSI > 3 u` for DISAMBIGUATE | REPORT_EVENT_TYPES.
-    execute!(w, PushKeyboardEnhancementFlags(NAVI_KEYBOARD_FLAGS))
+    if keyboard_enhancement_supported() {
+        write!(w, "\x1B[>{}u", NAVI_KEYBOARD_FLAGS.bits())?;
+        w.flush()
+    } else {
+        Ok(())
+    }
+}
+
+/// Whether the terminal supports Kitty progressive enhancement sequences.
+///
+/// Returns false on Windows when ANSI escape codes are not supported (legacy
+/// console host), because crossterm's `execute_winapi` for keyboard
+/// enhancement returns an error in that configuration.
+#[cfg(windows)]
+fn keyboard_enhancement_supported() -> bool {
+    crossterm::ansi_support::supports_ansi()
+}
+
+#[cfg(not(windows))]
+fn keyboard_enhancement_supported() -> bool {
+    true
 }
 
 /// Lightweight reassert on FocusGained: pop our previous push, re-push, restore
 /// paste/focus/mouse. Avoids thrashing the parent stack with a full clear every
 /// focus cycle (multi-window long sessions).
+///
+/// Like `enable_navi_keyboard_protocol`, the Kitty sequences are written
+/// directly instead of via crossterm commands, which would fail on Windows
+/// (they hardcode `is_ansi_code_supported() == false`).
 fn reassert_terminal_input_modes(w: &mut impl io::Write, free_motion: bool) -> io::Result<()> {
-    let _ = execute!(w, PopKeyboardEnhancementFlags);
-    execute!(w, PushKeyboardEnhancementFlags(NAVI_KEYBOARD_FLAGS))?;
+    if keyboard_enhancement_supported() {
+        // Pop our previous push (ignore missing level), then re-push.
+        let _ = write!(w, "\x1B[<1u");
+        write!(w, "\x1B[>{}u", NAVI_KEYBOARD_FLAGS.bits())?;
+    }
     execute!(w, EnableBracketedPaste)?;
     if is_desktop_tile() {
         return Ok(());
@@ -255,13 +293,25 @@ fn enable_focus_tracking(w: &mut impl io::Write) -> io::Result<()> {
 
 fn clear_leftover_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_mouse_capture(w)?;
-    let _ = execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags);
+    // Pop our left-over level directly (crossterm's Pop command fails on
+    // Windows for the same reason as Push).
+    if keyboard_enhancement_supported() {
+        let _ = write!(w, "\x1B[<1u");
+        execute!(w, DisableBracketedPaste)?;
+    } else {
+        let _ = execute!(w, DisableBracketedPaste);
+    }
     clear_parent_keyboard_stack(w)
 }
 
 fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     disable_mouse_capture(w)?;
-    execute!(w, DisableBracketedPaste, PopKeyboardEnhancementFlags)?;
+    if keyboard_enhancement_supported() {
+        write!(w, "\x1B[<1u")?;
+        execute!(w, DisableBracketedPaste)?;
+    } else {
+        execute!(w, DisableBracketedPaste)?;
+    }
     // Leave the shell in classic keyboard mode.
     clear_parent_keyboard_stack(w)
 }
@@ -286,10 +336,23 @@ pub(crate) fn wants_mouse_free_motion(app: &TuiApp) -> bool {
 ///
 /// `free_motion` is kept for API compatibility with callers that still track
 /// image-hover intent; the wire modes are always the full capture set.
+///
+/// The escape sequences are written directly (not via crossterm's
+/// [`EnableMouseCapture`] command) because on Windows crossterm reports
+/// `is_ansi_code_supported() == false` and would instead poke the legacy
+/// WinAPI console — which never emits the ANSI modes this parser expects.
 fn enable_mouse_capture(w: &mut impl io::Write, _free_motion: bool) -> io::Result<()> {
-    // Prefer the crossterm command so we stay aligned with its parser
-    // expectations (includes 1015 + 1003 which our hand-rolled CSI omitted).
-    execute!(w, EnableMouseCapture)
+    write!(
+        w,
+        concat!(
+            "\x1B[?1000h", // press
+            "\x1B[?1002h", // button-drag
+            "\x1B[?1003h", // any-motion (drag-select on terminals that only report motion here)
+            "\x1B[?1015h", // RXVT coord mode
+            "\x1B[?1006h", // SGR coord mode
+        )
+    )?;
+    w.flush()
 }
 
 /// Sync free-motion on/off when image state changes.
@@ -434,9 +497,11 @@ mod tests {
 
         assert!(text.contains("\x1B[?1003l"));
         assert!(text.contains("\x1B[?1002l"));
-        assert!(text.contains("\x1B[>4;0m"));
-        assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
-        assert!(text.contains("\x1B[=0u"));
+        if keyboard_enhancement_supported() {
+            assert!(text.contains("\x1B[>4;0m"));
+            assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
+            assert!(text.contains("\x1B[=0u"));
+        }
     }
 
     #[test]
@@ -522,11 +587,19 @@ mod tests {
         let mut out = Vec::new();
         reset_terminal_input_modes(&mut out).expect("reset");
         let text = String::from_utf8(out).expect("utf8");
-        assert!(text.contains("\x1B[=0u"));
-        assert!(
-            !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
-            "must not push-0 then immediate pop: {text:?}"
-        );
+        if keyboard_enhancement_supported() {
+            assert!(text.contains("\x1B[=0u"));
+            assert!(
+                !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
+                "must not push-0 then immediate pop: {text:?}"
+            );
+        } else {
+            // Legacy Windows console: no Kitty sequences emitted at all.
+            assert!(
+                !text.contains("\x1B[>3u") && !text.contains("\x1B[=0u"),
+                "legacy console must not receive Kitty sequences: {text:?}"
+            );
+        }
     }
 
     #[test]
@@ -536,13 +609,15 @@ mod tests {
             enter_terminal_modes(&mut out).expect("enter");
             let text = String::from_utf8(out).expect("utf8");
 
-            // DISAMBIGUATE|REPORT_EVENT_TYPES → >3u
-            assert!(
-                text.contains("\x1B[>3u"),
-                "must PushKeyboardEnhancementFlags: {text:?}"
-            );
-            assert!(text.contains("\x1B[=0u"));
-            assert!(text.contains("\x1B[>4;0m"));
+            if keyboard_enhancement_supported() {
+                // DISAMBIGUATE|REPORT_EVENT_TYPES → >3u
+                assert!(
+                    text.contains("\x1B[>3u"),
+                    "must PushKeyboardEnhancementFlags: {text:?}"
+                );
+                assert!(text.contains("\x1B[=0u"));
+                assert!(text.contains("\x1B[>4;0m"));
+            }
             assert!(text.contains("\x1B[?1004h"));
             assert!(text.contains("\x1B[?1000h"));
             // Full crossterm mouse set (drag-select needs 1002 + 1003).
@@ -558,8 +633,10 @@ mod tests {
             let mut out = Vec::new();
             reassert_terminal_input_modes(&mut out, false).expect("reassert");
             let text = String::from_utf8(out).expect("utf8");
-            assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
-            assert!(text.contains("\x1B[>3u"));
+            if keyboard_enhancement_supported() {
+                assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
+                assert!(text.contains("\x1B[>3u"));
+            }
             assert!(text.contains("\x1B[?1004h"));
         });
     }
@@ -571,11 +648,13 @@ mod tests {
             enter_terminal_modes(&mut out).expect("enter");
             let text = String::from_utf8(out).expect("utf8");
 
-            // Keyboard + paste still negotiated.
-            assert!(
-                text.contains("\x1B[>3u"),
-                "must still push Kitty keyboard: {text:?}"
-            );
+            if keyboard_enhancement_supported() {
+                // Keyboard + paste still negotiated.
+                assert!(
+                    text.contains("\x1B[>3u"),
+                    "must still push Kitty keyboard: {text:?}"
+                );
+            }
             // No mouse capture / focus tracking — desktop xterm owns those paths.
             assert!(
                 !text.contains("\x1B[?1003h"),
@@ -599,7 +678,9 @@ mod tests {
             reassert_terminal_input_modes(&mut out, true).expect("reassert");
             let text = String::from_utf8(out).expect("utf8");
 
-            assert!(text.contains("\x1B[>3u"));
+            if keyboard_enhancement_supported() {
+                assert!(text.contains("\x1B[>3u"));
+            }
             assert!(!text.contains("\x1B[?1003h"));
             assert!(!text.contains("\x1B[?1004h"));
         });
@@ -610,11 +691,18 @@ mod tests {
         let mut out = Vec::new();
         clear_parent_keyboard_stack(&mut out).expect("clear");
         let text = String::from_utf8(out).expect("utf8");
-        assert!(text.contains("\x1B[=0u"));
-        assert!(
-            !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
-            "clear must not push 0 and immediately pop: {text:?}"
-        );
+        if keyboard_enhancement_supported() {
+            assert!(text.contains("\x1B[=0u"));
+            assert!(
+                !text.contains("\x1B[>0u\x1B[<u") && !text.contains("\x1B[>0u\x1B[<1u"),
+                "clear must not push 0 and immediately pop: {text:?}"
+            );
+        } else {
+            assert!(
+                text.is_empty(),
+                "legacy console must skip Kitty stack clear: {text:?}"
+            );
+        }
     }
 
     #[test]

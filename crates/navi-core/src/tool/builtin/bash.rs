@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,6 +40,132 @@ fn configure_process_group(cmd: &mut tokio::process::Command) {
 
 #[cfg(not(unix))]
 fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+/// Resolve the path to `bash.exe` on Windows (Git Bash / MSYS2 / WSL).
+///
+/// Returns `Some(path)` when found on PATH or in well-known install
+/// locations, so sessions started from PowerShell/cmd still get the familiar
+/// bash behavior when Git for Windows is installed.
+#[cfg(windows)]
+fn find_windows_bash() -> Option<PathBuf> {
+    use std::process::Command;
+
+    // 1) On PATH (Git Bash session, MSYS2 console, etc.)
+    if Command::new("where")
+        .arg("bash.exe")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+    {
+        return Some(PathBuf::from("bash"));
+    }
+
+    // 2) Well-known Git for Windows layouts (scoop, chocolatey, plain installer).
+    for base in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
+    ] {
+        if Path::new(base).is_file() {
+            return Some(PathBuf::from(base));
+        }
+    }
+    // 3) Scoop-installed Git (versioned path via junction resolution).
+    let mut scoop_dirs = Vec::new();
+    if let Ok(scoop) = std::env::var("SCOOP") {
+        scoop_dirs.push(PathBuf::from(scoop));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        scoop_dirs.push(PathBuf::from(home).join("scoop"));
+    }
+    for scoop in scoop_dirs {
+        for entry in [
+            "apps/git/current/bin/bash.exe",
+            "apps/git/current/usr/bin/bash.exe",
+        ] {
+            let candidate = scoop.join(entry);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(not(windows))]
+fn find_windows_bash() -> Option<PathBuf> {
+    None
+}
+
+/// Check whether a program exists on PATH (Windows only).
+#[cfg(windows)]
+fn windows_program_exists(program: &str) -> bool {
+    std::process::Command::new("where")
+        .arg(program)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn windows_program_exists(_program: &str) -> bool {
+    false
+}
+
+/// Select the shell program + args for the current platform.
+///
+/// Unix: `bash -lc`.
+/// Windows: prefers Git Bash (PATH or well-known install locations), then
+/// `powershell -NoProfile -Command`, falling back to `cmd /C`.
+fn shell_argv(shell_cmd: &str) -> Vec<&str> {
+    if cfg!(windows) {
+        match find_windows_bash() {
+            Some(_) => vec!["-lc", shell_cmd],
+            None if windows_program_exists("powershell.exe") => {
+                vec!["-NoProfile", "-Command", shell_cmd]
+            }
+            _ => vec!["/C", shell_cmd],
+        }
+    } else {
+        vec!["-lc", shell_cmd]
+    }
+}
+
+/// Build the shell command for the current platform.
+///
+/// Unix: `bash -lc <command>`.
+/// Windows: prefers Git Bash (PATH or well-known install locations), then
+/// `powershell -NoProfile -Command`, falling back to `cmd /C`.
+fn shell_command(shell_cmd: &str, project_root: &std::path::Path) -> tokio::process::Command {
+    let mut cmd = if cfg!(windows) {
+        let program = match find_windows_bash() {
+            Some(bash) => bash,
+            None if windows_program_exists("powershell.exe") => PathBuf::from("powershell"),
+            _ => PathBuf::from("cmd"),
+        };
+        let mut c = tokio::process::Command::new(program);
+        for arg in shell_argv(shell_cmd) {
+            c.arg(arg);
+        }
+        c
+    } else {
+        let mut c = tokio::process::Command::new("bash");
+        c.arg("-lc").arg(shell_cmd);
+        c
+    };
+    cmd.current_dir(project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    configure_process_group(&mut cmd);
+    cmd
+}
 
 /// Kill a timed-out child. On Unix, signal the whole process group first.
 async fn kill_timed_out_child(child: &mut tokio::process::Child) {
@@ -171,16 +297,8 @@ impl BashBackgroundTask {
         sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<Self> {
         let (shell_cmd, _guard) = wrap_command_for_sudo(&command, sudo_env.as_ref())?;
-        let mut cmd = tokio::process::Command::new("bash");
-        cmd.arg("-lc")
-            .arg(&shell_cmd)
-            .current_dir(&project_root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        configure_process_group(&mut cmd);
-        let mut child = cmd.spawn().context("failed to spawn bash")?;
+        let mut cmd = shell_command(&shell_cmd, &project_root);
+        let mut child = cmd.spawn().context("failed to spawn shell")?;
 
         let stdout = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -435,7 +553,7 @@ impl Tool for BashTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "bash",
-            "Run an ad-hoc shell command in the current project. Common git, test, build, and file-read commands (cat/sed/head/rg/ls/find) are not executed here; bash returns a native_tool_available suggestion pointing at read_file/search. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model. Never use bash to dump project source for inspection.",
+            "Run an ad-hoc shell command in the current project. On Unix uses bash; on Windows uses bash (if installed), PowerShell, or cmd as fallback. Common git, test, build, and file-read commands (cat/sed/head/rg/ls/find) are not executed here; bash returns a native_tool_available suggestion pointing at read_file/search. Use background=true and wait_ms for long-running commands. Commands using sudo open a secure password modal in the TUI — the password is never shown to the model. Never use bash to dump project source for inspection.",
             ToolKind::Command,
             helpers::bash_json_schema(),
         )
@@ -1027,16 +1145,8 @@ impl BashTool {
         sudo_env: Option<SudoAskpassEnv>,
     ) -> Result<ToolResult> {
         let (shell_cmd, _guard) = wrap_command_for_sudo(command, sudo_env.as_ref())?;
-        let mut cmd = tokio::process::Command::new("bash");
-        cmd.arg("-lc")
-            .arg(&shell_cmd)
-            .current_dir(&self.project_root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .kill_on_drop(true);
-        configure_process_group(&mut cmd);
-        let mut child = cmd.spawn().context("failed to spawn bash")?;
+        let mut cmd = shell_command(&shell_cmd, &self.project_root);
+        let mut child = cmd.spawn().context("failed to spawn shell")?;
 
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -1251,6 +1361,10 @@ fn prepare_sudo_askpass(password: &str) -> Result<SudoAskpassEnv> {
 }
 
 /// Wrap user command so every `sudo` becomes `sudo -A` with our askpass.
+///
+/// No-op on Windows: there is no `sudo` in PowerShell/cmd, and the askpass
+/// helper relies on a POSIX shell.
+#[cfg(unix)]
 fn wrap_command_for_sudo(
     command: &str,
     sudo: Option<&SudoAskpassEnv>,
@@ -1270,6 +1384,19 @@ fn wrap_command_for_sudo(
     Ok((wrapped, Some(())))
 }
 
+/// Wrap user command so every `sudo` becomes `sudo -A` with our askpass.
+///
+/// No-op on Windows: there is no `sudo` in PowerShell/cmd, and the askpass
+/// helper relies on a POSIX shell.
+#[cfg(windows)]
+fn wrap_command_for_sudo(
+    command: &str,
+    sudo: Option<&SudoAskpassEnv>,
+) -> Result<(String, Option<()>)> {
+    let _ = sudo;
+    Ok((command.to_string(), None))
+}
+
 #[cfg(test)]
 mod sudo_tests {
     use super::*;
@@ -1285,6 +1412,15 @@ mod sudo_tests {
     #[test]
     fn askpass_script_reads_password_once() {
         let env = prepare_sudo_askpass("secret-pass").unwrap();
+        if cfg!(windows) {
+            // askpass.sh is a POSIX shell script; on Windows we only verify the
+            // file layout (script + password file) since there is no `sudo`.
+            assert!(env.script_path.exists());
+            assert!(env.pass_path.exists());
+            let script = std::fs::read_to_string(&env.script_path).unwrap();
+            assert!(script.contains("cat"));
+            return;
+        }
         let out = std::process::Command::new(&env.script_path)
             .output()
             .expect("run askpass");
@@ -1341,6 +1477,80 @@ mod tests {
     fn leaves_ad_hoc_shell_commands_to_bash() {
         assert!(native_tool_suggestion("printf 'hello'").is_none());
         assert!(native_tool_suggestion("git diff | less").is_none());
+    }
+}
+
+#[cfg(test)]
+mod shell_select_tests {
+    use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_prefers_bash() {
+        // Find bash on PATH.
+        let has_bash = std::process::Command::new("bash")
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(has_bash, "bash should be available on Unix test hosts");
+        let argv = shell_argv("echo hi");
+        assert_eq!(argv[0], "-lc", "unix shell must use -lc");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_produces_known_shell_shape() {
+        // The argv shape must be one of the supported Windows shells. We
+        // cannot know which shell is present, but each has a recognizable
+        // flag signature.
+        let argv = shell_argv("echo hi");
+        let joined = argv.join(" ");
+        let ok = joined.starts_with("-lc ")
+            || joined.starts_with("-NoProfile -Command ")
+            || joined.starts_with("/C ");
+        assert!(
+            ok,
+            "argv must match bash/powershell/cmd signatures: {joined:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_detects_git_bash_when_installed() {
+        // This machine has Git for Windows (used by CI/test environments).
+        // When found, the path must point at a real bash.exe.
+        if let Some(found) = find_windows_bash() {
+            let exists = Path::new(&found).is_file() || found == PathBuf::from("bash");
+            assert!(
+                exists,
+                "detected bash must exist or be a PATH name: {found:?}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_scoop_git_bash_is_detected() {
+        // The CI/test machine installs Git via scoop; the well-known layout
+        // is apps/git/current/bin/bash.exe under either $SCOOP or ~/scoop.
+        let mut possible_homes = Vec::new();
+        if let Ok(s) = std::env::var("SCOOP") {
+            possible_homes.push(PathBuf::from(s));
+        }
+        if let Some(home) = std::env::var_os("USERPROFILE") {
+            possible_homes.push(PathBuf::from(home).join("scoop"));
+        }
+        let installed_here = possible_homes
+            .iter()
+            .any(|root| root.join("apps/git/current/bin/bash.exe").is_file());
+        if installed_here {
+            assert!(
+                find_windows_bash().is_some(),
+                "scoop git bash is installed but not detected"
+            );
+        }
     }
 }
 

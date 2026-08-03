@@ -317,7 +317,12 @@ fn link_shared(cc: &cc::Tool, so_path: &Path, objects: &[PathBuf], is_msvc: bool
             cmd.arg(obj);
         }
     } else {
-        cmd.arg("-shared").arg("-o").arg(so_path).arg("-lc");
+        cmd.arg("-shared").arg("-o").arg(so_path);
+        // -lc is only meaningful on Unix targets; on Windows/MinGW the C
+        // runtime is linked automatically and there is no libc.a.
+        if !cfg!(target_os = "windows") {
+            cmd.arg("-lc");
+        }
         for obj in objects {
             cmd.arg(obj);
         }
