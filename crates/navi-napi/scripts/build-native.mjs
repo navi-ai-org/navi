@@ -72,11 +72,13 @@ if (targetTriple) {
   cargoArgs.push('--target', targetTriple);
 }
 
-// Disable voice-onnx on Windows: ort-sys links ONNX Runtime native libs
-// compiled with /MD (dynamic MSVC runtime), but esaxx-rs (from embeddings →
-// candle → tokenizers) is compiled with /MT (static runtime). Mixing the two
-// causes LNK1319 mismatches. The NAPI binding doesn't need local ASR.
-if (platform === 'win32') {
+// Disable voice-onnx on platforms where ort-sys has no prebuilt binaries:
+//   - Windows: ort-sys links ONNX Runtime with /MD (dynamic MSVC runtime), but
+//     esaxx-rs (embeddings → candle → tokenizers) uses /MT (static). Mixing
+//     causes LNK1319 mismatches. The NAPI binding doesn't need local ASR.
+//   - macOS x64: ort-sys only ships prebuilts for arm64; x86_64 cross-compile
+//     from an arm64 runner has no matching xcframework.
+if (platform === 'win32' || (platform === 'darwin' && arch === 'x64')) {
   cargoArgs.push('--no-default-features');
 }
 
