@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-08-03
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.8...v0.4.9
+
+### Fixed
+
+- **Windows shell support in the bash tool** — Commands no longer hard-require
+  `bash` on Windows. Git Bash is preferred when installed (PATH or well-known
+  locations incl. scoop), with PowerShell and `cmd` as fallbacks; `sudo`
+  askpass wrapping is skipped where there is no POSIX sudo. Works from
+  PowerShell/cmd sessions even without Git for Windows.
+- **TUI input modes on the legacy Windows console** — Kitty keyboard and mouse
+  escape sequences are written directly instead of via crossterm commands that
+  fail on the legacy Windows API, and are skipped entirely when ANSI is
+  unsupported, so the TUI no longer prints garbage sequences.
+- **navi-vfs MinGW shared library link** — the `-lc` flag is no longer passed
+  on Windows/MinGW (no `libc.a` there), fixing Windows VFS build failures.
+- **navi-lite compile** — `AgentRuntimeOptions` now includes the
+  `system_prompt` field added by the per-session system prompt override.
+- **NAPI win32-x64 build** — voice-onnx is disabled on Windows NAPI builds,
+  removing the MSVC `/MD` vs `/MT` runtime conflict (LNK1319).
+
 ## [0.4.8] - 2026-07-31
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.7...v0.4.8
