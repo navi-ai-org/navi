@@ -9,7 +9,7 @@
 #   navi-napi-linux-arm64.node
 #   navi-napi-darwin-x64.node
 #   navi-napi-darwin-arm64.node
-#   navi-napi-win32-x64.dll
+#   navi-napi-win32-x64.node
 # (uploaded by the build-napi job in release.yml).
 #
 # Local: requires `npm login` (or equivalent token).
@@ -57,11 +57,7 @@ npm_exists() {
 
 asset_name() {
   local platform="$1"
-  if [[ "$platform" == win32-* ]]; then
-    echo "navi-napi-$platform.dll"
-  else
-    echo "navi-napi-$platform.node"
-  fi
+  echo "navi-napi-$platform.node"
 }
 
 # Ensure package.json version matches the release tag before publish.
@@ -156,8 +152,7 @@ for plat in "${platforms[@]}"; do
     echo "warning: asset $asset not found in release, skipping $plat" >&2
     continue
   fi
-  # The loader always resolves a `.node` filename, even on Windows where the
-  # toolchain produces a .dll — napi-rs addons are still loaded as .node.
+  # The loader always resolves a `.node` filename on every supported platform.
   cp "$src" "$dst_dir/navi.$plat.node"
   staged=$((staged + 1))
 done

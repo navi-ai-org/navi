@@ -45,6 +45,10 @@ on:
         description: "Release tag to publish (e.g. v0.3.4)"
         required: true
         type: string
+      source_ref:
+        description: "Optional source ref for NAPI republishing (defaults to the release tag)"
+        required: false
+        type: string
   release:
     types: [published]
   workflow_dispatch:
@@ -53,6 +57,10 @@ on:
         description: "Release tag to publish (e.g. v0.3.4)"
         required: true
         type: string
+      source_ref:
+        description: "Optional source ref for NAPI republishing (defaults to the release tag)"
+        required: false
+        default: ""
 
 permissions:
   id-token: write # OIDC for npm trusted publishing
@@ -181,7 +189,7 @@ jobs:
         if: steps.tag.outputs.skip != 'true'
         uses: actions/checkout@v5
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ inputs.source_ref || steps.tag.outputs.tag }}
 
       - name: Setup Node
         if: steps.tag.outputs.skip != 'true'
