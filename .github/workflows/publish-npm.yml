@@ -214,4 +214,4 @@ jobs:
           NAVI_NPM_OIDC: "1"
           GH_TOKEN: ${{ github.token }}
           NAVI_GITHUB_REPO: ${{ github.repository }}
-        run: ./scripts/publish-napi-from-release.sh "${{ steps.tag.outputs.tag }}"
+        run: bash ./scripts/publish-napi-from-release.sh "${{ steps.tag.outputs.tag }}"
