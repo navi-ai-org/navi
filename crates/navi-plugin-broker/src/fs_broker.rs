@@ -160,8 +160,9 @@ impl FsBroker {
 
         // Check allowed prefixes if configured
         if !self.allowed_prefixes.is_empty() {
+            let project_canonical = self.project_root.canonicalize().map_err(BrokerError::Io)?;
             let rel = resolved
-                .strip_prefix(&self.project_root)
+                .strip_prefix(&project_canonical)
                 .map_err(|_| BrokerError::OutsideProject)?;
             let allowed = self
                 .allowed_prefixes
@@ -273,8 +274,9 @@ impl FsBroker {
 
         // Check allowed prefixes
         if !self.allowed_prefixes.is_empty() {
+            let project_canonical = self.project_root.canonicalize().map_err(BrokerError::Io)?;
             let rel = resolved
-                .strip_prefix(&self.project_root)
+                .strip_prefix(&project_canonical)
                 .map_err(|_| BrokerError::OutsideProject)?;
             let allowed = self
                 .allowed_prefixes
@@ -602,13 +604,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn reject_symlink_escape() {
         let (tmp, mut broker) = setup();
         // Create a symlink pointing outside project
         let outside = tmp.path().parent().unwrap().join("outside.txt");
         fs::write(&outside, "outside content").unwrap();
         let link = tmp.path().join("escape_link");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &link).unwrap();
         let result = broker.read_project_file("p", "t", "c", "escape_link");
         assert!(matches!(result, Err(BrokerError::OutsideProject)));

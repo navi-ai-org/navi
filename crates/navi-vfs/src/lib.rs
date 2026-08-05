@@ -183,10 +183,15 @@ mod tests {
             languages: vec![LangId::Go],
             ..Default::default()
         });
-        // Go should work.
+        // Go should work — use a source with enough whitespace to actually
+        // shrink after minification (the Go auto-semicolon insertion adds `;`
+        // for newlines, so `"package main\n"` alone stays the same size).
         assert!(
             engine
-                .minify(Path::new("main.go"), "package main\n")
+                .minify(
+                    Path::new("main.go"),
+                    "package main\n\nfunc main()    {\n    println(\"hi\")\n}\n"
+                )
                 .is_some()
         );
         // Rust should be filtered out.

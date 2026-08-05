@@ -59,17 +59,37 @@ fn has_error_nodes(node: &tree_sitter::Node) -> bool {
 }
 
 /// Validate Go code with `go/parser` via `gofmt -e` which reports syntax errors.
+///
+/// If `gofmt` is not installed, this is a soft skip (returns `Ok`) since the
+/// tree-sitter re-parse in `validate_minified` already checks for syntax
+/// errors. `gofmt` provides an extra layer of validation for Go's
+/// auto-semicolon insertion edge cases that tree-sitter may miss.
 fn validate_go_with_stdlib(code: &str) -> Result<()> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let mut child = Command::new("gofmt")
-        .args(["-e"])
+    let mut cmd = Command::new("gofmt");
+    cmd.args(["-e"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| anyhow::anyhow!("failed to spawn gofmt: {e}"))?;
+        .stderr(Stdio::piped());
+    // Hide console window on Windows.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // gofmt not installed — soft skip; tree-sitter re-parse is the
+            // primary validation gate.
+            tracing::debug!("gofmt not found; skipping Go stdlib validation");
+            return Ok(());
+        }
+        Err(e) => return Err(anyhow::anyhow!("failed to spawn gofmt: {e}")),
+    };
 
     if let Some(ref mut stdin) = child.stdin {
         stdin.write_all(code.as_bytes())?;

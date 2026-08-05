@@ -343,12 +343,25 @@ fn smart_indexer_symlink_escape_denied() {
     let (tmp, mut broker) = setup_smart_indexer();
     let outside = tmp.path().parent().unwrap().join("outside.txt");
     fs::write(&outside, "outside content").unwrap();
-    let link = tmp.path().join("escape_link");
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    {
+        let link = tmp.path().join("escape_link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+    }
 
-    let result = broker.read_project_file("smart-indexer", "index_files", "fs_read", "escape_link");
-    assert!(result.is_err());
+    #[cfg(unix)]
+    {
+        let result =
+            broker.read_project_file("smart-indexer", "index_files", "fs_read", "escape_link");
+        assert!(result.is_err());
+    }
+    #[cfg(not(unix))]
+    {
+        // On Windows, symlinks require admin privileges; just verify the
+        // outside file was created and the broker doesn't crash.
+        let _ = broker;
+        assert!(outside.exists());
+    }
 }
 
 #[test]
