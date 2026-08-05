@@ -86,6 +86,18 @@ cargo test -p <crate> -- --test-threads=4
 - Humans/broad gates: `just verify`, `just ci`, `just test-crate <crate>` (see `justfile`).
 - Headless: `cargo run -p navi-cli -- --no-tui TASK` (task required).
 
+### Windows
+
+The workspace compiles and tests on Windows (CI runs `windows-latest` for fmt/test/clippy). Notes:
+
+- **Bash required:** the `bash` tool and justfile recipes use Git Bash or MSYS2. Ensure `bash` is on `PATH`.
+- **Path separators:** tool outputs (search, fs_browser) normalize to forward slashes via `display_path`. Tests comparing paths should use `to_string_lossy().replace('\\', "/")` and strip the `\\?\` verbatim prefix from `canonicalize()` results.
+- **Sandbox snapshots:** `SandboxManager::create_snapshot` stores raw (non-canonicalized) paths so that `PathBuf` equality works cross-platform. Non-existent file paths are added as roots (not their parent dir) so rollback doesn't try to delete locked sibling files (e.g. SQLite DBs).
+- **Process termination:** background bash tasks are assigned to a Win32 Job Object (`win_job` module in `bash.rs`) so the entire process tree is killed on timeout. Unix uses `setsid` + process-group signals.
+- **Shell commands in tests:** when constructing bash command strings from `PathBuf`, use forward slashes (`replace('\\', "/")`) because the shell token parser treats `\` as an escape character.
+- **PTY smoke** (`pty_smoke.rs`) is Linux-only; CI gates it with `if: runner.os == 'Linux'`.
+- **Coverage** (`cargo-llvm-cov`) stays Linux-only in CI.
+
 ## Commits
 
 Every commit needs a **minimal changelog** in the body (not subject-only for non-trivial work):
@@ -106,3 +118,4 @@ Use `### Added` / `### Changed` / `### Fixed` / `### Removed` as needed; omit em
 - New session events: update `AgentEvent`, TUI load/replay if visible, and redaction.
 - Leave untracked local scratch (e.g. `test_reqwest.rs`) alone unless asked.
 - `target/` is gitignored; no committed rustfmt/clippy/CI config — use cargo defaults.
+- **Windows path pitfalls:** `canonicalize()` adds a `\\?\` prefix on Windows — strip it before string comparisons. Use `std::env::temp_dir()` instead of hardcoded `/tmp`. Gate Unix-only tests (symlinks, mode bits, PTY) with `#[cfg(unix)]`.

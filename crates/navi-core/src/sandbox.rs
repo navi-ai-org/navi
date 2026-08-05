@@ -88,10 +88,10 @@ impl SandboxManager {
 
         for p in paths {
             if p.is_dir() {
-                root_set.insert(p.canonicalize().unwrap_or_else(|_| p.clone()));
+                root_set.insert(p.clone());
                 collect_files(p, &mut entries, &mut visited);
             } else if p.is_file() {
-                let snapshot_path = p.canonicalize().unwrap_or_else(|_| p.clone());
+                let snapshot_path = p.clone();
                 if let Some(parent) = snapshot_path.parent() {
                     root_set.insert(parent.to_path_buf());
                 }
@@ -99,12 +99,12 @@ impl SandboxManager {
                     entries.push(snapshot_file(&snapshot_path));
                 }
             } else {
-                let parent = p.parent().unwrap_or(Path::new("."));
-                if let Ok(canon_parent) = parent.canonicalize() {
-                    root_set.insert(canon_parent);
-                } else {
-                    root_set.insert(parent.to_path_buf());
-                }
+                // Path doesn't exist yet (pre-write snapshot of a file that
+                // will be created). Add the file path itself as a root so
+                // rollback can delete just that file, not everything in the
+                // parent directory (which may contain locked/unrelated files
+                // like the data_dir's SQLite database on Windows).
+                root_set.insert(p.clone());
             }
         }
 
@@ -148,6 +148,8 @@ impl SandboxManager {
         for root in &snapshot.roots {
             if root.is_dir() {
                 find_new_files(root, &entry_paths, &mut files_created);
+            } else if root.is_file() && !entry_paths.contains(root) {
+                files_created.push(root.clone());
             }
         }
 
@@ -205,6 +207,9 @@ impl SandboxManager {
         for root in &snapshot.roots {
             if root.is_dir() {
                 delete_new_files(root, &entry_paths)?;
+            } else if root.is_file() && !entry_paths.contains(root) {
+                std::fs::remove_file(root)
+                    .map_err(|e| format!("failed to delete `{}`: {e}", root.display()))?;
             }
         }
 
@@ -216,11 +221,16 @@ impl SandboxManager {
     /// Runs `git diff --cached --quiet` and returns `false` if git is not
     /// available or the command fails.
     pub fn has_staged_changes() -> bool {
-        let output = std::process::Command::new("git")
-            .args(["diff", "--cached", "--quiet"])
+        let mut cmd = std::process::Command::new("git");
+        cmd.args(["diff", "--cached", "--quiet"])
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let output = cmd.status();
         match output {
             Ok(status) => !status.success(),
             Err(_) => false,

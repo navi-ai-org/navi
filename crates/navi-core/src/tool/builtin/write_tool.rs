@@ -34,6 +34,20 @@ use super::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 const PATCH_CONTEXT_RADIUS: usize = 20;
+
+/// Hide the console window for child processes on Windows.
+///
+/// Under ConPTY (NAVI Desktop), grandchildren don't inherit the pseudoconsole
+/// and each gets a visible console window. `CREATE_NO_WINDOW` prevents that.
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    // tokio's Command exposes creation_flags as an inherent method on Windows.
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+}
+
+#[cfg(not(windows))]
+fn hide_console(_cmd: &mut Command) {}
+
 const MAX_PATCH_CONTEXT_WINDOWS: usize = 6;
 
 pub(crate) struct WriteTool {
@@ -1971,14 +1985,14 @@ fn write_lines(path: &Path, lines: &[String], trailing_newline: bool) -> Result<
 // ═══════════════════════════════════════════════════════════════════════════
 
 async fn run_git_apply(project_root: &Path, patch: &str) -> Result<std::process::Output> {
-    let mut child = Command::new("git")
-        .args(["apply", "--whitespace=fix", "-"])
+    let mut cmd = Command::new("git");
+    cmd.args(["apply", "--whitespace=fix", "-"])
         .current_dir(project_root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to spawn git apply")?;
+        .stderr(std::process::Stdio::piped());
+    hide_console(&mut cmd);
+    let mut child = cmd.spawn().context("failed to spawn git apply")?;
     child
         .stdin
         .as_mut()
@@ -1993,20 +2007,20 @@ async fn run_git_apply(project_root: &Path, patch: &str) -> Result<std::process:
 }
 
 async fn run_git_apply_relaxed(project_root: &Path, patch: &str) -> Result<std::process::Output> {
-    let mut child = Command::new("git")
-        .args([
-            "apply",
-            "--whitespace=fix",
-            "--ignore-space-change",
-            "--ignore-whitespace",
-            "-",
-        ])
-        .current_dir(project_root)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to spawn git apply")?;
+    let mut cmd = Command::new("git");
+    cmd.args([
+        "apply",
+        "--whitespace=fix",
+        "--ignore-space-change",
+        "--ignore-whitespace",
+        "-",
+    ])
+    .current_dir(project_root)
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped());
+    hide_console(&mut cmd);
+    let mut child = cmd.spawn().context("failed to spawn git apply")?;
     child
         .stdin
         .as_mut()
@@ -2021,14 +2035,14 @@ async fn run_git_apply_relaxed(project_root: &Path, patch: &str) -> Result<std::
 }
 
 async fn run_patch_command(project_root: &Path, patch: &str) -> Result<std::process::Output> {
-    let mut child = Command::new("patch")
-        .args(["-p1", "--force", "--no-backup-if-mismatch"])
+    let mut cmd = Command::new("patch");
+    cmd.args(["-p1", "--force", "--no-backup-if-mismatch"])
         .current_dir(project_root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .context("failed to spawn patch")?;
+        .stderr(std::process::Stdio::piped());
+    hide_console(&mut cmd);
+    let mut child = cmd.spawn().context("failed to spawn patch")?;
     child
         .stdin
         .as_mut()

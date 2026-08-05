@@ -795,12 +795,17 @@ pub fn discover_tests(root: &Path, touched_paths: &[PathBuf]) -> Vec<TestTarget>
 }
 
 pub fn churn_from_git_log(root: &Path, max_entries: usize) -> Vec<ChurnRecord> {
-    let output = std::process::Command::new("git")
-        .arg("log")
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("log")
         .arg("--name-only")
         .arg("--pretty=format:")
-        .current_dir(root)
-        .output();
+        .current_dir(root);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let output = cmd.output();
     let Ok(output) = output else {
         return Vec::new();
     };

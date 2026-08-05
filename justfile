@@ -1,6 +1,9 @@
 # NAVI development tasks — https://github.com/casey/just
 # First time: `just setup-tools`
 
+# Uses bash on all platforms. On Windows, install Git Bash or MSYS2 so
+# `bash` is on PATH. Recipes with heavy bash-isms use #!/usr/bin/env bash
+# shebangs for clarity; simple recipes inherit this shell setting.
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 default:
@@ -86,8 +89,14 @@ harness-replay:
 
 # Run the full agentic benchmark corpus with the baseline benchmark model.
 bench suite="benchmarks/suites" output="benchmarks/runs/benchmark-latest.json" provider="opencode" model="deepseek-v4-flash-free":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{output}}")"
-    @status=0; cargo run -p navi-cli -- bench run "{{suite}}" --auto-approve --provider "{{provider}}" --model "{{model}}" --output "{{output}}" || status=$?; node benchmarks/site/generate-runs-index.mjs; echo "Wrote {{output}}"; exit $status
+    status=0
+    cargo run -p navi-cli -- bench run "{{suite}}" --auto-approve --provider "{{provider}}" --model "{{model}}" --output "{{output}}" || status=$?
+    node benchmarks/site/generate-runs-index.mjs
+    echo "Wrote {{output}}"
+    exit $status
 
 # Run only the smoke benchmark suite.
 bench-smoke output="benchmarks/runs/smoke-latest.json" provider="opencode" model="deepseek-v4-flash-free":
@@ -99,6 +108,8 @@ bench-smoke output="benchmarks/runs/smoke-latest.json" provider="opencode" model
 
 # Full multi-agent tool-quality suite (token-consuming).
 bench-tool-quality out="benchmarks/runs/agent-compare/latest.json" agents="navi,opencode,claude-code":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{out}}")"
     python3 benchmarks/scripts/run_agent_comparison.py \
       --suite benchmarks/suites/tool-quality \
@@ -107,6 +118,8 @@ bench-tool-quality out="benchmarks/runs/agent-compare/latest.json" agents="navi,
 
 # Fast iteration: navi only, first two cases.
 bench-tool-quality-smoke out="benchmarks/runs/agent-compare/smoke.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{out}}")"
     python3 benchmarks/scripts/run_agent_comparison.py \
       --suite benchmarks/suites/tool-quality \
@@ -120,6 +133,8 @@ bench-tool-quality-navi output="benchmarks/runs/tool-quality-navi.json" provider
 
 # Hard multi-bug tool-quality suite (all agents). Expect model failures.
 bench-tool-quality-hard out="benchmarks/runs/agent-compare/hard-latest.json" agents="navi,opencode,claude-code":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{out}}")"
     python3 benchmarks/scripts/run_agent_comparison.py \
       --suite benchmarks/suites/tool-quality-hard \
@@ -128,6 +143,8 @@ bench-tool-quality-hard out="benchmarks/runs/agent-compare/hard-latest.json" age
 
 # Hard suite, navi only, with LLM metrics proxy (cache hit rate + prefix breaks).
 bench-tool-quality-hard-navi-proxy out="benchmarks/runs/agent-compare/hard-navi-proxy.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{out}}")"
     python3 benchmarks/scripts/run_agent_comparison.py \
       --suite benchmarks/suites/tool-quality-hard \
@@ -139,6 +156,8 @@ bench-tool-quality-hard-navi-proxy out="benchmarks/runs/agent-compare/hard-navi-
 # Do NOT cargo build -j default on 8GB hosts; release link alone can exceed 2GB.
 # Note: just forbids nested indent beyond the recipe indent; keep shell control flow flat.
 bench-tool-cache-audit out="benchmarks/runs/agent-compare/tool-cache-audit.json" provider="opencode" model="deepseek-v4-flash-free":
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p "$(dirname "{{out}}")"
     bin="${NAVI_BIN:-}"
     if [ -z "$bin" ]; then if [ -x target/release/navi ]; then bin=target/release/navi; elif [ -x target/debug/navi ]; then bin=target/debug/navi; else bin=navi; fi; fi
@@ -165,16 +184,20 @@ coverage_core_lcov := "coverage/lcov-core.info"
 coverage_test_threads := env_var_or_default("CARGO_TEST_THREADS", "4")
 
 _require-llvm-cov:
-    @command -v cargo-llvm-cov >/dev/null || { \
-      echo "Missing cargo-llvm-cov. Install: cargo install cargo-llvm-cov --locked"; \
-      echo "Also: rustup component add llvm-tools-preview"; \
-      exit 1; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-llvm-cov >/dev/null || {
+      echo "Missing cargo-llvm-cov. Install: cargo install cargo-llvm-cov --locked"
+      echo "Also: rustup component add llvm-tools-preview"
+      exit 1
     }
 
 coverage: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p coverage
     cargo llvm-cov --workspace --lcov --output-path {{coverage_lcov}} -- --test-threads={{test_threads}}
-    @echo "Wrote {{coverage_lcov}}"
+    echo "Wrote {{coverage_lcov}}"
 
 coverage-summary: _require-llvm-cov
     cargo llvm-cov --workspace --summary-only -- --test-threads={{test_threads}}
@@ -188,11 +211,13 @@ coverage-html: _require-llvm-cov
 # --ignore-run-fail: still emit lcov when unrelated/flaky tests fail; the Test job
 # is the pass/fail source of truth for the suite. This job gates critical paths only.
 coverage-core: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p coverage
     cargo llvm-cov -p navi-core --lib --lcov --output-path {{coverage_core_lcov}} \
       --ignore-run-fail \
       -- --test-threads={{coverage_test_threads}}
-    @echo "Wrote {{coverage_core_lcov}}"
+    echo "Wrote {{coverage_core_lcov}}"
     python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
 
 # Re-check floors against an existing lcov (no re-run of tests).

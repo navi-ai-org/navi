@@ -381,8 +381,10 @@ fn resolve_project_path(project_root: &Path, path: &str) -> PathBuf {
 fn display_path(project_root: &Path, path: &Path) -> String {
     path.strip_prefix(project_root)
         .unwrap_or(path)
-        .display()
-        .to_string()
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

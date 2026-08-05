@@ -190,10 +190,14 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("NAVI").Show($toast)
 "#
     );
-    match Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .status()
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
+    #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    match cmd.status() {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => {
             tracing::debug!(?s, "powershell toast non-zero");
@@ -207,11 +211,22 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 }
 
 fn command_exists(name: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(unix)]
+    {
+        Command::new("sh")
+            .args(["-c", &format!("command -v {name} >/dev/null 2>&1")])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        Command::new("cmd")
+            .args(["/C", &format!("where {name} >nul 2>nul")])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 fn escape_applescript(s: &str) -> String {

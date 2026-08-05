@@ -575,19 +575,28 @@ async fn bash_runs_with_project_root_as_cwd() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
+    // On Windows, MSYS2/Git Bash `pwd` returns a Unix-style mount path
+    // (e.g. `/tmp/foo`). `pwd -W` returns the native Windows path with
+    // forward slashes (e.g. `C:/msys64/tmp/foo`), which we can compare
+    // against the canonicalized tempdir path.
+    let command = if cfg!(windows) { "pwd -W" } else { "pwd" };
     let result = executor
         .invoke(ToolInvocation {
             id: "pwd".to_string(),
             tool_name: "bash".to_string(),
-            input: json!({ "command": "pwd" }),
+            input: json!({ "command": command }),
         })
         .await;
 
     assert!(result.ok);
-    assert_eq!(
-        result.output["stdout"].as_str().unwrap().trim(),
-        tempdir.path().canonicalize().unwrap().display().to_string()
-    );
+    let actual = result.output["stdout"].as_str().unwrap().trim();
+    let expected = tempdir.path().canonicalize().unwrap();
+    let expected_raw = expected.to_string_lossy();
+    let expected_str = expected_raw
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&expected_raw)
+        .replace('\\', "/");
+    assert_eq!(actual, expected_str);
 }
 
 #[tokio::test]

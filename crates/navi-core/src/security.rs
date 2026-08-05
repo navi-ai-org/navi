@@ -2229,9 +2229,9 @@ mod tests {
         std::fs::create_dir_all(data.join("memory/projects/abc")).expect("memory");
         let policy = policy(project, data.clone());
         let target = data.join("memory/projects/abc/MEMORY.md");
+        let target_str = target.to_string_lossy().replace('\\', "/");
 
-        let decision =
-            policy.validate_command(&format!("cat >> {} <<'EOF'\ntext\nEOF", target.display()));
+        let decision = policy.validate_command(&format!("cat >> {target_str} <<'EOF'\ntext\nEOF"));
 
         // Writes to data_dir via shell redirection now require approval, not deny.
         assert!(
@@ -2303,9 +2303,9 @@ mod tests {
         std::fs::create_dir_all(data.join("memory/projects/abc")).expect("memory");
         let policy = policy(project, data.clone());
         let target = data.join("memory/projects/abc/MEMORY.md");
+        let target_str = target.to_string_lossy().replace('\\', "/");
 
-        let decision =
-            policy.validate_command(&format!("printf text | tee -a {}", target.display()));
+        let decision = policy.validate_command(&format!("printf text | tee -a {target_str}"));
 
         // Writes to data_dir via tee now require approval, not deny.
         assert!(

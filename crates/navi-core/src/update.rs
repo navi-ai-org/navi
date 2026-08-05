@@ -177,6 +177,12 @@ fn run_silent(mut cmd: std::process::Command) -> Result<()> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Hide console window on Windows (ConPTY grandchildren pop visible consoles).
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
 
     let output = cmd
         .output()

@@ -414,16 +414,33 @@ fn unix_timestamp() -> u64 {
 }
 
 fn hostname() -> Option<String> {
-    std::fs::read_to_string("/etc/hostname")
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    #[cfg(unix)]
+    {
+        std::fs::read_to_string("/etc/hostname")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var("COMPUTERNAME")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
 }
 
 fn linux_uptime_seconds() -> Option<u64> {
-    let raw = std::fs::read_to_string("/proc/uptime").ok()?;
-    let first = raw.split_whitespace().next()?;
-    first.split('.').next()?.parse().ok()
+    #[cfg(target_os = "linux")]
+    {
+        let raw = std::fs::read_to_string("/proc/uptime").ok()?;
+        let first = raw.split_whitespace().next()?;
+        first.split('.').next()?.parse().ok()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
 }
 
 #[cfg(test)]

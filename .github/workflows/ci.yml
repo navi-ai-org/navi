@@ -33,7 +33,11 @@ concurrency:
 jobs:
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -43,15 +47,23 @@ jobs:
 
   # Primary quality gate: unit/bin tests for product crates (mirrors `just test-fast`).
   test:
-    name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout: 25
+          - os: windows-latest
+            timeout: 40
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-product
+          shared-key: ci-product-${{ matrix.os }}
           prefix-key: v2
 
       - name: Product unit + bin tests (fast path)
@@ -76,6 +88,7 @@ jobs:
 
       - name: CLI PTY smoke
         # One binary link + short poll for first paint. Linux only in source.
+        if: runner.os == 'Linux'
         run: cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1
 
       - name: Smoke-build navi-lite
@@ -107,9 +120,17 @@ jobs:
 
   # Lint in parallel with Test (shared cache key → second job is usually a hit).
   clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: Clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout: 15
+          - os: windows-latest
+            timeout: 25
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -117,7 +138,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ci-product
+          shared-key: ci-product-${{ matrix.os }}
           prefix-key: v2
 
       - name: Clippy (lib + bins, product crates)

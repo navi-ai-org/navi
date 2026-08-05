@@ -340,7 +340,7 @@ fn registry_cache_dir(commit: &str) -> Result<PathBuf> {
     if let Ok(tmp) = env::var("TMPDIR") {
         return Ok(PathBuf::from(tmp).join("navi-registry").join(commit));
     }
-    Ok(PathBuf::from("/tmp").join("navi-registry").join(commit))
+    Ok(std::env::temp_dir().join("navi-registry").join(commit))
 }
 
 fn find_registry_source(extract_dir: &Path) -> Result<Option<PathBuf>> {

@@ -1,13 +1,21 @@
 //! `navi server` — install and manage the remote `navi-server` as a systemd service.
 
-use anyhow::{Context, Result, bail};
+#[cfg(unix)]
+use anyhow::Context;
+use anyhow::{Result, bail};
 use navi_core::LoadedConfig;
+#[cfg(unix)]
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
+#[cfg(unix)]
 use std::process::Command;
 
+#[cfg(unix)]
 const SERVICE_NAME: &str = "navi-server.service";
 
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct ServerInstallOpts {
     pub port: u16,
@@ -25,60 +33,69 @@ pub fn handle_server_command(
     loaded_config: &LoadedConfig,
     cwd: &Path,
 ) -> Result<()> {
-    match action {
-        crate::ServerAction::Install {
-            port,
-            bind,
-            project,
-            secret,
-            system,
-            force,
-        } => {
-            // Project is optional: mobile apps pick the workspace per session.
-            // Default = $HOME so agent mode works without `--project`.
-            let project = resolve_default_project(project, cwd)?;
-            install(ServerInstallOpts {
+    #[cfg(not(unix))]
+    {
+        let _ = (action, loaded_config, cwd);
+        bail!("`navi server` manages a systemd service and is only supported on Linux")
+    }
+    #[cfg(unix)]
+    {
+        match action {
+            crate::ServerAction::Install {
                 port,
                 bind,
                 project,
                 secret,
                 system,
                 force,
-            })?;
+            } => {
+                // Project is optional: mobile apps pick the workspace per session.
+                // Default = $HOME so agent mode works without `--project`.
+                let project = resolve_default_project(project, cwd)?;
+                install(ServerInstallOpts {
+                    port,
+                    bind,
+                    project,
+                    secret,
+                    system,
+                    force,
+                })?;
+            }
+            crate::ServerAction::Start { system } => {
+                ensure_installed(system)?;
+                systemctl(system, &["start", SERVICE_NAME])?;
+                println!("Started {SERVICE_NAME}");
+                print_status_hint(system);
+            }
+            crate::ServerAction::Stop { system } => {
+                systemctl(system, &["stop", SERVICE_NAME])?;
+                println!("Stopped {SERVICE_NAME}");
+            }
+            crate::ServerAction::Restart { system } => {
+                ensure_installed(system)?;
+                systemctl(system, &["restart", SERVICE_NAME])?;
+                println!("Restarted {SERVICE_NAME}");
+                print_status_hint(system);
+            }
+            crate::ServerAction::Status { system } => {
+                status(system, loaded_config)?;
+            }
+            crate::ServerAction::Uninstall { system } => {
+                uninstall(system)?;
+            }
+            crate::ServerAction::Logs { system, follow } => {
+                logs(system, follow)?;
+            }
         }
-        crate::ServerAction::Start { system } => {
-            ensure_installed(system)?;
-            systemctl(system, &["start", SERVICE_NAME])?;
-            println!("Started {SERVICE_NAME}");
-            print_status_hint(system);
-        }
-        crate::ServerAction::Stop { system } => {
-            systemctl(system, &["stop", SERVICE_NAME])?;
-            println!("Stopped {SERVICE_NAME}");
-        }
-        crate::ServerAction::Restart { system } => {
-            ensure_installed(system)?;
-            systemctl(system, &["restart", SERVICE_NAME])?;
-            println!("Restarted {SERVICE_NAME}");
-            print_status_hint(system);
-        }
-        crate::ServerAction::Status { system } => {
-            status(system, loaded_config)?;
-        }
-        crate::ServerAction::Uninstall { system } => {
-            uninstall(system)?;
-        }
-        crate::ServerAction::Logs { system, follow } => {
-            logs(system, follow)?;
-        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Resolve the engine home workspace for the systemd unit.
 ///
 /// - Explicit `--project` wins.
 /// - Otherwise `$HOME` (agent home). Falls back to cwd if HOME is unset.
+#[cfg(unix)]
 fn resolve_default_project(explicit: Option<PathBuf>, cwd: &Path) -> Result<PathBuf> {
     let raw = if let Some(p) = explicit {
         p
@@ -94,6 +111,7 @@ fn resolve_default_project(explicit: Option<PathBuf>, cwd: &Path) -> Result<Path
     Ok(raw.canonicalize().unwrap_or(raw))
 }
 
+#[cfg(unix)]
 fn install(opts: ServerInstallOpts) -> Result<()> {
     let bin = resolve_navi_server_bin().context(
         "navi-server binary not found. Build it with `cargo build -p navi-server --release` \
@@ -187,6 +205,7 @@ fn install(opts: ServerInstallOpts) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn uninstall(system: bool) -> Result<()> {
     let _ = systemctl(system, &["stop", SERVICE_NAME]);
     let _ = systemctl(system, &["disable", SERVICE_NAME]);
@@ -208,6 +227,7 @@ fn uninstall(system: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn status(system: bool, loaded_config: &LoadedConfig) -> Result<()> {
     let unit_path = unit_file_path(system)?;
     let env_path = env_file_path(system)?;
@@ -248,6 +268,7 @@ fn status(system: bool, loaded_config: &LoadedConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn logs(system: bool, follow: bool) -> Result<()> {
     let mut cmd = Command::new("journalctl");
     if !system {
@@ -269,6 +290,7 @@ fn logs(system: bool, follow: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn ensure_installed(system: bool) -> Result<()> {
     let unit = unit_file_path(system)?;
     if !unit.exists() {
@@ -281,6 +303,7 @@ fn ensure_installed(system: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn print_status_hint(system: bool) {
     let flag = if system { " --system" } else { "" };
     println!("Health: curl -sS http://127.0.0.1:9800/health  # port may differ");
@@ -288,6 +311,7 @@ fn print_status_hint(system: bool) {
     println!("Status: navi server status{flag}");
 }
 
+#[cfg(unix)]
 fn systemctl(system: bool, args: &[&str]) -> Result<()> {
     let mut cmd = Command::new("systemctl");
     if !system {
@@ -308,6 +332,7 @@ fn systemctl(system: bool, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn unit_file_path(system: bool) -> Result<PathBuf> {
     if system {
         Ok(PathBuf::from("/etc/systemd/system").join(SERVICE_NAME))
@@ -317,6 +342,7 @@ fn unit_file_path(system: bool) -> Result<PathBuf> {
     }
 }
 
+#[cfg(unix)]
 fn env_file_path(system: bool) -> Result<PathBuf> {
     if system {
         Ok(PathBuf::from("/etc/navi/server.env"))
@@ -326,10 +352,12 @@ fn env_file_path(system: bool) -> Result<PathBuf> {
     }
 }
 
+#[cfg(unix)]
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+#[cfg(unix)]
 fn resolve_navi_server_bin() -> Option<PathBuf> {
     // 1) Sibling of current navi binary (release/debug install layouts).
     if let Ok(exe) = std::env::current_exe()
@@ -362,6 +390,7 @@ fn resolve_navi_server_bin() -> Option<PathBuf> {
     None
 }
 
+#[cfg(unix)]
 fn render_unit(
     bin: &Path,
     env_path: &Path,
@@ -405,6 +434,7 @@ WantedBy={wanted}
 
 /// Provider / auth env vars to copy from the installer's shell into server.env
 /// so the systemd unit sees the same keys as an interactive TUI session.
+#[cfg(unix)]
 const PROVIDER_ENV_KEYS: &[&str] = &[
     "OPENAI_API_KEY",
     "ANTHROPIC_API_KEY",
@@ -429,6 +459,7 @@ const PROVIDER_ENV_KEYS: &[&str] = &[
     "MINIMAX_API_KEY",
 ];
 
+#[cfg(unix)]
 fn render_env(secret: &str) -> String {
     let mut out = String::from(
         "# Generated by `navi server install` — do not commit.\n\
@@ -468,6 +499,7 @@ fn render_env(secret: &str) -> String {
     out
 }
 
+#[cfg(unix)]
 fn generate_secret() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let t = SystemTime::now()

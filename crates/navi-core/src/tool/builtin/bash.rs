@@ -38,8 +38,172 @@ fn configure_process_group(cmd: &mut tokio::process::Command) {
     }
 }
 
-#[cfg(not(unix))]
+/// On Windows, hide the console window for child processes.
+///
+/// When navi runs under ConPTY (e.g. via NAVI Desktop's node-pty), the
+/// pseudoconsole is attached only to navi.exe itself. Grandchildren spawned
+/// by the shell (git, cargo, etc.) do not inherit it and each gets a new
+/// visible console window on the desktop. `CREATE_NO_WINDOW` prevents that
+/// without affecting stdio pipes.
+#[cfg(windows)]
+fn configure_process_group(cmd: &mut tokio::process::Command) {
+    // CREATE_NO_WINDOW = 0x08000000 — tokio's Command exposes creation_flags
+    // as an inherent method on Windows (delegates to std::process::Command).
+    cmd.creation_flags(0x0800_0000);
+}
+
+#[cfg(not(any(unix, windows)))]
 fn configure_process_group(_cmd: &mut tokio::process::Command) {}
+
+/// Owns a Win32 Job Object with `KILL_ON_JOB_CLOSE`. When the handle is closed
+/// (via [`ProcessTreeGuard::kill_tree`] or Drop), every process in the job —
+/// including grandchildren spawned by the shell — is terminated immediately.
+///
+/// This mirrors the Unix `kill -KILL -PGID` behavior: the shell process is
+/// assigned to the job right after spawn, and all its children inherit the
+/// job membership automatically.
+#[cfg(windows)]
+mod win_job {
+    use std::io;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    use windows_sys::Win32::System::Threading::OpenProcess;
+
+    const PROCESS_SET_QUOTA: u32 = 0x0100;
+    const PROCESS_TERMINATE: u32 = 0x0001;
+
+    pub struct Job {
+        handle: HANDLE,
+    }
+
+    // SAFETY: HANDLE is a kernel object handle, not a pointer to thread-local
+    // data. The handle is owned exclusively by `Job` (created in `new`, closed
+    // in `Drop`), and Win32 job APIs are thread-safe.
+    unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
+
+    impl Job {
+        /// Create a job object that kills all member processes when closed.
+        pub fn new() -> io::Result<Self> {
+            unsafe {
+                let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+                    return Err(io::Error::last_os_error());
+                }
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    handle,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                if ok == 0 {
+                    let err = io::Error::last_os_error();
+                    CloseHandle(handle);
+                    return Err(err);
+                }
+                Ok(Self { handle })
+            }
+        }
+
+        /// Assign an already-spawned process (by PID) to this job.
+        ///
+        /// Children spawned by that process afterwards inherit job membership
+        /// automatically, so the assign must happen before the shell spawns
+        /// subprocesses. In practice the shell startup (DLL load, parse) takes
+        /// far longer than the `OpenProcess` + `AssignProcessToJobObject` pair,
+        /// so the race window is negligible.
+        pub fn assign_pid(&self, pid: u32) -> io::Result<()> {
+            unsafe {
+                let proc_handle = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+                if proc_handle.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let ok = AssignProcessToJobObject(self.handle, proc_handle);
+                CloseHandle(proc_handle);
+                if ok == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.handle) };
+        }
+    }
+}
+
+/// Guards the lifetime of a spawned shell's process tree.
+///
+/// On Windows, holds a Job Object handle — dropping it or calling
+/// [`ProcessTreeGuard::kill_tree`] kills every process in the tree.
+/// On Unix, the process group is managed via `setpgid` + `kill -PGID`
+/// inside [`kill_timed_out_child`], so this guard is a no-op.
+#[cfg(windows)]
+pub(crate) struct ProcessTreeGuard {
+    job: Option<win_job::Job>,
+}
+
+#[cfg(windows)]
+impl ProcessTreeGuard {
+    pub fn empty() -> Self {
+        Self { job: None }
+    }
+
+    /// Create a guard and assign the just-spawned child to a new job.
+    pub fn for_child(pid: u32) -> Self {
+        match win_job::Job::new().and_then(|job| job.assign_pid(pid).map(|()| job)) {
+            Ok(job) => Self { job: Some(job) },
+            Err(err) => {
+                tracing::debug!(%err, pid, "failed to assign child to job object");
+                Self { job: None }
+            }
+        }
+    }
+
+    /// Kill the entire process tree by closing the job handle.
+    pub fn kill_tree(&mut self) {
+        self.job = None;
+    }
+}
+
+#[cfg(windows)]
+impl Default for ProcessTreeGuard {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) struct ProcessTreeGuard;
+
+#[cfg(not(windows))]
+impl ProcessTreeGuard {
+    pub fn empty() -> Self {
+        Self
+    }
+
+    pub fn for_child(_pid: u32) -> Self {
+        Self
+    }
+
+    pub fn kill_tree(&mut self) {}
+}
+
+#[cfg(not(windows))]
+impl Default for ProcessTreeGuard {
+    fn default() -> Self {
+        Self
+    }
+}
 
 /// Resolve the path to `bash.exe` on Windows (Git Bash / MSYS2 / WSL).
 ///
@@ -48,6 +212,7 @@ fn configure_process_group(_cmd: &mut tokio::process::Command) {}
 /// bash behavior when Git for Windows is installed.
 #[cfg(windows)]
 fn find_windows_bash() -> Option<PathBuf> {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     // 1) On PATH (Git Bash session, MSYS2 console, etc.)
@@ -55,6 +220,7 @@ fn find_windows_bash() -> Option<PathBuf> {
         .arg("bash.exe")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .status()
         .is_ok_and(|s| s.success())
     {
@@ -103,10 +269,12 @@ fn find_windows_bash() -> Option<PathBuf> {
 /// Check whether a program exists on PATH (Windows only).
 #[cfg(windows)]
 fn windows_program_exists(program: &str) -> bool {
+    use std::os::windows::process::CommandExt;
     std::process::Command::new("where")
         .arg(program)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
@@ -168,7 +336,9 @@ fn shell_command(shell_cmd: &str, project_root: &std::path::Path) -> tokio::proc
 }
 
 /// Kill a timed-out child. On Unix, signal the whole process group first.
-async fn kill_timed_out_child(child: &mut tokio::process::Child) {
+/// On Windows, close the Job Object handle (kills the whole tree), then
+/// `start_kill` as a belt-and-suspenders.
+async fn kill_timed_out_child(child: &mut tokio::process::Child, guard: &mut ProcessTreeGuard) {
     #[cfg(unix)]
     {
         if let Some(pid) = child.id() {
@@ -177,6 +347,10 @@ async fn kill_timed_out_child(child: &mut tokio::process::Child) {
                 .args(["-KILL", &format!("-{pid}")])
                 .status();
         }
+    }
+    #[cfg(windows)]
+    {
+        guard.kill_tree();
     }
     let _ = child.start_kill();
     // Bound the wait so a wedged reaper cannot stall the tool loop forever.
@@ -285,6 +459,9 @@ struct BashBackgroundTask {
     state: std::sync::Mutex<BashBackgroundState>,
     /// Keeps askpass temp files alive until the task finishes.
     _sudo_askpass: Option<SudoAskpassEnv>,
+    /// On Windows, owns the Job Object that kills the whole process tree on
+    /// timeout/cancel. On Unix, this is a no-op (process group is used instead).
+    tree_guard: tokio::sync::Mutex<ProcessTreeGuard>,
 }
 
 impl BashBackgroundTask {
@@ -299,6 +476,7 @@ impl BashBackgroundTask {
         let (shell_cmd, _guard) = wrap_command_for_sudo(&command, sudo_env.as_ref())?;
         let mut cmd = shell_command(&shell_cmd, &project_root);
         let mut child = cmd.spawn().context("failed to spawn shell")?;
+        let tree_guard = ProcessTreeGuard::for_child(child.id().unwrap_or(0));
 
         let stdout = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -321,6 +499,7 @@ impl BashBackgroundTask {
             stderr,
             state: std::sync::Mutex::new(BashBackgroundState::running()),
             _sudo_askpass: sudo_env,
+            tree_guard: tokio::sync::Mutex::new(tree_guard),
         })
     }
 
@@ -359,7 +538,8 @@ impl BashBackgroundTask {
 
         let mut child = self.child.lock().await;
         if let Some(child) = child.as_mut() {
-            kill_timed_out_child(child).await;
+            let mut guard = self.tree_guard.lock().await;
+            kill_timed_out_child(child, &mut guard).await;
         }
         *child = None;
         {
@@ -393,7 +573,8 @@ impl BashBackgroundTask {
                 *state = BashBackgroundState::completed(status.success(), status.code());
             }
             Ok(None) if timed_out => {
-                kill_timed_out_child(child_ref).await;
+                let mut guard = self.tree_guard.lock().await;
+                kill_timed_out_child(child_ref, &mut guard).await;
                 *child = None;
                 let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
                 *state = BashBackgroundState::timed_out();
@@ -1147,6 +1328,7 @@ impl BashTool {
         let (shell_cmd, _guard) = wrap_command_for_sudo(command, sudo_env.as_ref())?;
         let mut cmd = shell_command(&shell_cmd, &self.project_root);
         let mut child = cmd.spawn().context("failed to spawn shell")?;
+        let mut tree_guard = ProcessTreeGuard::for_child(child.id().unwrap_or(0));
 
         let stdout_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let stderr_data = Arc::new(tokio::sync::Mutex::new(Vec::new()));
@@ -1168,7 +1350,7 @@ impl BashTool {
             ),
             Err(_) => {
                 // Explicitly kill the process group; do not rely only on Drop.
-                kill_timed_out_child(&mut child).await;
+                kill_timed_out_child(&mut child, &mut tree_guard).await;
                 (
                     false,
                     None,

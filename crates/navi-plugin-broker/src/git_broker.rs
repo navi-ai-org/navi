@@ -120,13 +120,17 @@ impl GitBroker {
             });
         }
 
-        let mut child = Command::new("git")
-            .args(args)
+        let mut cmd = Command::new("git");
+        cmd.args(args)
             .current_dir(&self.project_root)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(BrokerError::Io)?;
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = cmd.spawn().map_err(BrokerError::Io)?;
 
         let started = Instant::now();
         loop {
