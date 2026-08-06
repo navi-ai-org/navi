@@ -1220,6 +1220,173 @@ async fn opencode_zen_chat_completions_enables_parallel_tool_calls() {
 }
 
 #[tokio::test]
+async fn opencode_zen_non_deepseek_thinking_enabled_strips_tool_choice() {
+    // Reproduces the real-world bug: OpenCode Zen gateway enables thinking
+    // server-side by default for ALL models. When NAVI sends tool_choice
+    // alongside the (server-default) thinking mode, the gateway rejects
+    // with 400 "Thinking mode does not support this tool_choice".
+    //
+    // This test verifies the fix: a non-DeepSeek model (glm-5.2) with
+    // thinking enabled sends `thinking: {type: "enabled"}` and does NOT
+    // send `tool_choice` in the request body.
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    // Match on method + path only; we inspect the body manually from
+    // the received request to avoid brittle exact-JSON matching.
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "opencode-zen".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+    let request = navi_core::ModelRequest {
+        model: "glm-5.2".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Search for files".to_string())],
+        thinking: navi_core::ThinkingConfig::High,
+        tools: vec![navi_core::ToolDefinition {
+            name: "search".to_string(),
+            description: "Search the codebase".to_string(),
+            kind: navi_core::ToolKind::Read,
+            input_schema: json!({"type": "object"}),
+            metadata: navi_core::ToolMetadata::default(),
+        }],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+
+    // Inspect the actual HTTP request body sent to the mock server.
+    let received = mock_server
+        .received_requests()
+        .await
+        .expect("should have received requests");
+    assert_eq!(received.len(), 1, "exactly one request expected");
+    let body: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("body should be valid JSON");
+
+    // thinking toggle must be present and enabled
+    assert_eq!(
+        body["thinking"],
+        json!({"type": "enabled"}),
+        "thinking toggle must be emitted for all opencode-zen models"
+    );
+
+    // tool_choice must NOT be present — the gateway rejects it in thinking mode
+    assert!(
+        body.get("tool_choice").is_none(),
+        "tool_choice must be absent when thinking is enabled, got: {body}"
+    );
+
+    // tools themselves must still be present
+    assert!(
+        body.get("tools").is_some_and(|t| t.is_array()),
+        "tools array must still be present"
+    );
+
+    // reasoning_effort must be set
+    assert_eq!(
+        body["reasoning_effort"], "high",
+        "reasoning_effort must be set when thinking is enabled with High config"
+    );
+}
+
+#[tokio::test]
+async fn opencode_zen_non_deepseek_thinking_off_keeps_tool_choice() {
+    // When thinking is OFF, tool_choice is safe and must be preserved.
+    // The thinking toggle must still be emitted as {type: "disabled"} so
+    // the server doesn't enable thinking by default.
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "opencode-zen".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        ..navi_core::ProviderConfig::default()
+    };
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+    let request = navi_core::ModelRequest {
+        model: "glm-5.2".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Search for files".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![navi_core::ToolDefinition {
+            name: "search".to_string(),
+            description: "Search the codebase".to_string(),
+            kind: navi_core::ToolKind::Read,
+            input_schema: json!({"type": "object"}),
+            metadata: navi_core::ToolMetadata::default(),
+        }],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+
+    let received = mock_server
+        .received_requests()
+        .await
+        .expect("should have received requests");
+    assert_eq!(received.len(), 1);
+    let body: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("body should be valid JSON");
+
+    assert_eq!(
+        body["thinking"],
+        json!({"type": "disabled"}),
+        "thinking toggle must be emitted as disabled"
+    );
+    assert_eq!(
+        body["tool_choice"], "auto",
+        "tool_choice must be preserved when thinking is disabled, got: {body}"
+    );
+    assert!(
+        body.get("reasoning_effort").is_none(),
+        "reasoning_effort must not be set when thinking is off"
+    );
+}
+
+#[tokio::test]
 async fn empty_200_ok_stream_is_retried_then_succeeds() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
