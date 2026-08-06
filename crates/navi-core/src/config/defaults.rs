@@ -303,4 +303,17 @@ mod tests {
         assert!(is_deny_listed("NAVI-CLI", &apps));
         assert!(!is_deny_listed("notepad", &apps));
     }
+
+    #[test]
+    fn serde_security_config_without_computer_use_enabled_defaults_true() {
+        let toml = r#"
+permission_mode = "restricted"
+redact_secrets_in_sessions = true
+"#;
+        let config: super::SecurityConfig = toml::from_str(toml).expect("parse");
+        assert!(
+            config.computer_use_enabled,
+            "computer_use_enabled should default to true when missing from TOML"
+        );
+    }
 }
