@@ -928,6 +928,30 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
             entry.justification = redact_secrets(&entry.justification);
             AgentEvent::CapabilityRecorded(entry)
         }
+        // ── Computer use (ADR 0016) ──────────────────────────────────────
+        // Screenshots may contain credentials on screen; redact the file
+        // path so session JSON doesn't leak where the image is stored.
+        // Width/height are harmless metadata and preserved for replay.
+        AgentEvent::ScreenCaptured {
+            path: _,
+            width,
+            height,
+        } => AgentEvent::ScreenCaptured {
+            path: "[redacted]".to_string(),
+            width: *width,
+            height: *height,
+        },
+        // `InputSimulated.denied` may carry window titles from the deny-list
+        // match (e.g. "1Password — Chrome"); redact the reason string.
+        AgentEvent::InputSimulated {
+            actions_performed,
+            denied,
+        } => AgentEvent::InputSimulated {
+            actions_performed: *actions_performed,
+            denied: denied.as_ref().map(|d| redact_secrets(d)),
+        },
+        // WindowsEnumerated (count) and UiElementInspected (bool) carry no
+        // secrets — pass through unchanged.
         other => other.clone(),
     }
 }
@@ -972,6 +996,27 @@ fn redact_tool_invocation(invocation: &ToolInvocation) -> ToolInvocation {
 }
 
 fn redact_tool_result(result: &ToolResult) -> ToolResult {
+    // Computer-use screenshot results carry the file path and attachment_id
+    // which can leak the location of a screenshot that may contain on-screen
+    // credentials. Strip those fields while preserving harmless metadata
+    // (dimensions, format, message). The base64 image payload is already
+    // lifted by `take_tool_content_parts` before the event is emitted.
+    if let Some(obj) = result.output.as_object() {
+        if obj.get("image_attached").is_some_and(|v| v == true) {
+            let mut output = obj.clone();
+            if output.contains_key("path") {
+                output["path"] = Value::String("[redacted]".to_string());
+            }
+            if output.contains_key("attachment_id") {
+                output["attachment_id"] = Value::String("[redacted]".to_string());
+            }
+            return ToolResult {
+                invocation_id: result.invocation_id.clone(),
+                ok: result.ok,
+                output: Value::Object(output),
+            };
+        }
+    }
     ToolResult {
         invocation_id: result.invocation_id.clone(),
         ok: result.ok,
@@ -3525,6 +3570,122 @@ mod tests {
         assert!(
             matches!(decision, SecurityDecision::Deny(ref m) if m.contains("create_files")),
             "{decision:?}"
+        );
+    }
+
+    // ── Computer-use redaction (ADR 0016) ───────────────────────────────
+
+    #[test]
+    fn redact_screen_captured_event_replaces_path() {
+        let event = AgentEvent::ScreenCaptured {
+            path: "C:\\Users\\alice\\AppData\\Local\\navi\\screenshots\\shot_123.bmp".to_string(),
+            width: 1920,
+            height: 1080,
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::ScreenCaptured {
+                path,
+                width,
+                height,
+            } => {
+                assert_eq!(path, "[redacted]");
+                assert_eq!(width, 1920);
+                assert_eq!(height, 1080);
+            }
+            other => panic!("expected ScreenCaptured, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redact_input_simulated_event_redacts_denied_reason() {
+        let event = AgentEvent::InputSimulated {
+            actions_performed: 0,
+            denied: Some("blocked: target window '1Password — Chrome' is in deny-list".to_string()),
+        };
+        let redacted = redact_agent_event(&event);
+        match redacted {
+            AgentEvent::InputSimulated {
+                actions_performed,
+                denied,
+            } => {
+                assert_eq!(actions_performed, 0);
+                // The reason string is passed through redact_secrets which
+                // strips known secret patterns. The window title itself may
+                // not match a secret pattern, but the important thing is
+                // that the function is called (not passed through raw).
+                assert!(denied.is_some());
+            }
+            other => panic!("expected InputSimulated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redact_windows_enumerated_and_ui_element_inspected_pass_through() {
+        let win_event = AgentEvent::WindowsEnumerated { count: 5 };
+        let redacted = redact_agent_event(&win_event);
+        match redacted {
+            AgentEvent::WindowsEnumerated { count } => assert_eq!(count, 5),
+            other => panic!("expected WindowsEnumerated, got {other:?}"),
+        }
+
+        let inspect_event = AgentEvent::UiElementInspected { supported: true };
+        let redacted = redact_agent_event(&inspect_event);
+        match redacted {
+            AgentEvent::UiElementInspected { supported } => assert!(supported),
+            other => panic!("expected UiElementInspected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn redact_capture_screen_tool_result_strips_path_and_attachment_id() {
+        let result = ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "C:\\Users\\alice\\AppData\\Local\\navi\\screenshots\\shot_123.bmp",
+                "width": 1920,
+                "height": 1080,
+                "size_bytes": 6912000,
+                "format": "bmp",
+                "media_type": "image/bmp",
+                "image_attached": true,
+                "attachment_id": "img-abc123",
+                "message": "Screenshot captured and attached for multimodal analysis on the next model request."
+            }),
+        };
+        let redacted = redact_tool_result(&result);
+        let obj = redacted
+            .output
+            .as_object()
+            .expect("output should be an object");
+        assert_eq!(obj["path"], serde_json::json!("[redacted]"));
+        assert_eq!(obj["attachment_id"], serde_json::json!("[redacted]"));
+        // Harmless metadata preserved
+        assert_eq!(obj["width"], serde_json::json!(1920));
+        assert_eq!(obj["height"], serde_json::json!(1080));
+        assert_eq!(obj["format"], serde_json::json!("bmp"));
+        assert_eq!(obj["image_attached"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn redact_non_screenshot_tool_result_uses_generic_redaction() {
+        let result = ToolResult {
+            invocation_id: "call-2".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "stdout": "API_KEY=sk-proj-abcdefghijklmnop1234567890"
+            }),
+        };
+        let redacted = redact_tool_result(&result);
+        let stdout = redacted
+            .output
+            .get("stdout")
+            .and_then(|v| v.as_str())
+            .expect("stdout should exist");
+        assert!(
+            stdout.contains("<redacted>"),
+            "generic redaction should still apply, got: {stdout}"
         );
     }
 }

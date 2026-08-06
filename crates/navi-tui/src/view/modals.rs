@@ -978,6 +978,172 @@ pub(crate) fn render_confirm_plan(frame: &mut Frame<'_>, app: &mut TuiApp, area:
     );
 }
 
+// ── Computer-use approval (ADR 0016) ────────────────────────────────────────
+
+/// Format a single `simulate_input` action JSON object as a human-readable
+/// string. Returns `"<unknown action>"` for unrecognized action types.
+///
+/// Action formats:
+/// - `click` / `double_click` → `click left at (540, 300)`
+/// - `mouse_move` → `move to (540, 300)`
+/// - `scroll` → `scroll -2 at (100, 200)`
+/// - `key` / `key_down` / `key_up` → `key Enter`
+/// - `type` → `type "hello world"`
+pub(crate) fn format_input_action(action: &serde_json::Value) -> String {
+    let action_type = action.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let x = action.get("x").and_then(|v| v.as_i64());
+    let y = action.get("y").and_then(|v| v.as_i64());
+    let button = action
+        .get("button")
+        .and_then(|v| v.as_str())
+        .unwrap_or("left");
+    let delta = action.get("delta").and_then(|v| v.as_i64());
+    let key = action.get("key").and_then(|v| v.as_str());
+    let text = action.get("text").and_then(|v| v.as_str());
+
+    match action_type {
+        "click" | "double_click" => {
+            let prefix = if action_type == "double_click" {
+                "double-click"
+            } else {
+                "click"
+            };
+            match (x, y) {
+                (Some(x), Some(y)) => format!("{prefix} {button} at ({x}, {y})"),
+                _ => format!("{prefix} {button}"),
+            }
+        }
+        "mouse_move" => match (x, y) {
+            (Some(x), Some(y)) => format!("move to ({x}, {y})"),
+            _ => "move".to_string(),
+        },
+        "scroll" => match (delta, x, y) {
+            (Some(d), Some(x), Some(y)) => format!("scroll {d} at ({x}, {y})"),
+            (Some(d), _, _) => format!("scroll {d}"),
+            _ => "scroll".to_string(),
+        },
+        "key" | "key_down" | "key_up" => match key {
+            Some(k) => format!("{action_type} {k}"),
+            None => action_type.to_string(),
+        },
+        "type" => match text {
+            Some(t) if t.len() <= 60 => format!("type \"{t}\""),
+            Some(t) => format!(
+                "type \"{}…\"",
+                &t[..t
+                    .char_indices()
+                    .take(57)
+                    .last()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0)]
+            ),
+            None => "type".to_string(),
+        },
+        _ => "<unknown action>".to_string(),
+    }
+}
+
+/// Render a dedicated approval modal for `simulate_input` (computer use).
+///
+/// Instead of raw JSON, each action is shown as a human-readable line.
+/// The `y`/`n`/`shift+tab` keybindings and hit regions are identical to
+/// the generic tool approval modal.
+fn render_computer_use_approval(
+    frame: &mut Frame<'_>,
+    app: &TuiApp,
+    area: Rect,
+    invocation: &ToolInvocation,
+) {
+    clear_modal_area(frame, area);
+    let block = modal_block("Computer Use — Input Simulation");
+    let inner = area.inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    frame.render_widget(block, area);
+
+    let actions = invocation.input.get("actions").and_then(|v| v.as_array());
+    let action_count = actions.map(|a| a.len()).unwrap_or(0);
+
+    let mut lines: Vec<Line> = vec![
+        Line::from(vec![
+            Span::styled("Tool: ", Style::default().fg(muted())),
+            Span::styled(
+                "simulate_input",
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "  CRITICAL",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Actions: ", Style::default().fg(muted())),
+            Span::styled(
+                format!("{action_count}"),
+                Style::default().fg(text()).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
+
+    if let Some(actions) = actions {
+        for (i, action) in actions.iter().enumerate() {
+            let formatted = format_input_action(action);
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {}. ", i + 1), Style::default().fg(muted())),
+                Span::styled(formatted, Style::default().fg(signal())),
+            ]));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  (no actions array found)",
+            Style::default().fg(Color::Red),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "y",
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" approve  •  ", Style::default().fg(muted())),
+        Span::styled(
+            "n",
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" deny  •  ", Style::default().fg(muted())),
+        Span::styled(
+            "shift+tab",
+            Style::default().fg(text()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" permission mode", Style::default().fg(muted())),
+    ]));
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .style(Style::default().bg(modal_bg())),
+        inner,
+    );
+
+    // Register hit regions at the same relative positions as the generic
+    // modal so mouse clicks work identically.
+    app.register_hit(
+        line_rect(inner, 4),
+        30,
+        "approve tool",
+        HitAction::ToolApprove,
+    );
+    app.register_hit(
+        Rect::new(inner.x + 13, inner.y + 4, 10, 1),
+        31,
+        "deny tool",
+        HitAction::ToolDeny,
+    );
+}
+
 pub(crate) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
     let Some(req) = app.pending_approvals.first() else {
         return;
@@ -993,6 +1159,13 @@ pub(crate) fn render_tool_approval(frame: &mut Frame<'_>, app: &TuiApp, area: Re
         };
         &default_inv
     };
+    // Computer-use input simulation gets a dedicated approval modal with
+    // human-readable action descriptions instead of raw JSON (ADR 0016).
+    if req.risk == navi_sdk::ApprovalRisk::UiAutomation && invocation.tool_name == "simulate_input"
+    {
+        render_computer_use_approval(frame, app, area, invocation);
+        return;
+    }
     clear_modal_area(frame, area);
     let block = modal_block("Tool Approval");
     let inner = area.inner(Margin {
@@ -2763,5 +2936,114 @@ pub(crate) fn render_attachment_models(frame: &mut Frame<'_>, app: &TuiApp, area
             Paragraph::new(hints).style(Style::default().bg(modal_bg())),
             footer_rect,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_input_action;
+    use serde_json::json;
+
+    #[test]
+    fn format_click_with_coordinates() {
+        let action = json!({"action": "click", "button": "left", "x": 540, "y": 300});
+        assert_eq!(format_input_action(&action), "click left at (540, 300)");
+    }
+
+    #[test]
+    fn format_double_click_with_coordinates() {
+        let action = json!({"action": "double_click", "button": "right", "x": 100, "y": 200});
+        assert_eq!(
+            format_input_action(&action),
+            "double-click right at (100, 200)"
+        );
+    }
+
+    #[test]
+    fn format_click_without_coordinates() {
+        let action = json!({"action": "click", "button": "middle"});
+        assert_eq!(format_input_action(&action), "click middle");
+    }
+
+    #[test]
+    fn format_click_defaults_to_left_button() {
+        let action = json!({"action": "click", "x": 10, "y": 20});
+        assert_eq!(format_input_action(&action), "click left at (10, 20)");
+    }
+
+    #[test]
+    fn format_mouse_move_with_coordinates() {
+        let action = json!({"action": "mouse_move", "x": 800, "y": 600});
+        assert_eq!(format_input_action(&action), "move to (800, 600)");
+    }
+
+    #[test]
+    fn format_mouse_move_without_coordinates() {
+        let action = json!({"action": "mouse_move"});
+        assert_eq!(format_input_action(&action), "move");
+    }
+
+    #[test]
+    fn format_scroll_with_coordinates() {
+        let action = json!({"action": "scroll", "delta": -2, "x": 100, "y": 200});
+        assert_eq!(format_input_action(&action), "scroll -2 at (100, 200)");
+    }
+
+    #[test]
+    fn format_scroll_without_coordinates() {
+        let action = json!({"action": "scroll", "delta": 3});
+        assert_eq!(format_input_action(&action), "scroll 3");
+    }
+
+    #[test]
+    fn format_key_press() {
+        let action = json!({"action": "key", "key": "Enter"});
+        assert_eq!(format_input_action(&action), "key Enter");
+    }
+
+    #[test]
+    fn format_key_down() {
+        let action = json!({"action": "key_down", "key": "Shift"});
+        assert_eq!(format_input_action(&action), "key_down Shift");
+    }
+
+    #[test]
+    fn format_key_up() {
+        let action = json!({"action": "key_up", "key": "Control"});
+        assert_eq!(format_input_action(&action), "key_up Control");
+    }
+
+    #[test]
+    fn format_type_short_text() {
+        let action = json!({"action": "type", "text": "hello world"});
+        assert_eq!(format_input_action(&action), "type \"hello world\"");
+    }
+
+    #[test]
+    fn format_type_long_text_truncated() {
+        let long_text = "a".repeat(100);
+        let action = json!({"action": "type", "text": long_text});
+        let result = format_input_action(&action);
+        assert!(result.starts_with("type \""));
+        assert!(result.ends_with("…\""));
+        assert!(result.len() < 70);
+    }
+
+    #[test]
+    fn format_type_without_text() {
+        let action = json!({"action": "type"});
+        assert_eq!(format_input_action(&action), "type");
+    }
+
+    #[test]
+    fn format_unknown_action() {
+        let action = json!({"action": "foo_bar"});
+        assert_eq!(format_input_action(&action), "<unknown action>");
+    }
+
+    #[test]
+    fn format_action_missing_action_field() {
+        let action = json!({"x": 1, "y": 2});
+        assert_eq!(format_input_action(&action), "<unknown action>");
     }
 }
