@@ -4,12 +4,14 @@ members = [
     "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
+    "crates/navi-computer-use",
     "crates/navi-core",
     "crates/navi-dart",
     "crates/navi-lite",
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
+    "crates/navi-os-windows",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
     "crates/navi-plugin-manifest",
@@ -28,12 +30,14 @@ default-members = [
     "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
+    "crates/navi-computer-use",
     "crates/navi-core",
     "crates/navi-dart",
     "crates/navi-lite",
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
+    "crates/navi-os-windows",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
     "crates/navi-plugin-manifest",
@@ -114,12 +118,14 @@ mlua = { version = "0.10", default-features = false, features = ["lua54", "vendo
 navi-acp = { version = "0.4.9", path = "crates/navi-acp" }
 navi-browser = { version = "0.4.9", path = "crates/navi-browser" }
 navi-core = { version = "0.4.9", path = "crates/navi-core" }
+navi-computer-use = { version = "0.4.9", path = "crates/navi-computer-use" }
 navi-dart = { version = "0.4.9", path = "crates/navi-dart" }
 navi-mcp = { version = "0.4.9", path = "crates/navi-mcp" }
 napi = { version = "3.9.4", features = ["async", "serde-json"] }
 napi-build = "2.3.2"
 napi-derive = "3.5.7"
 navi-openai = { version = "0.4.9", path = "crates/navi-openai" }
+navi-os-windows = { version = "0.4.9", path = "crates/navi-os-windows" }
 navi-plugin-api = { version = "0.4.9", path = "crates/navi-plugin-api" }
 navi-plugin-broker = { version = "0.4.9", path = "crates/navi-plugin-broker" }
 navi-providers = { version = "0.4.9", path = "crates/navi-providers" }
@@ -151,3 +157,12 @@ inherits = "release"
 lto = false
 codegen-units = 16
 incremental = true
+
+# ── Patches ─────────────────────────────────────────────────────────────────
+# esaxx-rs 0.1.10 forces `.static_crt(true)` in its build.rs, which emits `/MT`
+# (static CRT). This conflicts with ort-sys prebuilt binaries that use `/MD`
+# (dynamic CRT), causing LNK2038 on Windows MSVC. The upstream fix (removing
+# `static_crt(true)`) has not been published. We vendor a patched copy so
+# `cc` picks up the default CRT (/MD) matching the rest of the workspace.
+[patch.crates-io]
+esaxx-rs = { path = "patches/esaxx-rs" }

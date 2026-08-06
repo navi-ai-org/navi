@@ -1552,8 +1552,6 @@ checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 [[package]]
 name = "esaxx-rs"
 version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
 dependencies = [
  "cc",
 ]
@@ -3301,6 +3299,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-computer-use"
+version = "0.4.9"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "navi-os-windows",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "navi-core"
 version = "0.4.9"
 dependencies = [
@@ -3319,6 +3329,7 @@ dependencies = [
  "jsonschema",
  "mlua",
  "navi-browser",
+ "navi-computer-use",
  "navi-vfs",
  "proptest",
  "regex",
@@ -3422,6 +3433,17 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "navi-os-windows"
+version = "0.4.9"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

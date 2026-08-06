@@ -1,6 +1,7 @@
 use crate::state::PendingImage;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 
 /// Maximum image size to accept from clipboard/path sources.
@@ -132,12 +133,14 @@ pub fn try_read_image_from_path(text: &str) -> Option<PendingImage> {
     Some(pending_image(media_type, &bytes))
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Copy)]
 enum ClipboardSession {
     Wayland,
     X11,
 }
 
+#[cfg(target_os = "linux")]
 impl ClipboardSession {
     fn detect() -> Option<Self> {
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
@@ -151,6 +154,7 @@ impl ClipboardSession {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn try_wl_paste_image() -> Option<PendingImage> {
     try_clipboard_command(
         "wl-paste",
@@ -166,6 +170,7 @@ fn try_wl_paste_image() -> Option<PendingImage> {
     })
 }
 
+#[cfg(target_os = "linux")]
 fn try_xclip_image() -> Option<PendingImage> {
     try_clipboard_command(
         "xclip",
@@ -187,6 +192,7 @@ fn try_xclip_image() -> Option<PendingImage> {
     })
 }
 
+#[cfg(target_os = "linux")]
 fn try_clipboard_command(program: &str, args: &[&str], media_type: &str) -> Option<PendingImage> {
     let output = Command::new(program).args(args).output().ok()?;
     if !output.status.success() || output.stdout.is_empty() {
