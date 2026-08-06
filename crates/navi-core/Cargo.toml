@@ -17,6 +17,7 @@ fastrand.workspace = true
 futures-util.workspace = true
 jsonschema.workspace = true
 navi-browser = { workspace = true, optional = true }
+navi-computer-use = { workspace = true, optional = true }
 navi-vfs = { workspace = true, optional = true }
 reqwest.workspace = true
 regex.workspace = true
@@ -53,6 +54,7 @@ proptest.workspace = true
 default = ["code-vfs", "browser"]
 code-vfs = ["dep:navi-vfs"]
 browser = ["dep:navi-browser"]
+computer-use = ["dep:navi-computer-use"]
 embeddings = [
     "dep:candle-core",
     "dep:candle-transformers",

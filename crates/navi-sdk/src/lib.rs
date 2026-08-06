@@ -2,6 +2,7 @@ mod acp_ops;
 mod acp_server;
 mod attachment_tool;
 mod auth_ops;
+mod computer_use_ops;
 mod credentials;
 mod engine;
 mod engine_api;
@@ -29,6 +30,7 @@ pub use navi_acp::{
     SpawnedAcpPeer,
 };
 
+pub use computer_use_ops::ComputerUseConfig;
 pub use credentials::{
     CredentialAccountInfo, CredentialSource, CredentialStatus, DeviceOAuthStarted,
     provider_api_key, provider_credential_accounts, provider_credential_status,

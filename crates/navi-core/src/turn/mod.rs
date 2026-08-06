@@ -1431,6 +1431,11 @@ async fn execute_tool_call(
     // so base64 never enters the text transcript or event payload.
     let content_parts = take_tool_content_parts(&mut result);
 
+    // ── Computer-use specific events (ADR 0016) ──────────────────────────
+    // The harness emits domain events (ScreenCaptured, InputSimulated, …)
+    // alongside the generic ToolCompleted so TUI/replay can render them.
+    emit_computer_use_event(ctx, &invocation, &result);
+
     if let Some(ref tx) = ctx.event_tx {
         let _ = tx.send(AgentEvent::ToolCompleted(result.clone()));
     }
@@ -1440,6 +1445,83 @@ async fn execute_tool_call(
         .harness
         .compact_tool_observation(&invocation, &result, policy);
     (invocation, result, observation, content_parts)
+}
+
+/// Emits computer-use-specific `AgentEvent`s after a tool call (ADR 0016).
+///
+/// The harness already emits `AgentEvent::ToolCompleted` for every tool; this
+/// adds domain events (`ScreenCaptured`, `WindowsEnumerated`, …) so the TUI
+/// and session replay can render them distinctly. The events are derived from
+/// the tool name + result payload — no extra plumbing from the tools needed.
+fn emit_computer_use_event(
+    ctx: &TurnContext,
+    invocation: &crate::tool::ToolInvocation,
+    result: &crate::tool::ToolResult,
+) {
+    let Some(tx) = ctx.event_tx.as_ref() else {
+        return;
+    };
+    let event = match invocation.tool_name.as_str() {
+        "capture_screen" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let width = result
+                .output
+                .get("width")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u32;
+            let height = result
+                .output
+                .get("height")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u32;
+            Some(AgentEvent::ScreenCaptured {
+                path,
+                width,
+                height,
+            })
+        }
+        "enumerate_windows" => {
+            let count = result
+                .output
+                .get("count")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            Some(AgentEvent::WindowsEnumerated { count })
+        }
+        "inspect_element" => {
+            let supported = result
+                .output
+                .get("supported")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            Some(AgentEvent::UiElementInspected { supported })
+        }
+        "simulate_input" => {
+            let actions_performed = result
+                .output
+                .get("actions_performed")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            let denied = result
+                .output
+                .get("deny_reason")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            Some(AgentEvent::InputSimulated {
+                actions_performed,
+                denied,
+            })
+        }
+        _ => None,
+    };
+    if let Some(event) = event {
+        let _ = tx.send(event);
+    }
 }
 
 /// Block after `plan(create)` until the TUI resolves the review modal.
@@ -1726,6 +1808,7 @@ async fn approve_and_invoke_tool(
         crate::security::SecurityRisk::Command => crate::event::ApprovalRisk::Command,
         crate::security::SecurityRisk::GuardedCommand => crate::event::ApprovalRisk::Guarded,
         crate::security::SecurityRisk::ExternalPlugin => crate::event::ApprovalRisk::ExternalPlugin,
+        crate::security::SecurityRisk::UiAutomation => crate::event::ApprovalRisk::UiAutomation,
     };
     let approve_rx = ctx.approval_resolver.register(invocation.id.clone());
 

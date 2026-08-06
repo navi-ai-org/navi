@@ -208,6 +208,12 @@ fn merge_from_file(
         file_config.wasm_plugins.clear();
         file_config.acp = crate::config::types::AcpConfig::default();
         file_config.acp_agents.clear();
+
+        // Computer use deny-list: project config may extend the defaults but
+        // cannot remove the "protected" entries (OS security + NAVI
+        // self-protection). See ADR 0016 + `merge_deny_apps` in defaults.rs.
+        file_config.security.computer_use_deny_apps =
+            crate::config::defaults::merge_deny_apps(&file_config.security.computer_use_deny_apps);
     }
     config.merge(file_config);
     Ok(Some(path.to_path_buf()))

@@ -162,6 +162,11 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "reload_wasm_plugins",
     // Config
     "loaded_config",
+    // Computer use (OS automation — ADR 0016)
+    "computer_use_available",
+    "computer_use_platform",
+    "computer_use_config",
+    "set_computer_use_deny_apps",
     // Notifications / self-update
     "notify",
     "notify_simple",
@@ -326,6 +331,11 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "reload_wasm_plugins",
     // Config
     "loaded_config",
+    // Computer use (OS automation — ADR 0016)
+    "computer_use_available",
+    "computer_use_platform",
+    "computer_use_config",
+    "set_computer_use_deny_apps",
     // Notifications / self-update
     "notify",
     "notify_simple",

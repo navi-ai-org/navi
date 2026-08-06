@@ -480,6 +480,20 @@ pub struct SecurityConfig {
     /// appears in this list may be loaded. Empty means all servers are allowed.
     #[serde(default)]
     pub allowed_mcp_servers: Vec<String>,
+    /// Computer use: application names/titles that computer-use tools must not
+    /// target. Enforced in all modes except Yolo. Defaults are applied at
+    /// load time (password managers, banking, OS security settings, NAVI
+    /// itself). Project config may extend but not remove the defaults for
+    /// OS-security and NAVI self-protection entries. See ADR 0016.
+    #[serde(default)]
+    pub computer_use_deny_apps: Vec<String>,
+    /// Computer use: runtime opt-in gate. When `false` (default), the
+    /// computer-use tools are not registered even if the `computer-use`
+    /// cargo feature is compiled in. Set to `true` via CLI flag
+    /// `--computer-use` or `[security] computer_use_enabled = true` in
+    /// config. See ADR 0016.
+    #[serde(default)]
+    pub computer_use_enabled: bool,
 }
 
 impl SecurityConfig {

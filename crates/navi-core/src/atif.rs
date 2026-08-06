@@ -497,7 +497,11 @@ impl Folder {
                 | AgentEvent::PlanProposed { .. }
                 | AgentEvent::AgentModeChanged { .. }
                 | AgentEvent::NotificationRequested { .. }
-                | AgentEvent::UpdateAvailable { .. } => {
+                | AgentEvent::UpdateAvailable { .. }
+                | AgentEvent::ScreenCaptured { .. }
+                | AgentEvent::WindowsEnumerated { .. }
+                | AgentEvent::UiElementInspected { .. }
+                | AgentEvent::InputSimulated { .. } => {
                     self.dropped += 1;
                 }
             }

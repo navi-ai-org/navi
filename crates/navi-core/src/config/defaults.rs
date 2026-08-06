@@ -77,6 +77,8 @@ impl Default for SecurityConfig {
             guarded_commands: vec!["git".to_string()],
             deny_paths: Vec::new(),
             allowed_mcp_servers: Vec::new(),
+            computer_use_deny_apps: default_computer_use_deny_apps(),
+            computer_use_enabled: false,
         }
     }
 }
@@ -133,4 +135,172 @@ fn default_blocked_commands() -> Vec<String> {
     .into_iter()
     .map(str::to_string)
     .collect()
+}
+
+/// Default deny-list of applications that computer-use tools must not target
+/// (ADR 0016). Matched case-insensitively against the target process exe name
+/// (without `.exe`) and the window title substring.
+///
+/// Enforced in Restricted / AcceptEdits / Auto; bypassed only in Yolo.
+/// Project config may **extend** this list but cannot remove the
+/// "protected" entries (OS security + NAVI self-protection) — see
+/// `merge_deny_apps` in `loader.rs`.
+pub(crate) fn default_computer_use_deny_apps() -> Vec<String> {
+    [
+        // ── Password managers ───────────────────────────────────────────
+        "1password",
+        "bitwarden",
+        "keepass",
+        "keepassxc",
+        "lastpass",
+        "dashlane",
+        "enpass",
+        "roboform",
+        "applepasswords",
+        // ── Banking / finance ───────────────────────────────────────────
+        "banking",
+        "quicken",
+        "ynab",
+        // ── OS security (Windows) ───────────────────────────────────────
+        "securityhealthsystray",
+        "windowsdefender",
+        "msmpeng",
+        "securitycenterhost",
+        // ── OS security (macOS — future) ────────────────────────────────
+        "systemsettings",
+        "keychainaccess",
+        // ── Credential stores ───────────────────────────────────────────
+        "vaultsvc",
+        "credentialmanager",
+        "keychain",
+        "seahorse",
+        // ── NAVI self-protection ────────────────────────────────────────
+        "navi",
+        "navi-cli",
+        "navi-tui",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+/// Entries in the default deny-list that project config cannot remove.
+///
+/// These are the "protected" categories from ADR 0016: OS security settings
+/// and NAVI self-protection. Project `.navi/config.toml` may add entries but
+/// cannot weaken these. (Yolo bypasses the entire deny-list at runtime, so
+/// this only affects non-Yolo enforcement.)
+pub(crate) fn protected_deny_apps() -> &'static [&'static str] {
+    &[
+        // OS security (Windows + macOS)
+        "securityhealthsystray",
+        "windowsdefender",
+        "msmpeng",
+        "securitycenterhost",
+        "systemsettings",
+        "keychainaccess",
+        "vaultsvc",
+        "credentialmanager",
+        "keychain",
+        "seahorse",
+        // NAVI self-protection
+        "navi",
+        "navi-cli",
+        "navi-tui",
+    ]
+}
+
+/// Merges user-supplied deny-app entries with the defaults, ensuring the
+/// protected entries are always present.
+///
+/// Semantics:
+/// - The user's list **replaces** the non-protected defaults. If the user
+///   provides `["mybankapp"]`, only `"mybankapp"` plus the protected entries
+///   survive — the non-protected defaults (password managers, banking) are
+///   dropped unless the user re-lists them.
+/// - The protected entries (OS security + NAVI self-protection) are **always**
+///   added, regardless of what the user provides.
+///
+/// This matches ADR 0016: project config may extend the list but cannot
+/// weaken the protected categories. Yolo bypasses the entire deny-list at
+/// runtime, so this only affects non-Yolo enforcement.
+pub(crate) fn merge_deny_apps(user: &[String]) -> Vec<String> {
+    let protected = protected_deny_apps();
+
+    // Start from the user's list (it fully replaces non-protected defaults).
+    let mut merged: Vec<String> = user.to_vec();
+
+    // Ensure every protected entry is present (case-insensitive).
+    for p in protected {
+        let p_lower = p.to_ascii_lowercase();
+        if !merged.iter().any(|e| e.to_ascii_lowercase() == p_lower) {
+            merged.push(p.to_string());
+        }
+    }
+
+    merged
+}
+
+/// Returns `true` if `target` (exe name or window title) matches any entry in
+/// the deny-list. Case-insensitive substring match.
+pub(crate) fn is_deny_listed(target: &str, deny_apps: &[String]) -> bool {
+    let target_lower = target.to_ascii_lowercase();
+    deny_apps
+        .iter()
+        .any(|entry| target_lower.contains(&entry.to_ascii_lowercase()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_deny_list_includes_password_managers_and_os_security() {
+        let apps = default_computer_use_deny_apps();
+        assert!(apps.iter().any(|a| a == "1password"));
+        assert!(apps.iter().any(|a| a == "bitwarden"));
+        assert!(apps.iter().any(|a| a == "keepass"));
+        assert!(apps.iter().any(|a| a == "windowsdefender"));
+        assert!(apps.iter().any(|a| a == "navi"));
+    }
+
+    #[test]
+    fn merge_deny_apps_keeps_protected_even_if_user_removes() {
+        // User tries to remove all defaults.
+        let user: Vec<String> = vec![];
+        let merged = merge_deny_apps(&user);
+        // Protected entries must still be present.
+        assert!(merged.iter().any(|a| a == "navi"));
+        assert!(merged.iter().any(|a| a == "windowsdefender"));
+        assert!(merged.iter().any(|a| a == "keychainaccess"));
+    }
+
+    #[test]
+    fn merge_deny_apps_keeps_user_additions() {
+        let user = vec!["mybankapp".to_string()];
+        let merged = merge_deny_apps(&user);
+        assert!(merged.iter().any(|a| a == "mybankapp"));
+        // Protected entries still present.
+        assert!(merged.iter().any(|a| a == "navi"));
+    }
+
+    #[test]
+    fn merge_deny_apps_allows_removal_of_non_protected_defaults() {
+        // User provides a list that omits "1password" (non-protected).
+        let user = vec!["navi".to_string()]; // keep protected, drop 1password
+        let merged = merge_deny_apps(&user);
+        assert!(
+            !merged.iter().any(|a| a == "1password"),
+            "user should be able to drop non-protected default '1password'"
+        );
+        assert!(merged.iter().any(|a| a == "navi"));
+    }
+
+    #[test]
+    fn is_deny_listed_matches_case_insensitive_substring() {
+        let apps = vec!["1Password".to_string(), "navi".to_string()];
+        assert!(is_deny_listed("1Password 8.exe", &apps));
+        assert!(is_deny_listed("NAVI-CLI", &apps));
+        assert!(!is_deny_listed("notepad", &apps));
+    }
 }

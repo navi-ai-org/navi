@@ -67,6 +67,11 @@ struct Cli {
     #[arg(long)]
     restricted: bool,
 
+    /// Enable computer-use (OS automation) tools for this session. Requires
+    /// the `computer-use` cargo feature at build time. See ADR 0016.
+    #[arg(long)]
+    computer_use: bool,
+
     /// Activate skill(s) for this session (repeatable). Enables skills discovery when set.
     #[arg(long = "skill", value_name = "ID", action = clap::ArgAction::Append)]
     skill: Vec<String>,
@@ -547,6 +552,21 @@ async fn main() -> Result<()> {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::AcceptEdits;
     } else if cli.restricted {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::Restricted;
+    }
+
+    // CLI --computer-use: runtime opt-in for OS automation tools (ADR 0016).
+    // The tools are only available if the `computer-use` cargo feature is
+    // compiled in; this flag sets the runtime gate so they get registered.
+    if cli.computer_use {
+        loaded_config.config.security.computer_use_enabled = true;
+        #[cfg(not(feature = "computer-use"))]
+        {
+            tracing::warn!(
+                "--computer-use flag set but the `computer-use` cargo feature is not \
+                 compiled in; OS automation tools will not be available. Rebuild with \
+                 `--features computer-use`."
+            );
+        }
     }
 
     // CLI --skill: enable discovery for this run and seed the session active set.

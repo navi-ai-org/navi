@@ -71,6 +71,10 @@ pub enum SecurityRisk {
     GuardedCommand,
     /// Loading an external native plugin.
     ExternalPlugin,
+    /// OS-level UI automation (mouse/keyboard simulation via computer use).
+    /// See ADR 0016 — behaves like `Command` in the permission ladder but is
+    /// distinguished for audit/approval clarity.
+    UiAutomation,
 }
 
 impl SecurityPolicy {
@@ -386,6 +390,9 @@ impl SecurityPolicy {
                         Some("status" | "doctor") => SecurityDecision::Allow,
                         _ => SecurityDecision::NeedsApproval(SecurityRisk::Command),
                     }
+                } else if definition.name == "simulate_input" {
+                    // Computer use input simulation — ADR 0016.
+                    SecurityDecision::NeedsApproval(SecurityRisk::UiAutomation)
                 } else if definition.name == "mark_feature_done" {
                     self.validate_verification_steps(invocation)
                 } else {
@@ -482,6 +489,8 @@ impl SecurityPolicy {
                         Some("status" | "doctor") => SecurityDecision::Allow,
                         _ => SecurityDecision::NeedsApproval(SecurityRisk::Command),
                     }
+                } else if definition.name == "simulate_input" {
+                    SecurityDecision::NeedsApproval(SecurityRisk::UiAutomation)
                 } else if definition.name == "mark_feature_done" {
                     self.validate_verification_steps(invocation)
                 } else {
@@ -517,6 +526,15 @@ impl SecurityPolicy {
                 match self.config.permission_mode {
                     PermissionMode::Yolo => SecurityDecision::Allow,
                     _ => SecurityDecision::NeedsApproval(SecurityRisk::GuardedCommand),
+                }
+            }
+            SecurityDecision::NeedsApproval(SecurityRisk::UiAutomation) => {
+                // ADR 0016: Auto and Yolo allow UI automation; Restricted and
+                // AcceptEdits require approval. (Sensitive-field guard in Auto
+                // is a Phase 2 item — not yet enforced.)
+                match self.config.permission_mode {
+                    PermissionMode::Auto | PermissionMode::Yolo => SecurityDecision::Allow,
+                    _ => SecurityDecision::NeedsApproval(SecurityRisk::UiAutomation),
                 }
             }
             SecurityDecision::Allow | SecurityDecision::NeedsApproval(_) => {

@@ -2108,6 +2108,38 @@ impl NaviNapiEngine {
         self.inner.set_auto_update(enabled).map_err(to_napi_error)
     }
 
+    // ── Computer use (OS automation — ADR 0016) ──────────────────────────
+
+    /// Whether the `computer-use` feature is compiled into this build.
+    #[napi(js_name = "computerUseAvailable")]
+    pub fn computer_use_available(&self) -> bool {
+        self.inner.computer_use_available()
+    }
+
+    /// Platform backend name (`"windows"`, `"macos"`, `"linux"`, or
+    /// `"unsupported"`).
+    #[napi(js_name = "computerUsePlatform")]
+    pub fn computer_use_platform(&self) -> String {
+        self.inner.computer_use_platform().to_string()
+    }
+
+    /// Returns a snapshot of the computer-use configuration (feature flag,
+    /// platform, deny-list).
+    #[napi(js_name = "computerUseConfig")]
+    pub fn computer_use_config(&self) -> Result<JsonValue> {
+        let cfg = self.inner.computer_use_config();
+        serde_json::to_value(&cfg).map_err(to_napi_error)
+    }
+
+    /// Replaces the computer-use deny-list in the in-memory config.
+    /// Note: for persistence, use the config save APIs.
+    #[napi(js_name = "setComputerUseDenyApps")]
+    pub fn set_computer_use_deny_apps(&self, apps: Vec<String>) -> Result<()> {
+        self.inner
+            .set_computer_use_deny_apps(apps)
+            .map_err(to_napi_error)
+    }
+
     /// Create an ACP server backed by this engine. The server speaks the Agent
     /// Client Protocol over stdio so other ACP clients can connect to NAVI.
     #[napi(js_name = "acpServer")]

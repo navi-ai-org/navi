@@ -35,6 +35,9 @@ default = ["wasm-plugins"]
 wasm-plugins = ["dep:navi-plugin-orchestrator"]
 # Optional ONNX Runtime ASR (not portable to musl / all hosts).
 voice-onnx = ["navi-voice/onnx"]
+# OS automation (computer use — ADR 0016). Off by default; opt-in.
+# Forwards to `navi-core/computer-use` which registers the native tools.
+computer-use = ["navi-core/computer-use"]
 
 [dev-dependencies]
 tempfile.workspace = true

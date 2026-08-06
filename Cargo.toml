@@ -114,6 +114,11 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 tempfile = "3"
 wiremock = "0.6"
+# `windows` (not `windows-sys`) is required for UI Automation COM interfaces
+# (IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker, …) used by
+# `navi-os-windows` for the `inspect_element` tool. Only pulled in on Windows
+# targets via `[target.'cfg(windows)'.dependencies]` in the leaf crate.
+windows = { version = "0.62" }
 mlua = { version = "0.10", default-features = false, features = ["lua54", "vendored", "serialize"] }
 navi-acp = { version = "0.4.9", path = "crates/navi-acp" }
 navi-browser = { version = "0.4.9", path = "crates/navi-browser" }

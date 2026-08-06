@@ -30,6 +30,8 @@ use builtin::{
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
     SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
+#[cfg(feature = "computer-use")]
+use builtin::{CaptureScreenTool, EnumerateWindowsTool, InspectElementTool, SimulateInputTool};
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
 
@@ -1169,6 +1171,24 @@ impl ToolExecutor {
         self.register(ViewImageTool::inspect_image(pr.clone(), data_dir));
         #[cfg(feature = "browser")]
         self.register(BrowserTool::new(pr.clone()));
+        #[cfg(feature = "computer-use")]
+        {
+            let data_dir = self.policy.data_dir().to_path_buf();
+            let (deny_apps, permission_mode, enabled) = {
+                let cfg = self.policy.config();
+                (
+                    cfg.computer_use_deny_apps.clone(),
+                    cfg.permission_mode,
+                    cfg.computer_use_enabled,
+                )
+            };
+            if enabled {
+                self.register(CaptureScreenTool::new(data_dir.clone()));
+                self.register(EnumerateWindowsTool::new());
+                self.register(InspectElementTool::new());
+                self.register(SimulateInputTool::new(data_dir, deny_apps, permission_mode));
+            }
+        }
         self.register(NewContextWindowTool::new());
         self.register(ToolSearchTool::new(Arc::new(self.registry.clone())));
         // Workflow uses mock backend by default; runtime/SDK replace with a

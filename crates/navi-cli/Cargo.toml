@@ -39,6 +39,10 @@ navi-voice = { workspace = true, default-features = false }
 # embeddings come from navi-core dep features above (not a cargo feature flag).
 default = []
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
+# OS automation (computer use — ADR 0016). Off by default; opt-in.
+# Enables the `capture_screen`, `enumerate_windows`, `inspect_element`, and
+# `simulate_input` tools behind the `computer-use` feature gate.
+computer-use = ["navi-sdk/computer-use", "navi-tui/computer-use"]
 
 [dev-dependencies]
 wiremock.workspace = true

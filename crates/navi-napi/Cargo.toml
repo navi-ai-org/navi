@@ -15,6 +15,8 @@ crate-type = ["cdylib", "rlib"]
 default = ["voice-onnx"]
 # Local Nemotron ONNX streaming ASR. Disable for musl/portable builds without ORT.
 voice-onnx = ["navi-sdk/voice-onnx"]
+# OS automation (computer use — ADR 0016). Off by default; opt-in.
+computer-use = ["navi-sdk/computer-use"]
 
 [dependencies]
 anyhow.workspace = true

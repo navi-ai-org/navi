@@ -1002,6 +1002,33 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
                 format!("NAVI {latest_version} is ready — Commands → Install Update"),
             );
         }
+        // ── Computer use (ADR 0016) ──────────────────────────────────────
+        // Minimal handling for the initial wiring: screenshots and
+        // inspect/enumerate are visible via ToolCompleted already; the
+        // domain events are emitted for future TUI rendering (preview pane,
+        // deny-list banner). InputSimulated with `denied` gets a
+        // notification so the user sees deny-list hits.
+        AgentEvent::ScreenCaptured {
+            path: _,
+            width: _,
+            height: _,
+        } => {}
+        AgentEvent::WindowsEnumerated { count: _ } => {}
+        AgentEvent::UiElementInspected { supported: _ } => {}
+        AgentEvent::InputSimulated {
+            actions_performed: _,
+            denied: Some(reason),
+        } => {
+            show_notification(
+                app,
+                "Computer use blocked",
+                format!("Input simulation denied: {reason}"),
+            );
+        }
+        AgentEvent::InputSimulated {
+            actions_performed: _,
+            denied: None,
+        } => {}
     }
 }
 

@@ -6,6 +6,8 @@ mod code_edit_tool;
 mod code_exec;
 #[cfg(feature = "code-vfs")]
 mod code_tool;
+#[cfg(feature = "computer-use")]
+mod computer_use;
 mod edit_tool;
 mod extra_tools;
 mod helpers;
@@ -41,6 +43,10 @@ pub(super) use code_edit_tool::CodeEditTool;
 pub(super) use code_exec::CodeExecTool;
 #[cfg(feature = "code-vfs")]
 pub(super) use code_tool::CodeReadTool;
+#[cfg(feature = "computer-use")]
+pub(super) use computer_use::{
+    CaptureScreenTool, EnumerateWindowsTool, InspectElementTool, SimulateInputTool,
+};
 pub(super) use edit_tool::{EditTool, MultiEditTool};
 pub(super) use helpers::truncate_tool_result;
 pub(super) use long_running::{InitSessionTool, MarkFeatureDoneTool};

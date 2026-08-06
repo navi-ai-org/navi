@@ -2507,6 +2507,12 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
         AgentEvent::ToolCallStreaming { .. } => None,
         // Host-facing UI events (not replayed as runtime kinds).
         AgentEvent::NotificationRequested { .. } | AgentEvent::UpdateAvailable { .. } => None,
+        // Computer-use domain events (ADR 0016) — emitted alongside
+        // ToolCompleted; the runtime kind is produced by `emit_computer_use_event`.
+        AgentEvent::ScreenCaptured { .. }
+        | AgentEvent::WindowsEnumerated { .. }
+        | AgentEvent::UiElementInspected { .. }
+        | AgentEvent::InputSimulated { .. } => None,
     }
 }
 

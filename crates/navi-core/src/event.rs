@@ -125,6 +125,35 @@ pub enum RuntimeEventKind {
     ToolStarted(ToolInvocation),
     /// A tool invocation has completed.
     ToolCompleted(ToolResult),
+    /// Computer use: a screen capture was saved (ADR 0016).
+    ScreenCaptured {
+        /// Absolute path to the saved screenshot file.
+        path: String,
+        /// Image width in pixels.
+        width: u32,
+        /// Image height in pixels.
+        height: u32,
+    },
+    /// Computer use: windows were enumerated (ADR 0016).
+    WindowsEnumerated {
+        /// Number of visible windows found.
+        count: usize,
+    },
+    /// Computer use: a UI element was inspected via the accessibility tree
+    /// (ADR 0016).
+    UiElementInspected {
+        /// Whether the platform backend supports accessibility inspection.
+        supported: bool,
+    },
+    /// Computer use: input was simulated (ADR 0016).
+    InputSimulated {
+        /// Number of input actions performed.
+        actions_performed: usize,
+        /// Present when the action was blocked by the computer-use deny-list
+        /// (ADR 0016). `actions_performed` will be 0 in that case.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        denied: Option<String>,
+    },
     /// A nested subagent emitted a transient UI activity update.
     SubagentActivity {
         /// Parent subagent tool invocation id.
@@ -423,6 +452,28 @@ impl RuntimeEventKind {
             RuntimeEventKind::AgentModeChanged { mode, .. } => {
                 Some(AgentEvent::AgentModeChanged { mode })
             }
+            RuntimeEventKind::ScreenCaptured {
+                path,
+                width,
+                height,
+            } => Some(AgentEvent::ScreenCaptured {
+                path,
+                width,
+                height,
+            }),
+            RuntimeEventKind::WindowsEnumerated { count } => {
+                Some(AgentEvent::WindowsEnumerated { count })
+            }
+            RuntimeEventKind::UiElementInspected { supported } => {
+                Some(AgentEvent::UiElementInspected { supported })
+            }
+            RuntimeEventKind::InputSimulated {
+                actions_performed,
+                denied,
+            } => Some(AgentEvent::InputSimulated {
+                actions_performed,
+                denied,
+            }),
             _ => None,
         }
     }
@@ -680,6 +731,23 @@ pub enum AgentEvent {
         #[serde(default)]
         prerelease: bool,
     },
+    // ── Computer use (ADR 0016) ────────────────────────────────────────────
+    /// A screen capture was saved.
+    ScreenCaptured {
+        path: String,
+        width: u32,
+        height: u32,
+    },
+    /// Windows were enumerated.
+    WindowsEnumerated { count: usize },
+    /// A UI element was inspected.
+    UiElementInspected { supported: bool },
+    /// Input was simulated (or blocked by the deny-list).
+    InputSimulated {
+        actions_performed: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        denied: Option<String>,
+    },
 }
 
 /// Kind of repetitive/degenerate output detected by the repetition detector.
@@ -869,6 +937,8 @@ pub enum ApprovalRisk {
     Guarded,
     /// Loading or executing an external plugin.
     ExternalPlugin,
+    /// OS-level UI automation (computer use — ADR 0016).
+    UiAutomation,
 }
 
 /// The outcome of an approval request.
