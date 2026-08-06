@@ -51,7 +51,7 @@ proptest.workspace = true
 # embeddings (candle/tokenizers) is opt-in: default-off keeps CI/local unit
 # tests and `cargo check -p navi-core` off the ML stack. Product binaries
 # enable it via navi-cli / navi-napi features.
-default = ["code-vfs", "browser"]
+default = ["code-vfs", "browser", "computer-use"]
 code-vfs = ["dep:navi-vfs"]
 browser = ["dep:navi-browser"]
 computer-use = ["dep:navi-computer-use"]

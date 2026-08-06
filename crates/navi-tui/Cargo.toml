@@ -36,9 +36,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 clipboard-win = "5.4"
 
 [features]
-default = []
-# OS automation (computer use — ADR 0016). Off by default; opt-in.
-# Forwards to navi-sdk which forwards to navi-core.
+default = ["computer-use"]
+# OS automation (computer use — ADR 0016). Forwards to navi-sdk → navi-core.
 computer-use = ["navi-sdk/computer-use"]
 
 [dev-dependencies]

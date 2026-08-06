@@ -37,9 +37,11 @@ navi-voice = { workspace = true, default-features = false }
 # prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
 # wasm-plugins come from navi-sdk default features.
 # embeddings come from navi-core dep features above (not a cargo feature flag).
-default = []
+# computer-use is on by default (ADR 0016); the runtime gate
+# (`--computer-use` CLI flag or config) still controls tool registration.
+default = ["computer-use"]
 voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
-# OS automation (computer use — ADR 0016). Off by default; opt-in.
+# OS automation (computer use — ADR 0016).
 # Enables the `capture_screen`, `enumerate_windows`, `inspect_element`, and
 # `simulate_input` tools behind the `computer-use` feature gate.
 computer-use = ["navi-sdk/computer-use", "navi-tui/computer-use"]
