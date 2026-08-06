@@ -151,7 +151,9 @@ pub(super) fn route_global_key(
                 if let Some(text) = crate::clipboard::try_read_clipboard_text()
                     && !text.is_empty()
                 {
-                    crate::input::insert_input_text(app, &text);
+                    // Route through paste_compact so large pastes become chips
+                    // ([Pasted text #N +M lines]) just like Event::Paste on Linux.
+                    crate::paste_compact::insert_paste_into_composer(app, &text);
                 }
             }
         }
