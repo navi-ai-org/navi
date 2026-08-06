@@ -2513,9 +2513,10 @@ fn opencode_deepseek_v4_emits_thinking_toggle_when_enabled() {
 }
 
 #[test]
-fn opencode_non_deepseek_model_has_no_thinking_toggle() {
-    // Non-DeepSeek models on opencode must NOT get the `thinking` toggle —
-    // only DeepSeek V4 needs it to override the server default.
+fn opencode_non_deepseek_model_emits_thinking_toggle() {
+    // ALL models on the Zen/Go gateway default to thinking ON server-side,
+    // not just DeepSeek V4. Every model needs the explicit toggle so the
+    // server doesn't enable thinking and clash with tool_choice.
     let mut body = json!({ "model": "glm-5.2", "messages": [] });
     apply_thinking_to_body(
         &mut body,
@@ -2527,8 +2528,62 @@ fn opencode_non_deepseek_model_has_no_thinking_toggle() {
         OpenAiApiKind::ChatCompletions,
         "opencode",
     );
-    assert!(body.get("thinking").is_none());
+    assert_eq!(body["thinking"], json!({ "type": "disabled" }));
     assert!(body.get("reasoning_effort").is_none());
+}
+
+#[test]
+fn opencode_thinking_enabled_removes_tool_choice() {
+    // When thinking is ON, the gateway rejects tool_choice with
+    // "Thinking mode does not support this tool_choice". We must
+    // strip it so the server defaults to auto behavior.
+    let mut body = json!({
+        "model": "glm-5.2",
+        "messages": [],
+        "tool_choice": "auto",
+        "tools": [{"type": "function", "function": {"name": "search"}}],
+    });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::High,
+            OpenAiApiKind::ChatCompletions,
+            "opencode-zen",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode-zen",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "enabled" }));
+    assert!(
+        body.get("tool_choice").is_none(),
+        "tool_choice must be removed when thinking is enabled"
+    );
+}
+
+#[test]
+fn opencode_thinking_disabled_keeps_tool_choice() {
+    // When thinking is OFF, tool_choice is safe and must be preserved.
+    let mut body = json!({
+        "model": "glm-5.2",
+        "messages": [],
+        "tool_choice": "auto",
+        "tools": [{"type": "function", "function": {"name": "search"}}],
+    });
+    apply_thinking_to_body(
+        &mut body,
+        thinking_request_for_api(
+            navi_core::ThinkingConfig::Off,
+            OpenAiApiKind::ChatCompletions,
+            "opencode-zen",
+        ),
+        OpenAiApiKind::ChatCompletions,
+        "opencode-zen",
+    );
+    assert_eq!(body["thinking"], json!({ "type": "disabled" }));
+    assert_eq!(
+        body["tool_choice"], "auto",
+        "tool_choice must be preserved when thinking is disabled"
+    );
 }
 
 // ── anthropic_tool_to_json / gemini_tool_to_json structure ────────────────────

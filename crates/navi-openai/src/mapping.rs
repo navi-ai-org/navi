@@ -324,35 +324,39 @@ pub(crate) fn apply_thinking_to_body(
             // OpenCode Zen hosts Tencent Hy3 / Hunyuan family among others.
             // Hy chat templates accept reasoning_effort via chat_template_kwargs
             // and also top-level reasoning_effort on many OpenAI-compat gateways.
+            //
+            // All models on the Zen/Go gateway default to thinking mode ON
+            // server-side. When thinking is off we must emit an explicit
+            // `thinking: {type: "disabled"}` toggle; otherwise the server
+            // enables thinking, which conflicts with `tool_choice` when tools
+            // are present (400 "Thinking mode does not support this
+            // tool_choice"). When thinking is ON and tools are present, we
+            // must omit `tool_choice` entirely — the server does not support
+            // it in thinking mode.
             navi_core::ProviderId::OPENCODE
             | navi_core::ProviderId::OPENCODE_ZEN
             | navi_core::ProviderId::OPENCODE_GO => {
-                // DeepSeek V4 models hosted on the Zen/Go gateway default to
-                // thinking mode ON server-side. When thinking is off we must
-                // emit an explicit `thinking: {type: "disabled"}` toggle;
-                // otherwise the server enables thinking, which conflicts with
-                // `tool_choice` when tools are present (400 "Thinking mode does
-                // not support this tool_choice"). Mirror the generic branch.
-                if is_deepseek_v4_model(&model) {
-                    object.insert(
-                        "thinking".to_string(),
-                        json!({ "type": if thinking.enabled { "enabled" } else { "disabled" } }),
-                    );
-                }
-                if thinking.enabled
-                    && let Some(effort) = thinking.effort
-                {
-                    // Map NAVI effort labels onto Hy's no_think/low/high when possible.
-                    let hy_effort = match effort.as_str() {
-                        "off" | "none" | "minimal" => "no_think",
-                        "max" | "xhigh" | "highest" => "high",
-                        other => other,
-                    };
-                    object.insert("reasoning_effort".to_string(), json!(hy_effort));
-                    object.insert(
-                        "extra_body".to_string(),
-                        json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
-                    );
+                object.insert(
+                    "thinking".to_string(),
+                    json!({ "type": if thinking.enabled { "enabled" } else { "disabled" } }),
+                );
+                if thinking.enabled {
+                    // Thinking mode + tool_choice is rejected by the gateway.
+                    // Remove it so the server defaults to auto behavior.
+                    object.remove("tool_choice");
+                    if let Some(effort) = thinking.effort {
+                        // Map NAVI effort labels onto Hy's no_think/low/high when possible.
+                        let hy_effort = match effort.as_str() {
+                            "off" | "none" | "minimal" => "no_think",
+                            "max" | "xhigh" | "highest" => "high",
+                            other => other,
+                        };
+                        object.insert("reasoning_effort".to_string(), json!(hy_effort));
+                        object.insert(
+                            "extra_body".to_string(),
+                            json!({ "chat_template_kwargs": { "reasoning_effort": hy_effort } }),
+                        );
+                    }
                 }
             }
             _ => {
