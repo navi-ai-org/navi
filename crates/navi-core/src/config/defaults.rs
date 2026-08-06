@@ -78,7 +78,7 @@ impl Default for SecurityConfig {
             deny_paths: Vec::new(),
             allowed_mcp_servers: Vec::new(),
             computer_use_deny_apps: default_computer_use_deny_apps(),
-            computer_use_enabled: false,
+            computer_use_enabled: true,
         }
     }
 }

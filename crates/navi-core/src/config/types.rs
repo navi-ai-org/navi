@@ -487,12 +487,11 @@ pub struct SecurityConfig {
     /// OS-security and NAVI self-protection entries. See ADR 0016.
     #[serde(default)]
     pub computer_use_deny_apps: Vec<String>,
-    /// Computer use: runtime opt-in gate. When `false` (default), the
-    /// computer-use tools are not registered even if the `computer-use`
-    /// cargo feature is compiled in. Set to `true` via CLI flag
-    /// `--computer-use` or `[security] computer_use_enabled = true` in
-    /// config. See ADR 0016.
-    #[serde(default)]
+    /// Computer use: runtime gate. When `true` (default), the computer-use
+    /// tools are registered if the `computer-use` cargo feature is compiled
+    /// in. Set to `false` via `[security] computer_use_enabled = false` in
+    /// config to disable. See ADR 0016.
+    #[serde(default = "default_true")]
     pub computer_use_enabled: bool,
 }
 

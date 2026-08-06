@@ -67,8 +67,8 @@ struct Cli {
     #[arg(long)]
     restricted: bool,
 
-    /// Enable computer-use (OS automation) tools for this session. Requires
-    /// the `computer-use` cargo feature at build time. See ADR 0016.
+    /// Enable computer-use (OS automation) tools for this session. On by
+    /// default; this flag is kept for explicitness. See ADR 0016.
     #[arg(long)]
     computer_use: bool,
 
@@ -554,9 +554,10 @@ async fn main() -> Result<()> {
         loaded_config.config.security.permission_mode = navi_core::PermissionMode::Restricted;
     }
 
-    // CLI --computer-use: runtime opt-in for OS automation tools (ADR 0016).
-    // The tools are only available if the `computer-use` cargo feature is
-    // compiled in; this flag sets the runtime gate so they get registered.
+    // CLI --computer-use: explicit enable for OS automation tools (ADR 0016).
+    // Computer use is now on by default; this flag is kept for explicitness
+    // and in case a config has disabled it. The `computer-use` cargo feature
+    // must also be compiled in (it is, by default).
     if cli.computer_use {
         loaded_config.config.security.computer_use_enabled = true;
         #[cfg(not(feature = "computer-use"))]
