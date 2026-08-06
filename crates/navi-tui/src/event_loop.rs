@@ -265,6 +265,48 @@ fn keyboard_enhancement_supported() -> bool {
     true
 }
 
+/// Whether the terminal supports DECSET 2026 synchronized output.
+///
+/// On Windows, crossterm gates `BeginSynchronizedUpdate` behind
+/// `is_ansi_code_supported()`, which returns false even on Windows Terminal
+/// (which has supported DECSET 2026 since April 2025, PR microsoft/terminal#18826).
+/// We emit the sequence directly (same workaround as the Kitty keyboard protocol
+/// above), so this gate only needs to suppress the sequence on legacy consoles
+/// that would print it as garbage text.
+///
+/// On Unix the sequence is a no-op on terminals without support, so we always
+/// emit it there (matches the behavior of the other DEC modes we enable).
+#[cfg(windows)]
+fn sync_update_supported() -> bool {
+    crossterm::ansi_support::supports_ansi()
+}
+
+#[cfg(not(windows))]
+fn sync_update_supported() -> bool {
+    true
+}
+
+/// Bracket a render closure in DECSET 2026 synchronized output so the terminal
+/// presents the frame atomically. Terminals without support ignore both
+/// sequences; on legacy Windows console (no ANSI) we skip entirely to avoid
+/// printing garbage.
+fn with_synchronized_update<F, R>(stdout: &mut impl io::Write, f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let sync = sync_update_supported();
+    if sync {
+        let _ = write!(stdout, "\x1B[?2026h");
+        let _ = stdout.flush();
+    }
+    let result = f();
+    if sync {
+        let _ = write!(stdout, "\x1B[?2026l");
+        let _ = stdout.flush();
+    }
+    result
+}
+
 /// Lightweight reassert on FocusGained: pop our previous push, re-push, restore
 /// paste/focus/mouse. Avoids thrashing the parent stack with a full clear every
 /// focus cycle (multi-window long sessions).
@@ -754,7 +796,14 @@ where
         let activity_animating = app.is_loading || !app.running_tools.is_empty() || bg_running;
 
         if needs_draw || composer_animating || activity_animating {
-            terminal.draw(|frame| render(frame, app))?;
+            // Bracket each frame in DECSET 2026 synchronized output so the
+            // terminal presents it atomically. Without this, the ~30fps redraws
+            // during streaming/tools tear on Windows Terminal (cursor and cells
+            // repaint mid-frame). Ratatui 0.30 does not wrap draw() in sync
+            // automatically, and crossterm's BeginSynchronizedUpdate is gated
+            // behind is_ansi_code_supported() which returns false on Windows.
+            let mut stdout = io::stdout();
+            with_synchronized_update(&mut stdout, || terminal.draw(|frame| render(frame, app)))?;
             app.advance_tick();
             needs_draw = false;
         }
@@ -881,7 +930,10 @@ where
                     app.mouse_free_motion = free_motion;
                     let mut stdout = io::stdout();
                     let _ = reassert_terminal_input_modes(&mut stdout, free_motion);
-                    terminal.clear()?;
+                    // Wrap the clear+repaint in synchronized output so the
+                    // alternate-screen recovery doesn't flash.
+                    let mut stdout_sync = io::stdout();
+                    with_synchronized_update(&mut stdout_sync, || terminal.clear())?;
                     needs_draw = true;
                 }
                 Event::FocusLost => {
