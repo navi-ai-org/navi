@@ -23,6 +23,11 @@ mod tests;
 
 #[cfg(feature = "browser")]
 use builtin::BrowserTool;
+#[cfg(feature = "computer-use")]
+use builtin::{
+    AnnotateScreenshotTool, CaptureScreenTool, EnumerateWindowsTool, InspectElementTool,
+    SimulateInputTool,
+};
 use builtin::{
     AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool,
     HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
@@ -30,8 +35,6 @@ use builtin::{
     RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
     SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
-#[cfg(feature = "computer-use")]
-use builtin::{CaptureScreenTool, EnumerateWindowsTool, InspectElementTool, SimulateInputTool};
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
 
@@ -1186,6 +1189,7 @@ impl ToolExecutor {
                 self.register(CaptureScreenTool::new(data_dir.clone()));
                 self.register(EnumerateWindowsTool::new());
                 self.register(InspectElementTool::new());
+                self.register(AnnotateScreenshotTool::new(data_dir.clone()));
                 self.register(SimulateInputTool::new(data_dir, deny_apps, permission_mode));
             }
         }

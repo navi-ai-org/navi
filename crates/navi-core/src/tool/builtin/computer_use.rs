@@ -281,6 +281,149 @@ fn element_to_json(el: &navi_computer_use::ElementInfo) -> Value {
     })
 }
 
+// ── AnnotateScreenshotTool ──────────────────────────────────────────────────
+
+pub(crate) struct AnnotateScreenshotTool {
+    data_dir: PathBuf,
+}
+
+impl AnnotateScreenshotTool {
+    pub(crate) fn new(data_dir: PathBuf) -> Self {
+        Self { data_dir }
+    }
+}
+
+#[async_trait]
+impl Tool for AnnotateScreenshotTool {
+    fn definition(&self) -> ToolDefinition {
+        helpers::definition_with_meta(
+            "annotate_screenshot",
+            "Capture a screenshot and overlay bounding-box rectangles for each UI element \
+from the accessibility tree. The annotated image (PNG) is attached for visual analysis. \
+This closes the loop between `inspect_element` (which returns coordinates) and \
+`capture_screen` (which returns pixels) — the model can see exactly which UI elements \
+are where. Box colors: red = password field, green = interactive (button/edit/etc), \
+blue = container (window/pane/group), gray = other. The element tree JSON is also \
+returned so the model can correlate boxes with names and control types by position.",
+            ToolKind::Read,
+            json!({
+                "type": "object",
+                "properties": {
+                    "window": {
+                        "type": "integer",
+                        "description": "Window handle (hwnd) from enumerate_windows. Omit for foreground window."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum accessibility tree depth to traverse (default 3, 0 = root only)."
+                    }
+                },
+                "additionalProperties": false,
+            }),
+            ToolMetadata {
+                namespace: "computer-use".to_string(),
+                risk: ToolRisk::Low,
+                is_read_only: true,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Deferred,
+                capabilities: vec![
+                    "os.screen.read".to_string(),
+                    "os.accessibility.read".to_string(),
+                ],
+                tags: vec![
+                    "screenshot".to_string(),
+                    "annotate".to_string(),
+                    "overlay".to_string(),
+                    "accessibility".to_string(),
+                ],
+                ..ToolMetadata::default()
+            },
+        )
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        let window = invocation.input.get("window").and_then(Value::as_u64);
+        let max_depth = invocation
+            .input
+            .get("max_depth")
+            .and_then(Value::as_u64)
+            .unwrap_or(3) as u32;
+
+        // 1. Capture screenshot
+        let out_dir = self.data_dir.join(SCREENSHOT_SUBDIR);
+        let backend = navi_computer_use::platform_backend();
+        let screenshot = backend.capture_screen(
+            &out_dir.to_string_lossy(),
+            &navi_computer_use::CaptureOptions::default(),
+        )?;
+
+        // 2. Inspect the accessibility tree
+        let inspect_opts = navi_computer_use::InspectOptions { window, max_depth };
+        let backend2 = navi_computer_use::platform_backend();
+        let tree = tokio::task::spawn_blocking(move || backend2.inspect_element(&inspect_opts))
+            .await
+            .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"))??;
+
+        // 3. Read screenshot bytes and annotate
+        let screenshot_path = std::path::Path::new(&screenshot.path);
+        let image_bytes = std::fs::read(screenshot_path)
+            .map_err(|e| anyhow::anyhow!("failed to read screenshot: {e}"))?;
+
+        // Count elements before moving the tree into the annotation closure.
+        let element_count = count_elements(&tree.root);
+        let password_count = count_passwords(&tree.root);
+        let tree_json = element_to_json(&tree.root);
+        let tree_supported = tree.supported;
+
+        let annotated_png = tokio::task::spawn_blocking(move || {
+            navi_computer_use::annotate_screenshot(&image_bytes, &tree)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("annotate worker panicked: {e}"))??;
+
+        // 4. Persist annotated PNG to attachment store
+        let attachment_id =
+            crate::attachment_store::store_bytes(&self.data_dir, &annotated_png, "png")
+                .map_err(|e| anyhow::anyhow!("failed to persist annotated attachment: {e}"))?;
+
+        let data = base64::engine::general_purpose::STANDARD.encode(&annotated_png);
+
+        let mut output = json!({
+            "screenshot_path": screenshot.path,
+            "screenshot_width": screenshot.width,
+            "screenshot_height": screenshot.height,
+            "annotated_format": "png",
+            "annotated_media_type": "image/png",
+            "annotated_size_bytes": annotated_png.len(),
+            "image_attached": true,
+            "attachment_id": attachment_id,
+            "annotated_elements": element_count,
+            "password_fields_found": password_count,
+            "platform": navi_computer_use::platform_backend().platform_name(),
+            "element_tree": {
+                "supported": tree_supported,
+                "root": tree_json,
+            },
+            "message": "Annotated screenshot attached. Each UI element has a colored bounding box: red=password, green=interactive, blue=container, gray=other. The element_tree field contains names and control types for correlating with the visual boxes.",
+        });
+        output[NAVI_CONTENT_PARTS_KEY] = json!([{
+            "type": "image",
+            "media_type": "image/png",
+            "data": data,
+        }]);
+
+        Ok(helpers::ok(invocation.id, output))
+    }
+}
+
+fn count_elements(el: &navi_computer_use::ElementInfo) -> usize {
+    1 + el.children.iter().map(count_elements).sum::<usize>()
+}
+
+fn count_passwords(el: &navi_computer_use::ElementInfo) -> usize {
+    (if el.is_password { 1 } else { 0 }) + el.children.iter().map(count_passwords).sum::<usize>()
+}
+
 // ── SimulateInputTool ──────────────────────────────────────────────────────
 
 pub(crate) struct SimulateInputTool {

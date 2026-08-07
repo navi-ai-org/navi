@@ -1,0 +1,19 @@
+[package]
+name = "navi-os-macos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "macOS OS automation backend for NAVI computer use (CGDisplay, AXUIElement, CGEvent)."
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.24"
+core-foundation = "0.10"
+accessibility-sys = "0.2"

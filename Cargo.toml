@@ -11,6 +11,7 @@ members = [
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
+    "crates/navi-os-macos",
     "crates/navi-os-windows",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
@@ -37,6 +38,7 @@ default-members = [
     "crates/navi-mcp",
     "crates/navi-napi",
     "crates/navi-openai",
+    "crates/navi-os-macos",
     "crates/navi-os-windows",
     "crates/navi-plugin-api",
     "crates/navi-plugin-broker",
@@ -130,6 +132,7 @@ napi = { version = "3.9.4", features = ["async", "serde-json"] }
 napi-build = "2.3.2"
 napi-derive = "3.5.7"
 navi-openai = { version = "0.4.9", path = "crates/navi-openai" }
+navi-os-macos = { version = "0.4.9", path = "crates/navi-os-macos" }
 navi-os-windows = { version = "0.4.9", path = "crates/navi-os-windows" }
 navi-plugin-api = { version = "0.4.9", path = "crates/navi-plugin-api" }
 navi-plugin-broker = { version = "0.4.9", path = "crates/navi-plugin-broker" }

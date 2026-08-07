@@ -1007,6 +1007,9 @@ fn redact_tool_result(result: &ToolResult) -> ToolResult {
             if output.contains_key("path") {
                 output["path"] = Value::String("[redacted]".to_string());
             }
+            if output.contains_key("screenshot_path") {
+                output["screenshot_path"] = Value::String("[redacted]".to_string());
+            }
             if output.contains_key("attachment_id") {
                 output["attachment_id"] = Value::String("[redacted]".to_string());
             }
@@ -3665,6 +3668,37 @@ mod tests {
         assert_eq!(obj["width"], serde_json::json!(1920));
         assert_eq!(obj["height"], serde_json::json!(1080));
         assert_eq!(obj["format"], serde_json::json!("bmp"));
+        assert_eq!(obj["image_attached"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn redact_annotate_screenshot_tool_result_strips_screenshot_path() {
+        let result = ToolResult {
+            invocation_id: "call-anno".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "screenshot_path": "C:\\Users\\alice\\AppData\\Local\\navi\\screenshots\\shot_456.bmp",
+                "screenshot_width": 1920,
+                "screenshot_height": 1080,
+                "annotated_format": "png",
+                "annotated_size_bytes": 500000,
+                "image_attached": true,
+                "attachment_id": "img-xyz789",
+                "annotated_elements": 42,
+                "password_fields_found": 0,
+                "message": "Annotated screenshot attached."
+            }),
+        };
+        let redacted = redact_tool_result(&result);
+        let obj = redacted
+            .output
+            .as_object()
+            .expect("output should be an object");
+        assert_eq!(obj["screenshot_path"], serde_json::json!("[redacted]"));
+        assert_eq!(obj["attachment_id"], serde_json::json!("[redacted]"));
+        // Harmless metadata preserved
+        assert_eq!(obj["annotated_elements"], serde_json::json!(42));
+        assert_eq!(obj["annotated_format"], serde_json::json!("png"));
         assert_eq!(obj["image_attached"], serde_json::json!(true));
     }
 

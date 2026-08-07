@@ -91,4 +91,104 @@ impl NaviEngine {
         );
         Ok(())
     }
+
+    /// Returns a diagnostic report for `navi computer-use doctor` (ADR 0016 §7).
+    ///
+    /// Each line is prefixed with `[OK]`, `[FAIL]`, or `[WARN]`. The final
+    /// line is `Doctor: OK` or `Doctor: issues found`.
+    pub fn computer_use_doctor_report(&self) -> Vec<String> {
+        let config = self.computer_use_config();
+        let mut lines = Vec::new();
+        let mut ok = true;
+
+        // 1. Cargo feature
+        if config.feature_enabled {
+            lines.push("[OK] Cargo feature `computer-use` compiled in".to_string());
+        } else {
+            lines.push(
+                "[FAIL] Cargo feature `computer-use` not compiled in — rebuild with --features computer-use"
+                    .to_string(),
+            );
+            ok = false;
+        }
+
+        // 2. Platform backend
+        match config.platform.as_str() {
+            "windows" => {
+                lines.push("[OK] Platform backend: windows (UIA + SendInput + Win32)".to_string());
+            }
+            "macos" => {
+                lines.push("[OK] Platform backend: macos (AXUIElement + CGEvent)".to_string());
+                // macOS requires Accessibility permission for AXUIElement and
+                // CGEvent. Check via the platform backend.
+                #[cfg(target_os = "macos")]
+                {
+                    if navi_computer_use::is_accessibility_trusted_macos() {
+                        lines.push("[OK] macOS Accessibility permission: granted".to_string());
+                    } else {
+                        lines.push(
+                            "[FAIL] macOS Accessibility permission: NOT granted. \
+                             Grant it in System Settings → Privacy & Security → Accessibility."
+                                .to_string(),
+                        );
+                        ok = false;
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    lines.push(
+                        "[WARN] macOS Accessibility permission: cannot check (not running on macOS)"
+                            .to_string(),
+                    );
+                }
+            }
+            "linux" => {
+                lines.push("[OK] Platform backend: linux (AT-SPI2 + X11/XTest)".to_string());
+            }
+            "unsupported" => {
+                lines.push(
+                    "[FAIL] Platform backend: unsupported (no native backend for this OS)"
+                        .to_string(),
+                );
+                ok = false;
+            }
+            other => {
+                lines.push(format!("[WARN] Platform backend: unknown ({other})"));
+            }
+        }
+
+        // 3. Runtime gate
+        if config.enabled {
+            lines.push("[OK] Runtime gate `computer_use_enabled`: on".to_string());
+        } else {
+            lines.push(
+                "[WARN] Runtime gate `computer_use_enabled`: off — tools not registered. \
+                 Set [security] computer_use_enabled = true in config or use --computer-use"
+                    .to_string(),
+            );
+            ok = false;
+        }
+
+        // 4. Deny-list
+        let deny_count = config.deny_apps.len();
+        if deny_count > 0 {
+            lines.push(format!(
+                "[OK] Deny-list: {deny_count} entries configured (enforced in all modes except Yolo)"
+            ));
+        } else {
+            lines.push(
+                "[WARN] Deny-list: empty — no applications blocked from computer-use targeting"
+                    .to_string(),
+            );
+        }
+
+        // 5. Summary
+        if ok {
+            lines.push("Doctor: OK".to_string());
+        } else {
+            lines.push("Doctor: issues found".to_string());
+        }
+
+        lines
+    }
 }

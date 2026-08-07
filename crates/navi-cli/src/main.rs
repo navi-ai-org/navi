@@ -5,7 +5,7 @@ use navi_sdk::{
     NaviAcpServer, NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest,
 };
 use navi_tui::TuiApp;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod bench_cmd;
 mod browser_cmd;
@@ -146,6 +146,11 @@ enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
+    /// OS automation (computer use) tools — ADR 0016
+    ComputerUse {
+        #[command(subcommand)]
+        action: ComputerUseAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -163,6 +168,12 @@ pub enum SessionAction {
         #[arg(long)]
         no_redact: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ComputerUseAction {
+    /// Diagnose computer-use platform availability and configuration (ADR 0016 §7)
+    Doctor,
 }
 
 #[derive(Debug, Subcommand)]
@@ -665,6 +676,11 @@ async fn main() -> Result<()> {
         return session_cmd::handle_session_command(action, &loaded_config, &cwd);
     }
 
+    // Handle computer-use subcommand early (offline diagnostics, no provider needed)
+    if let Some(Commands::ComputerUse { action }) = cli.command {
+        return handle_computer_use_command(action, &cwd);
+    }
+
     if cli.print_log_path {
         println!("{}", log_path(&loaded_config.data_dir).display());
         return Ok(());
@@ -874,5 +890,27 @@ fn init_registry_store(loaded_config: &LoadedConfig) {
         let store = std::sync::Arc::new(store);
         navi_core::registry::load_registry(&store);
         navi_core::set_registry_store(store);
+    }
+}
+
+/// Handle `navi computer-use` subcommands (ADR 0016).
+fn handle_computer_use_command(action: ComputerUseAction, cwd: &Path) -> anyhow::Result<()> {
+    match action {
+        ComputerUseAction::Doctor => {
+            let engine = NaviEngineBuilder::from_project(cwd).build()?;
+            let lines = engine.computer_use_doctor_report();
+            for line in &lines {
+                println!("{line}");
+            }
+            // Exit non-zero if issues found (last line is the summary).
+            if lines
+                .last()
+                .map(|l| l.contains("issues found"))
+                .unwrap_or(false)
+            {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
     }
 }

@@ -1,7 +1,7 @@
 # ADR 0016 — Computer Use / OS Automation Tool Surface
 
 ## Status
-Proposed
+Accepted (Windows shipped — macOS/Linux pending per §7)
 
 ## Context
 NAVI agents operate inside the terminal today: files, shell, repo, headless browser
@@ -204,6 +204,39 @@ Negative:
   slice, raising the minimum cost of the first usable version
 - Screenshot redaction is best-effort: redaction can drop the image, but cannot scrub
   secrets already captured into the model's context
+
+## Implementation State
+
+### Shipped (Windows)
+- **Platform backend:** `navi-os-windows` — UIA accessibility tree, `SendInput`,
+  GDI screen capture, `EnumWindows` window enumeration.
+- **Facade:** `navi-computer-use` with `ComputerUseBackend` trait and
+  `UnsupportedBackend` stub for non-Windows platforms.
+- **Tools:** `capture_screen`, `enumerate_windows`, `inspect_element`,
+  `simulate_input` — all `Deferred` exposure, `simulate_input` is `Critical` risk.
+- **Security:** `SecurityRisk::UiAutomation` variant, per-mode approval matrix
+  (Restricted/AcceptEdits ask, Auto/Yolo auto-approve), deny-list with protected
+  defaults (password managers, banking, OS security, NAVI self-protection),
+  sensitive-field guard in Auto mode.
+- **Events:** `ScreenCaptured`, `WindowsEnumerated`, `UiElementInspected`,
+  `InputSimulated` (with `denied` reason).
+- **Redaction:** Screenshot paths and attachment IDs redacted in session JSON
+  when `redact_secrets_in_sessions` is on. `InputSimulated.denied` reason
+  strings passed through `redact_secrets`.
+- **TUI:** Dedicated `simulate_input` approval modal with human-readable action
+  descriptions (click/type/key/scroll) instead of raw JSON.
+- **Defaults:** `computer-use` cargo feature on by default; runtime gate
+  `computer_use_enabled` defaults to `true`.
+- **Surface sync:** navi-core → navi-sdk → navi-napi → navi-cli → navi-tui.
+
+### Pending
+- **macOS backend:** `navi-os-macos` (AXUIElement + CGEvent + CGWindowList).
+  Requires Accessibility permission; doctor check will report when missing.
+- **Linux backend:** `navi-os-linux` (AT-SPI2 + X11/XTest; Wayland best-effort).
+- **`annotate_screenshot` tool:** Overlay element bounding boxes on a screenshot
+  for visual correlation (in progress).
+- **`navi computer-use doctor` CLI subcommand:** Platform availability, runtime
+  gate status, deny-list configuration (in progress).
 
 ## References
 - ADR 0002 — Host Broker Capability Model (computer use is **not** broker-mediated;

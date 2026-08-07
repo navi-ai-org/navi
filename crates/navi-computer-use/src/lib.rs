@@ -5,7 +5,9 @@
 //!
 //! - **Windows** — backed by [`navi_os_windows`] (GDI capture, `EnumWindows`,
 //!   `SendInput`).
-//! - **macOS / Linux** — not yet implemented; [`platform_backend`] returns an
+//! - **macOS** — backed by [`navi_os_macos`] (`CGDisplayCreateImage`,
+//!   `CGWindowListCopyWindowInfo`, `AXUIElement`, `CGEvent`).
+//! - **Linux** — not yet implemented; [`platform_backend`] returns an
 //!   [`UnsupportedBackend`] that fails all operations with a clear message.
 //!
 //! Consumers (`navi-core`) depend on this crate only, never on a platform
@@ -136,7 +138,12 @@ pub fn platform_backend() -> Box<dyn ComputerUseBackend> {
         return Box::new(WindowsBackendAdapter);
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        return Box::new(MacosBackendAdapter);
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         return Box::new(UnsupportedBackend);
     }
@@ -249,6 +256,86 @@ fn convert_element(win: navi_os_windows::WinElementInfo) -> ElementInfo {
     }
 }
 
+// ── macOS adapter ──────────────────────────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+struct MacosBackendAdapter;
+
+#[cfg(target_os = "macos")]
+impl ComputerUseBackend for MacosBackendAdapter {
+    fn platform_name(&self) -> &'static str {
+        "macos"
+    }
+
+    fn capture_screen(&self, out_dir: &str, _opts: &CaptureOptions) -> Result<Screenshot> {
+        let mac = navi_os_macos::capture_screen(out_dir)?;
+        Ok(Screenshot {
+            path: mac.path,
+            width: mac.width,
+            height: mac.height,
+            size_bytes: mac.size_bytes,
+        })
+    }
+
+    fn enumerate_windows(&self) -> Result<Vec<WindowInfo>> {
+        let wins = navi_os_macos::enumerate_windows()?;
+        Ok(wins
+            .into_iter()
+            .map(|w| WindowInfo {
+                hwnd: w.hwnd,
+                title: w.title,
+                pid: w.pid,
+                rect: Rect {
+                    x: w.rect.x,
+                    y: w.rect.y,
+                    width: w.rect.width,
+                    height: w.rect.height,
+                },
+                is_focused: w.is_focused,
+                is_visible: w.is_visible,
+            })
+            .collect())
+    }
+
+    fn inspect_element(&self, opts: &InspectOptions) -> Result<ElementTree> {
+        let mac_opts = navi_os_macos::MacInspectOptions {
+            window: opts.window,
+            max_depth: opts.max_depth,
+        };
+        let tree = navi_os_macos::inspect_element(&mac_opts)?;
+        Ok(ElementTree {
+            root: convert_element_mac(tree.root),
+            supported: tree.supported,
+        })
+    }
+
+    fn simulate_input(&self, actions: &[serde_json::Value]) -> Result<InputResult> {
+        let res = navi_os_macos::simulate_input(actions)?;
+        Ok(InputResult {
+            actions_performed: res.actions_performed,
+        })
+    }
+}
+
+/// Converts the leaf crate's `MacElementInfo` into the facade's `ElementInfo`.
+#[cfg(target_os = "macos")]
+fn convert_element_mac(mac: navi_os_macos::MacElementInfo) -> ElementInfo {
+    ElementInfo {
+        name: mac.name,
+        control_type: mac.control_type,
+        value: mac.value,
+        rect: mac.rect.map(|r| Rect {
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+        }),
+        is_password: mac.is_password,
+        children: mac.children.into_iter().map(convert_element_mac).collect(),
+        children_truncated: mac.children_truncated,
+    }
+}
+
 // ── Target resolution (deny-list support, ADR 0016) ────────────────────────
 
 /// Resolved target app for the deny-list check.
@@ -272,7 +359,15 @@ pub fn resolve_target_for_point(x: i32, y: i32) -> Option<TargetApp> {
             window_title: t.window_title,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        navi_os_macos::resolve_target_for_point(x, y).map(|t| TargetApp {
+            pid: t.pid,
+            exe_name: t.exe_name,
+            window_title: t.window_title,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (x, y);
         None
@@ -289,7 +384,15 @@ pub fn resolve_target_foreground() -> Option<TargetApp> {
             window_title: t.window_title,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        navi_os_macos::resolve_target_foreground().map(|t| TargetApp {
+            pid: t.pid,
+            exe_name: t.exe_name,
+            window_title: t.window_title,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         None
     }
@@ -309,7 +412,26 @@ pub fn is_target_sensitive() -> bool {
     {
         is_target_sensitive_windows()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        is_target_sensitive_macos()
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        false
+    }
+}
+
+/// Returns `true` if the process has macOS Accessibility permission
+/// (`AXIsProcessTrusted()`). Returns `false` on non-macOS platforms.
+///
+/// Used by the `computer-use doctor` diagnostic check.
+pub fn is_accessibility_trusted_macos() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        navi_os_macos::is_accessibility_trusted()
+    }
+    #[cfg(not(target_os = "macos"))]
     {
         false
     }
@@ -345,4 +467,334 @@ fn find_password_with_focus(el: &navi_os_windows::WinElementInfo) -> bool {
         return true;
     }
     el.children.iter().any(find_password_with_focus)
+}
+
+#[cfg(target_os = "macos")]
+fn is_target_sensitive_macos() -> bool {
+    // Walk the focused UI element's accessibility tree (depth 0-2) and look
+    // for any element with `is_password == true`. Same conservative approach
+    // as the Windows implementation.
+    use navi_os_macos::{MacInspectOptions, inspect_element};
+
+    let opts = MacInspectOptions {
+        window: None, // foreground
+        max_depth: 2,
+    };
+    let tree = match inspect_element(&opts) {
+        Ok(t) => t,
+        Err(_) => return false, // fail open
+    };
+    find_password_with_focus_mac(&tree.root)
+}
+
+#[cfg(target_os = "macos")]
+fn find_password_with_focus_mac(el: &navi_os_macos::MacElementInfo) -> bool {
+    if el.is_password {
+        return true;
+    }
+    el.children.iter().any(find_password_with_focus_mac)
+}
+
+// ── Screenshot annotation (ADR 0016 §5) ─────────────────────────────────────
+
+/// Annotates a screenshot image with bounding-box overlays for each element
+/// in an [`ElementTree`]. The annotated image is returned as PNG bytes.
+///
+/// Each element with a `rect` gets a hollow rectangle drawn on the image:
+/// - **Red** for password fields (`is_password: true`)
+/// - **Green** for interactive elements (button, edit, checkbox, etc.)
+/// - **Blue** for containers (window, pane, group)
+/// - **Gray** for everything else
+///
+/// The model receives both the annotated image and the element tree JSON
+/// (with names, control types, and coordinates), so it can correlate visual
+/// boxes with semantic information by position.
+pub fn annotate_screenshot(image_bytes: &[u8], tree: &ElementTree) -> Result<Vec<u8>> {
+    let mut img = image::load_from_memory(image_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to decode screenshot: {e}"))?
+        .to_rgba8();
+
+    let mut stats = AnnotationStats::default();
+    annotate_elements(&mut img, &tree.root, &mut stats);
+
+    let mut png_bytes = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png_bytes),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to encode annotated PNG: {e}"))?;
+
+    tracing::info!(
+        annotated = stats.annotated,
+        skipped = stats.skipped,
+        password_fields = stats.password_fields,
+        "annotate_screenshot complete"
+    );
+
+    Ok(png_bytes)
+}
+
+#[derive(Default)]
+struct AnnotationStats {
+    annotated: usize,
+    skipped: usize,
+    password_fields: usize,
+}
+
+fn annotate_elements(img: &mut image::RgbaImage, el: &ElementInfo, stats: &mut AnnotationStats) {
+    if let Some(rect) = &el.rect {
+        let (w, h) = img.dimensions();
+        // Only draw rects that are at least partially within the image bounds.
+        if rect.width > 0
+            && rect.height > 0
+            && rect.x < w as i32
+            && rect.y < h as i32
+            && rect.x + rect.width > 0
+            && rect.y + rect.height > 0
+        {
+            let color = element_color(el);
+            let img_rect = imageproc::rect::Rect::at(rect.x, rect.y)
+                .of_size(rect.width as u32, rect.height as u32);
+            imageproc::drawing::draw_hollow_rect_mut(img, img_rect, color);
+
+            stats.annotated += 1;
+            if el.is_password {
+                stats.password_fields += 1;
+            }
+        } else {
+            stats.skipped += 1;
+        }
+    }
+
+    for child in &el.children {
+        annotate_elements(img, child, stats);
+    }
+}
+
+/// Returns the overlay color for an element based on its type and password flag.
+fn element_color(el: &ElementInfo) -> image::Rgba<u8> {
+    if el.is_password {
+        return image::Rgba([255, 0, 0, 255]); // red
+    }
+    match el.control_type.to_lowercase().as_str() {
+        "button" | "edit" | "checkbox" | "radio button" | "combobox" | "list" | "list item"
+        | "menu item" | "tab item" | "hyperlink" | "slider" | "spinner" | "text" | "document"
+        | "custom" => {
+            image::Rgba([0, 255, 0, 255]) // green — interactive
+        }
+        "window" | "pane" | "group" | "toolbar" | "menubar" | "tab" | "tree" | "tree item"
+        | "statusbar" | "titlebar" => {
+            image::Rgba([0, 120, 255, 255]) // blue — container
+        }
+        _ => image::Rgba([160, 160, 160, 255]), // gray — other
+    }
+}
+
+#[cfg(test)]
+mod annotate_tests {
+    use super::*;
+
+    fn make_rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
+        Rect {
+            x,
+            y,
+            width: w,
+            height: h,
+        }
+    }
+
+    fn make_element(
+        name: &str,
+        control_type: &str,
+        rect: Option<Rect>,
+        is_password: bool,
+        children: Vec<ElementInfo>,
+    ) -> ElementInfo {
+        ElementInfo {
+            name: name.to_string(),
+            control_type: control_type.to_string(),
+            value: None,
+            rect,
+            is_password,
+            children,
+            children_truncated: false,
+        }
+    }
+
+    fn make_test_png(w: u32, h: u32) -> Vec<u8> {
+        let img = image::RgbaImage::new(w, h);
+        let mut bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("encode png");
+        bytes
+    }
+
+    #[test]
+    fn annotate_draws_boxes_for_elements_within_bounds() {
+        let png = make_test_png(200, 200);
+        let tree = ElementTree {
+            root: make_element(
+                "Window",
+                "window",
+                Some(make_rect(0, 0, 200, 200)),
+                false,
+                vec![
+                    make_element(
+                        "OK",
+                        "button",
+                        Some(make_rect(50, 150, 80, 30)),
+                        false,
+                        vec![],
+                    ),
+                    make_element(
+                        "Password",
+                        "edit",
+                        Some(make_rect(50, 50, 100, 25)),
+                        true,
+                        vec![],
+                    ),
+                ],
+            ),
+            supported: true,
+        };
+
+        let result = annotate_screenshot(&png, &tree).expect("annotate");
+        assert!(!result.is_empty());
+
+        // Verify it's a valid PNG.
+        let decoded = image::load_from_memory(&result).expect("decode annotated png");
+        assert_eq!(decoded.width(), 200);
+        assert_eq!(decoded.height(), 200);
+    }
+
+    #[test]
+    fn annotate_skips_elements_outside_image_bounds() {
+        let png = make_test_png(100, 100);
+        let tree = ElementTree {
+            root: make_element(
+                "Root",
+                "window",
+                Some(make_rect(0, 0, 100, 100)),
+                false,
+                vec![
+                    // This element is entirely outside the image.
+                    make_element(
+                        "Outside",
+                        "button",
+                        Some(make_rect(200, 200, 50, 50)),
+                        false,
+                        vec![],
+                    ),
+                    // This element has zero dimensions.
+                    make_element(
+                        "Zero",
+                        "button",
+                        Some(make_rect(50, 50, 0, 0)),
+                        false,
+                        vec![],
+                    ),
+                ],
+            ),
+            supported: true,
+        };
+
+        // Should not fail — just skips out-of-bounds elements.
+        let result = annotate_screenshot(&png, &tree).expect("annotate");
+        let decoded = image::load_from_memory(&result).expect("decode");
+        assert_eq!(decoded.width(), 100);
+    }
+
+    #[test]
+    fn annotate_handles_elements_with_no_rect() {
+        let png = make_test_png(100, 100);
+        let tree = ElementTree {
+            root: make_element(
+                "Root",
+                "window",
+                None, // no rect
+                false,
+                vec![make_element("Child", "button", None, false, vec![])],
+            ),
+            supported: true,
+        };
+
+        let result = annotate_screenshot(&png, &tree).expect("annotate");
+        let decoded = image::load_from_memory(&result).expect("decode");
+        assert_eq!(decoded.width(), 100);
+    }
+
+    #[test]
+    fn annotate_preserves_image_dimensions() {
+        let png = make_test_png(640, 480);
+        let tree = ElementTree {
+            root: make_element(
+                "Root",
+                "window",
+                Some(make_rect(0, 0, 640, 480)),
+                false,
+                vec![],
+            ),
+            supported: true,
+        };
+
+        let result = annotate_screenshot(&png, &tree).expect("annotate");
+        let decoded = image::load_from_memory(&result).expect("decode");
+        assert_eq!(decoded.width(), 640);
+        assert_eq!(decoded.height(), 480);
+    }
+
+    #[test]
+    fn element_color_password_is_red() {
+        let el = make_element("pw", "edit", None, true, vec![]);
+        assert_eq!(element_color(&el), image::Rgba([255, 0, 0, 255]));
+    }
+
+    #[test]
+    fn element_color_button_is_green() {
+        let el = make_element("OK", "button", None, false, vec![]);
+        assert_eq!(element_color(&el), image::Rgba([0, 255, 0, 255]));
+    }
+
+    #[test]
+    fn element_color_window_is_blue() {
+        let el = make_element("Main", "window", None, false, vec![]);
+        assert_eq!(element_color(&el), image::Rgba([0, 120, 255, 255]));
+    }
+
+    #[test]
+    fn element_color_unknown_is_gray() {
+        let el = make_element("x", "tooltip", None, false, vec![]);
+        assert_eq!(element_color(&el), image::Rgba([160, 160, 160, 255]));
+    }
+
+    #[test]
+    fn annotate_works_with_bmp_input() {
+        // capture_screen produces BMP, so verify BMP input works too.
+        let img = image::RgbaImage::new(100, 100);
+        let mut bmp_bytes = Vec::new();
+        img.write_to(
+            &mut std::io::Cursor::new(&mut bmp_bytes),
+            image::ImageFormat::Bmp,
+        )
+        .expect("encode bmp");
+
+        let tree = ElementTree {
+            root: make_element(
+                "Root",
+                "window",
+                Some(make_rect(10, 10, 50, 50)),
+                false,
+                vec![],
+            ),
+            supported: true,
+        };
+
+        let result = annotate_screenshot(&bmp_bytes, &tree).expect("annotate");
+        let decoded = image::load_from_memory(&result).expect("decode");
+        assert_eq!(decoded.width(), 100);
+        assert_eq!(decoded.height(), 100);
+    }
 }
