@@ -643,7 +643,9 @@ fn is_target_sensitive_macos() -> bool {
 
     let opts = MacInspectOptions {
         window: None, // foreground
+        element_id: None,
         max_depth: 2,
+        raw_view: false,
     };
     let tree = match inspect_element(&opts) {
         Ok(t) => t,
