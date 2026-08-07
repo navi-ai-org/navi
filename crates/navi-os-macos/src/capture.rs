@@ -36,7 +36,7 @@ pub fn capture_screen(out_dir: &str) -> Result<MacScreenshot> {
         let row_start = y * bytes_per_row;
         for x in 0..width as usize {
             let offset = row_start + x * expected_bpp;
-            if offset + 4 <= raw_data.len() {
+            if offset + 4 <= raw_data.len() as usize {
                 // CGImage uses BGRA on macOS; convert to RGBA for the image crate.
                 let b = raw_data[offset];
                 let g = raw_data[offset + 1];

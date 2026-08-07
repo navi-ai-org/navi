@@ -30,7 +30,7 @@ pub fn enumerate_windows() -> Result<Vec<MacWindowInfo>> {
     let mut result = Vec::with_capacity(count);
 
     for i in 0..count {
-        let val = match array.get(i) {
+        let val = match array.get(i as isize) {
             Some(v) => v,
             None => continue,
         };
