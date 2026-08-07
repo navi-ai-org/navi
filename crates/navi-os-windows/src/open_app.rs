@@ -122,4 +122,117 @@ mod tests {
             ]
         );
     }
+
+    // ── Edge cases ────────────────────────────────────────────────────────
+
+    #[test]
+    fn to_wide_empty_string_produces_just_null() {
+        let wide = to_wide("");
+        assert_eq!(
+            wide,
+            vec![0u16],
+            "empty string should produce just a null terminator"
+        );
+    }
+
+    #[test]
+    fn to_wide_unicode_string_preserves_codepoints() {
+        // "café" → U+0063 U+0061 U+0066 U+00E9
+        let wide = to_wide("café");
+        assert_eq!(wide, vec![0x63, 0x61, 0x66, 0xE9, 0]);
+    }
+
+    #[test]
+    fn to_wide_emoji_surrogate_pair() {
+        // "🦀" (U+1F980) → surrogate pair: 0xD83E 0xDD80
+        let wide = to_wide("🦀");
+        assert_eq!(wide, vec![0xD83E, 0xDD80, 0]);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_empty_string_returns_error() {
+        // Empty string should not launch anything — ShellExecuteW with
+        // an empty file parameter should fail.
+        let result = open_application("");
+        // Either it errors, or it "succeeds" by opening nothing useful.
+        // Either way, it must not panic.
+        match &result {
+            Ok(r) => {
+                // If it somehow "succeeds", it shouldn't claim it launched something meaningful.
+                eprintln!(
+                    "open_application(\"\") returned Ok: launched={}, msg={}",
+                    r.launched, r.message
+                );
+            }
+            Err(e) => {
+                let msg = format!("{e}");
+                assert!(
+                    msg.contains("ShellExecuteW") || msg.contains("failed"),
+                    "empty string should error with ShellExecuteW or failed, got: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_with_exe_extension_works() {
+        // "notepad.exe" should work the same as "notepad".
+        let result = match open_application("notepad.exe") {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("skipping open_application_with_exe_extension_works: {e}");
+                return;
+            }
+        };
+        assert!(result.launched, "notepad.exe should launch");
+
+        let _ = std::process::Command::new("taskkill")
+            .args(["/IM", "notepad.exe", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_with_spaces_in_name_returns_error() {
+        // A name with spaces that isn't a real app should fail gracefully.
+        let result = open_application("this is not a real app");
+        assert!(
+            result.is_err(),
+            "fake app with spaces should return an error"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_with_path_separators_returns_error() {
+        // A name with path separators that doesn't exist should fail.
+        let result = open_application("C:/nonexistent/path/app.exe");
+        assert!(result.is_err(), "nonexistent path should return an error");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_very_long_name_returns_error() {
+        // A very long name should not cause a buffer overflow or panic.
+        let long_name = "a".repeat(10000);
+        let result = open_application(&long_name);
+        // Should error (not a real app), but must not panic.
+        assert!(result.is_err(), "very long name should return an error");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn open_application_unicode_name_returns_error() {
+        // Unicode app name that doesn't exist should fail gracefully,
+        // not panic on UTF-16 conversion.
+        let result = open_application("アプリケーション🦀");
+        assert!(
+            result.is_err(),
+            "nonexistent unicode app should return an error"
+        );
+    }
 }

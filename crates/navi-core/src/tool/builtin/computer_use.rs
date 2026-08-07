@@ -755,6 +755,10 @@ impl SimulateInputTool {
     /// Resolves `element_id` in a mouse action to x/y coordinates using the
     /// element cache. Returns a new actions Vec with resolved coordinates.
     /// If an element_id is not found in the cache, returns an error message.
+    ///
+    /// Only mouse actions (click, mouse_move, scroll, drag) resolve
+    /// element_id to coordinates. Keyboard actions (type, key, key_down,
+    /// key_up) ignore element_id — it has no meaning for them.
     fn resolve_element_ids(&self, actions: &[Value]) -> std::result::Result<Vec<Value>, String> {
         let cache = self
             .element_cache
@@ -762,25 +766,34 @@ impl SimulateInputTool {
             .map_err(|e| format!("element cache lock failed: {e}"))?;
         let mut resolved = Vec::with_capacity(actions.len());
         for action in actions {
-            if let Some(element_id) = action.get("element_id").and_then(Value::as_str) {
-                let rect = cache.get(element_id).ok_or_else(|| {
-                    format!(
-                        "element_id '{element_id}' not found in cache. \
-                         The element may have moved or been destroyed. \
-                         Re-run inspect_desktop to refresh the element cache."
-                    )
-                })?;
-                let center_x = rect.x + rect.width / 2;
-                let center_y = rect.y + rect.height / 2;
-                let mut new_action = action.clone();
-                if let Some(obj) = new_action.as_object_mut() {
-                    obj.insert("x".to_string(), json!(center_x));
-                    obj.insert("y".to_string(), json!(center_y));
+            // Only resolve element_id for mouse actions.
+            let is_mouse = action
+                .get("action")
+                .and_then(Value::as_str)
+                .map(|a| matches!(a, "click" | "mouse_move" | "scroll" | "drag"))
+                .unwrap_or(false);
+
+            if is_mouse {
+                if let Some(element_id) = action.get("element_id").and_then(Value::as_str) {
+                    let rect = cache.get(element_id).ok_or_else(|| {
+                        format!(
+                            "element_id '{element_id}' not found in cache. \
+                             The element may have moved or been destroyed. \
+                             Re-run inspect_desktop to refresh the element cache."
+                        )
+                    })?;
+                    let center_x = rect.x + rect.width / 2;
+                    let center_y = rect.y + rect.height / 2;
+                    let mut new_action = action.clone();
+                    if let Some(obj) = new_action.as_object_mut() {
+                        obj.insert("x".to_string(), json!(center_x));
+                        obj.insert("y".to_string(), json!(center_y));
+                    }
+                    resolved.push(new_action);
+                    continue;
                 }
-                resolved.push(new_action);
-            } else {
-                resolved.push(action.clone());
             }
+            resolved.push(action.clone());
         }
         Ok(resolved)
     }
@@ -1229,6 +1242,338 @@ mod tests {
         let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
         assert_eq!(resolved[0]["x"], 200);
         assert_eq!(resolved[0]["y"], 300);
+    }
+
+    // ── Edge cases: simulate_input resolve_element_ids ────────────────────
+
+    #[test]
+    fn simulate_input_empty_actions_returns_empty_vec() {
+        // Empty actions array should resolve to empty vec, not error.
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            test_cache(),
+        );
+        let resolved = tool.resolve_element_ids(&[]).expect("empty should resolve");
+        assert!(resolved.is_empty(), "empty actions should return empty vec");
+    }
+
+    #[test]
+    fn simulate_input_element_id_on_non_mouse_action_is_ignored() {
+        // element_id on a keyboard action (e.g. "key") should be ignored —
+        // only mouse actions (click, mouse_move, scroll, drag) use coordinates.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 10,
+                    y: 20,
+                    width: 100,
+                    height: 50,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        // A "type" action with element_id — element_id should be ignored,
+        // no x/y should be added.
+        let actions = vec![json!({"action": "type", "text": "hello", "element_id": "w0.e1"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["action"], "type");
+        assert_eq!(resolved[0]["text"], "hello");
+        // element_id should be preserved (we don't strip it), but no x/y added.
+        assert!(
+            resolved[0].get("x").is_none(),
+            "type action should not get x/y"
+        );
+        assert!(
+            resolved[0].get("y").is_none(),
+            "type action should not get x/y"
+        );
+    }
+
+    #[test]
+    fn simulate_input_multiple_element_ids_same_action() {
+        // Multiple actions each with different element_ids should all resolve.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                },
+            );
+            c.insert(
+                "w0.e2".to_string(),
+                navi_computer_use::Rect {
+                    x: 200,
+                    y: 200,
+                    width: 100,
+                    height: 100,
+                },
+            );
+            c.insert(
+                "w1.e0".to_string(),
+                navi_computer_use::Rect {
+                    x: 500,
+                    y: 500,
+                    width: 50,
+                    height: 50,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![
+            json!({"action": "click", "element_id": "w0.e1"}),
+            json!({"action": "mouse_move", "element_id": "w0.e2"}),
+            json!({"action": "click", "element_id": "w1.e0"}),
+        ];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], 50); // w0.e1 center
+        assert_eq!(resolved[0]["y"], 50);
+        assert_eq!(resolved[1]["x"], 250); // w0.e2 center
+        assert_eq!(resolved[1]["y"], 250);
+        assert_eq!(resolved[2]["x"], 525); // w1.e0 center
+        assert_eq!(resolved[2]["y"], 525);
+    }
+
+    #[test]
+    fn simulate_input_element_id_overrides_explicit_coordinates() {
+        // If both element_id AND x/y are present, element_id should win
+        // (the resolved coordinates from the cache override the explicit ones).
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 100,
+                    y: 100,
+                    width: 50,
+                    height: 50,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![json!({
+            "action": "click",
+            "element_id": "w0.e1",
+            "x": 999,
+            "y": 999
+        })];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        // The resolved center (125, 125) should override the explicit (999, 999).
+        assert_eq!(
+            resolved[0]["x"], 125,
+            "element_id should override explicit x"
+        );
+        assert_eq!(
+            resolved[0]["y"], 125,
+            "element_id should override explicit y"
+        );
+    }
+
+    #[test]
+    fn simulate_input_element_id_with_negative_rect() {
+        // Elements on multi-monitor setups can have negative x/y coordinates.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: -200,
+                    y: -100,
+                    width: 100,
+                    height: 50,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![json!({"action": "click", "element_id": "w0.e1"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], -150); // -200 + 100/2
+        assert_eq!(resolved[0]["y"], -75); // -100 + 50/2
+    }
+
+    #[test]
+    fn simulate_input_element_id_with_very_large_rect() {
+        // 4K monitor coordinates — should handle large values without overflow.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 3840,
+                    y: 2160,
+                    width: 1920,
+                    height: 1080,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![json!({"action": "click", "element_id": "w0.e1"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], 4800); // 3840 + 1920/2
+        assert_eq!(resolved[0]["y"], 2700); // 2160 + 1080/2
+    }
+
+    #[test]
+    fn simulate_input_cache_with_1000_entries_resolves_correctly() {
+        // Large cache should not cause performance issues or incorrect lookups.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            for i in 0..1000 {
+                c.insert(
+                    format!("w0.e{i}"),
+                    navi_computer_use::Rect {
+                        x: i as i32,
+                        y: i as i32,
+                        width: 10,
+                        height: 10,
+                    },
+                );
+            }
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        // Resolve element_id "w0.e500" — should find it among 1000 entries.
+        let actions = vec![json!({"action": "click", "element_id": "w0.e500"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], 505); // 500 + 10/2
+        assert_eq!(resolved[0]["y"], 505);
+    }
+
+    #[test]
+    fn simulate_input_empty_element_id_string_returns_error() {
+        // An empty string element_id should not be treated as "no element_id".
+        // It should fail with "not found in cache" (empty string is not a valid key).
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            test_cache(),
+        );
+        let actions = vec![json!({"action": "click", "element_id": ""})];
+        let result = tool.resolve_element_ids(&actions);
+        assert!(result.is_err(), "empty element_id should error");
+    }
+
+    #[test]
+    fn simulate_input_all_mouse_action_types_resolve_element_id() {
+        // All mouse action types (click, mouse_move, scroll, drag) should
+        // resolve element_id to coordinates.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![
+            json!({"action": "click", "element_id": "w0.e1"}),
+            json!({"action": "mouse_move", "element_id": "w0.e1"}),
+            json!({"action": "scroll", "element_id": "w0.e1", "direction": "down"}),
+            json!({"action": "drag", "element_id": "w0.e1", "target_x": 200, "target_y": 200}),
+        ];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        for (i, expected_action) in ["click", "mouse_move", "scroll", "drag"].iter().enumerate() {
+            assert_eq!(
+                resolved[i]["action"], *expected_action,
+                "action {i} should be {expected_action}"
+            );
+            assert_eq!(resolved[i]["x"], 50, "action {i} should have resolved x=50");
+            assert_eq!(resolved[i]["y"], 50, "action {i} should have resolved y=50");
+        }
+    }
+
+    #[test]
+    fn simulate_input_partial_failure_all_actions_after_error_rejected() {
+        // If one action has an invalid element_id, the entire batch should
+        // fail (resolve_element_ids returns Err) — we don't want to execute
+        // a partial batch of mouse actions.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![
+            json!({"action": "click", "element_id": "w0.e1"}), // valid
+            json!({"action": "click", "element_id": "w0.e999"}), // invalid
+            json!({"action": "click", "element_id": "w0.e1"}), // valid
+        ];
+        let result = tool.resolve_element_ids(&actions);
+        assert!(
+            result.is_err(),
+            "batch with one invalid element_id should fail entirely"
+        );
+        assert!(
+            result.unwrap_err().contains("not found in cache"),
+            "error should mention 'not found in cache'"
+        );
     }
 
     #[tokio::test]
