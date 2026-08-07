@@ -4,12 +4,12 @@
 //! focus state. No special permission required for window metadata
 //! (titles may be empty without Screen Recording permission).
 
-use anyhow::{Result, anyhow};
-use core_foundation::base::{CFRelease, TCFType};
+use anyhow::Result;
+use core_foundation::base::TCFType;
 use core_foundation::dictionary::CFDictionary;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
-use core_graphics::display::{CGDisplay, kCGNullWindowID, kCGWindowListOptionOnScreenOnly};
+use core_graphics::display::{kCGNullWindowID, kCGWindowListOptionOnScreenOnly};
 
 use crate::{MacRect, MacWindowInfo};
 
@@ -17,42 +17,24 @@ use crate::{MacRect, MacWindowInfo};
 ///
 /// Returns windows sorted: focused first, then by title (case-insensitive).
 pub fn enumerate_windows() -> Result<Vec<MacWindowInfo>> {
-    let display = CGDisplay::main();
-    let _ = display; // ensure core-graphics is initialized
+    // Use the high-level copy_window_info helper from core-graphics.
+    let array =
+        core_graphics::window::copy_window_info(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
 
-    // CGWindowListCopyWindowInfo returns CFArray<CFDictionary>.
-    let windows = core_graphics::display::CGDisplay::online_displays()
-        .map_err(|e| anyhow!("failed to get online displays: {e:?}"))?;
-
-    // Use the CGWindowList API directly via core-graphics.
-    let window_infos = core_graphics::display::CGDisplay::display_ids()
-        .map_err(|e| anyhow!("failed to get display IDs: {e:?}"))?;
-
-    // Actually, core-graphics crate provides a higher-level API.
-    // Let's use the CGWindowListCopyWindowInfo via the display module.
-    let _ = window_infos;
-    let _ = windows;
-
-    // Use the raw CGWindowListCopyWindowInfo function.
-    let array = unsafe {
-        core_graphics::sys::CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly,
-            kCGNullWindowID,
-        )
+    let array = match array {
+        Some(a) => a,
+        None => return Ok(Vec::new()),
     };
 
-    if array.is_null() {
-        return Ok(Vec::new());
-    }
-
-    let count = unsafe { core_foundation::array::CFArrayGetCount(array as _) };
-    let mut result = Vec::with_capacity(count as usize);
+    let count = array.len();
+    let mut result = Vec::with_capacity(count);
 
     for i in 0..count {
-        let dict_ref = unsafe {
-            core_foundation::array::CFArrayGetValueAtIndex(array as _, i)
-                as core_graphics::sys::CFDictionaryRef
-        };
+        let val = array.get(i);
+        if val.is_null() {
+            continue;
+        }
+        let dict_ref = val as core_graphics::display::CFDictionaryRef;
         if dict_ref.is_null() {
             continue;
         }
@@ -61,8 +43,6 @@ pub fn enumerate_windows() -> Result<Vec<MacWindowInfo>> {
             result.push(info);
         }
     }
-
-    unsafe { CFRelease(array as _) };
 
     // Sort: focused first, then by title (case-insensitive).
     result.sort_by(|a, b| {

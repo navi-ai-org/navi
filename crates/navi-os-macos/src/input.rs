@@ -66,7 +66,7 @@ unsafe fn do_mouse_move(action: &Value) -> Result<()> {
 
     let event = core_graphics::event::CGEvent::new_mouse_event(
         core_graphics::event::CGEventSource::new(
-            core_graphics::event_source_state_id::CGEventSourceStateHIDSystemState,
+            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
         )
         .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?,
         core_graphics::event::CGEventType::MouseMoved,
@@ -113,7 +113,7 @@ unsafe fn do_click(action: &Value, double: bool) -> Result<()> {
     };
 
     let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source_state_id::CGEventSourceStateHIDSystemState,
+        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
     )
     .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
@@ -176,7 +176,7 @@ unsafe fn do_scroll(action: &Value) -> Result<()> {
     let y = action.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
     let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source_state_id::CGEventSourceStateHIDSystemState,
+        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
     )
     .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
@@ -193,7 +193,7 @@ unsafe fn do_scroll(action: &Value) -> Result<()> {
     // Create scroll event.
     let scroll_event = core_graphics::event::CGEvent::new_scroll_event(
         source,
-        core_graphics::event::ScrollPhase::Single,
+        core_graphics::event::ScrollEventUnit::LINE,
         1,            // wheel count
         delta as i32, // vertical delta
         0,            // horizontal delta
@@ -214,7 +214,7 @@ unsafe fn do_key(action: &Value, down: bool, up: bool) -> Result<()> {
     let keycode = map_key_to_keycode(key).ok_or_else(|| anyhow!("unknown key: {key}"))?;
 
     let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source_state_id::CGEventSourceStateHIDSystemState,
+        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
     )
     .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
@@ -241,7 +241,7 @@ unsafe fn do_type(action: &Value) -> Result<()> {
         .ok_or_else(|| anyhow!("type: missing 'text'"))?;
 
     let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source_state_id::CGEventSourceStateHIDSystemState,
+        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
     )
     .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 

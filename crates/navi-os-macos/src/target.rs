@@ -61,7 +61,7 @@ fn resolve_exe_name(pid: u32) -> Option<String> {
     use std::ffi::CStr;
     use std::os::raw::c_char;
 
-    extern "C" {
+    unsafe extern "C" {
         fn proc_pidpath(pid: i32, buffer: *mut c_char, buffersize: u32) -> i32;
     }
 
