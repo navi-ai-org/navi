@@ -1875,4 +1875,387 @@ mod tests {
         // Empty → false.
         assert!(!tool.actions_target_keyboard(&[]));
     }
+
+    // ── Helper function tests ─────────────────────────────────────────────
+
+    fn make_element(
+        id: Option<&str>,
+        name: &str,
+        control_type: &str,
+        rect: Option<navi_computer_use::Rect>,
+        is_password: bool,
+        children: Vec<navi_computer_use::ElementInfo>,
+    ) -> navi_computer_use::ElementInfo {
+        navi_computer_use::ElementInfo {
+            element_id: id.map(String::from),
+            name: name.to_string(),
+            control_type: control_type.to_string(),
+            value: None,
+            rect,
+            is_password,
+            children,
+            children_truncated: false,
+        }
+    }
+
+    #[test]
+    fn count_elements_single_node() {
+        let el = make_element(None, "root", "Window", None, false, vec![]);
+        assert_eq!(count_elements(&el), 1);
+    }
+
+    #[test]
+    fn count_elements_with_children() {
+        let child1 = make_element(Some("w0.e1"), "btn", "Button", None, false, vec![]);
+        let child2 = make_element(Some("w0.e2"), "input", "Edit", None, false, vec![]);
+        let root = make_element(None, "root", "Window", None, false, vec![child1, child2]);
+        assert_eq!(count_elements(&root), 3);
+    }
+
+    #[test]
+    fn count_elements_deep_tree() {
+        // root → child → grandchild
+        let grandchild = make_element(Some("w0.e2"), "label", "Text", None, false, vec![]);
+        let child = make_element(
+            Some("w0.e1"),
+            "panel",
+            "Pane",
+            None,
+            false,
+            vec![grandchild],
+        );
+        let root = make_element(None, "root", "Window", None, false, vec![child]);
+        assert_eq!(count_elements(&root), 3);
+    }
+
+    #[test]
+    fn count_passwords_no_passwords() {
+        let child = make_element(Some("w0.e1"), "btn", "Button", None, false, vec![]);
+        let root = make_element(None, "root", "Window", None, false, vec![child]);
+        assert_eq!(count_passwords(&root), 0);
+    }
+
+    #[test]
+    fn count_passwords_with_password_fields() {
+        let pw1 = make_element(Some("w0.e1"), "pwd", "Edit", None, true, vec![]);
+        let pw2 = make_element(Some("w0.e2"), "pwd2", "Edit", None, true, vec![]);
+        let btn = make_element(Some("w0.e3"), "submit", "Button", None, false, vec![]);
+        let root = make_element(None, "root", "Window", None, false, vec![pw1, pw2, btn]);
+        assert_eq!(count_passwords(&root), 2);
+    }
+
+    #[test]
+    fn count_passwords_nested() {
+        let pw = make_element(Some("w0.e2"), "pwd", "Edit", None, true, vec![]);
+        let panel = make_element(Some("w0.e1"), "panel", "Pane", None, false, vec![pw]);
+        let root = make_element(None, "root", "Window", None, false, vec![panel]);
+        assert_eq!(count_passwords(&root), 1);
+    }
+
+    #[test]
+    fn collect_element_rects_populates_cache() {
+        let mut map = std::collections::HashMap::new();
+        let rect1 = navi_computer_use::Rect {
+            x: 10,
+            y: 20,
+            width: 100,
+            height: 50,
+        };
+        let rect2 = navi_computer_use::Rect {
+            x: 200,
+            y: 300,
+            width: 50,
+            height: 30,
+        };
+        let child1 = make_element(
+            Some("w0.e1"),
+            "btn",
+            "Button",
+            Some(rect1.clone()),
+            false,
+            vec![],
+        );
+        let child2 = make_element(
+            Some("w0.e2"),
+            "input",
+            "Edit",
+            Some(rect2.clone()),
+            false,
+            vec![],
+        );
+        let root = make_element(None, "root", "Window", None, false, vec![child1, child2]);
+        collect_element_rects(&root, &mut map);
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("w0.e1"), Some(&rect1));
+        assert_eq!(map.get("w0.e2"), Some(&rect2));
+    }
+
+    #[test]
+    fn collect_element_rects_skips_elements_without_id_or_rect() {
+        let mut map = std::collections::HashMap::new();
+        // No element_id → skip
+        let no_id = make_element(
+            None,
+            "btn",
+            "Button",
+            Some(navi_computer_use::Rect {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+            }),
+            false,
+            vec![],
+        );
+        // No rect → skip
+        let no_rect = make_element(Some("w0.e1"), "btn2", "Button", None, false, vec![]);
+        // Both present → insert
+        let with_both = make_element(
+            Some("w0.e2"),
+            "btn3",
+            "Button",
+            Some(navi_computer_use::Rect {
+                x: 5,
+                y: 5,
+                width: 20,
+                height: 20,
+            }),
+            false,
+            vec![],
+        );
+        let root = make_element(
+            None,
+            "root",
+            "Window",
+            None,
+            false,
+            vec![no_id, no_rect, with_both],
+        );
+        collect_element_rects(&root, &mut map);
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("w0.e2"));
+    }
+
+    #[test]
+    fn collect_element_rects_deep_tree() {
+        let mut map = std::collections::HashMap::new();
+        let grandchild = make_element(
+            Some("w0.e2"),
+            "label",
+            "Text",
+            Some(navi_computer_use::Rect {
+                x: 30,
+                y: 40,
+                width: 10,
+                height: 10,
+            }),
+            false,
+            vec![],
+        );
+        let child = make_element(
+            Some("w0.e1"),
+            "panel",
+            "Pane",
+            Some(navi_computer_use::Rect {
+                x: 10,
+                y: 20,
+                width: 100,
+                height: 50,
+            }),
+            false,
+            vec![grandchild],
+        );
+        let root = make_element(None, "root", "Window", None, false, vec![child]);
+        collect_element_rects(&root, &mut map);
+        assert_eq!(map.len(), 2);
+        assert!(map.contains_key("w0.e1"));
+        assert!(map.contains_key("w0.e2"));
+    }
+
+    #[test]
+    fn element_to_json_serializes_all_fields() {
+        let el = make_element(
+            Some("w0.e1"),
+            "OK",
+            "Button",
+            Some(navi_computer_use::Rect {
+                x: 10,
+                y: 20,
+                width: 100,
+                height: 50,
+            }),
+            false,
+            vec![],
+        );
+        let json = element_to_json(&el);
+        assert_eq!(json["element_id"], "w0.e1");
+        assert_eq!(json["name"], "OK");
+        assert_eq!(json["control_type"], "Button");
+        assert_eq!(json["is_password"], false);
+        assert_eq!(json["children_truncated"], false);
+        assert_eq!(json["rect"]["x"], 10);
+        assert_eq!(json["rect"]["y"], 20);
+        assert_eq!(json["rect"]["width"], 100);
+        assert_eq!(json["rect"]["height"], 50);
+    }
+
+    #[test]
+    fn element_to_json_null_rect_when_missing() {
+        let el = make_element(Some("w0.e1"), "btn", "Button", None, false, vec![]);
+        let json = element_to_json(&el);
+        assert!(json["rect"].is_null(), "rect should be null when missing");
+    }
+
+    #[test]
+    fn element_to_json_null_element_id_when_missing() {
+        let el = make_element(None, "root", "Window", None, false, vec![]);
+        let json = element_to_json(&el);
+        assert!(
+            json["element_id"].is_null(),
+            "element_id should be null when missing"
+        );
+    }
+
+    #[test]
+    fn element_to_json_includes_children() {
+        let child = make_element(Some("w0.e1"), "child", "Button", None, false, vec![]);
+        let root = make_element(None, "root", "Window", None, false, vec![child]);
+        let json = element_to_json(&root);
+        assert!(json["children"].is_array());
+        assert_eq!(json["children"].as_array().unwrap().len(), 1);
+        assert_eq!(json["children"][0]["name"], "child");
+    }
+
+    #[test]
+    fn element_to_json_password_flag() {
+        let el = make_element(Some("w0.e1"), "pwd", "Edit", None, true, vec![]);
+        let json = element_to_json(&el);
+        assert_eq!(json["is_password"], true);
+    }
+
+    // ── OpenApplicationTool edge cases ────────────────────────────────────
+
+    #[test]
+    fn open_application_definition_has_correct_namespace() {
+        let tool = OpenApplicationTool::new();
+        let def = tool.definition();
+        assert_eq!(def.metadata.namespace, "computer-use");
+    }
+
+    #[test]
+    fn open_application_definition_is_not_read_only() {
+        let tool = OpenApplicationTool::new();
+        let def = tool.definition();
+        assert!(
+            !def.metadata.is_read_only,
+            "open_application should not be read-only"
+        );
+    }
+
+    // ── InspectDesktopTool / InspectElementTool metadata ──────────────────
+
+    #[test]
+    fn inspect_desktop_definition_has_correct_namespace() {
+        let tool = InspectDesktopTool::new(test_cache());
+        let def = tool.definition();
+        assert_eq!(def.metadata.namespace, "computer-use");
+    }
+
+    #[test]
+    fn inspect_element_definition_has_correct_namespace() {
+        let tool = InspectElementTool::new(test_cache());
+        let def = tool.definition();
+        assert_eq!(def.metadata.namespace, "computer-use");
+    }
+
+    #[test]
+    fn inspect_desktop_definition_is_read_only() {
+        let tool = InspectDesktopTool::new(test_cache());
+        let def = tool.definition();
+        assert!(
+            def.metadata.is_read_only,
+            "inspect_desktop should be read-only"
+        );
+    }
+
+    #[test]
+    fn inspect_element_definition_is_read_only() {
+        let tool = InspectElementTool::new(test_cache());
+        let def = tool.definition();
+        assert!(
+            def.metadata.is_read_only,
+            "inspect_element should be read-only"
+        );
+    }
+
+    // ── SimulateInputTool deny-list (non-Windows stub) ────────────────────
+
+    #[test]
+    #[cfg(not(windows))]
+    fn check_deny_list_non_windows_returns_none() {
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            vec!["1password".to_string()],
+            PermissionMode::Auto,
+            test_cache(),
+        );
+        // On non-Windows, check_deny_list is a stub that always returns None.
+        assert!(
+            tool.check_deny_list(&[json!({"action": "click", "x": 10, "y": 20})])
+                .is_none()
+        );
+    }
+
+    // ── SimulateInputTool permission mode ─────────────────────────────────
+
+    #[test]
+    fn simulate_input_yolo_mode_bypasses_deny_list() {
+        // In Yolo mode, the deny-list is not checked. This test verifies
+        // that the tool can be constructed with Yolo mode (the actual
+        // bypass logic is in invoke() which requires a backend).
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            vec!["1password".to_string()],
+            PermissionMode::Yolo,
+            test_cache(),
+        );
+        assert_eq!(tool.permission_mode, PermissionMode::Yolo);
+    }
+
+    #[test]
+    fn simulate_input_restricted_mode_enforces_deny_list() {
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            vec!["1password".to_string()],
+            PermissionMode::Restricted,
+            test_cache(),
+        );
+        assert_eq!(tool.permission_mode, PermissionMode::Restricted);
+    }
+
+    // ── AnnotateScreenshotTool metadata ───────────────────────────────────
+
+    #[test]
+    fn annotate_screenshot_definition_is_deferred_read() {
+        let tool = AnnotateScreenshotTool::new(PathBuf::from("/tmp"), true);
+        let def = tool.definition();
+        assert_eq!(def.name, "annotate_screenshot");
+        assert_eq!(def.kind, ToolKind::Read);
+        assert_eq!(def.metadata.exposure, crate::tool::ToolExposure::Deferred);
+    }
+
+    #[test]
+    fn annotate_screenshot_definition_has_correct_namespace() {
+        let tool = AnnotateScreenshotTool::new(PathBuf::from("/tmp"), true);
+        let def = tool.definition();
+        assert_eq!(def.metadata.namespace, "computer-use");
+    }
+
+    #[test]
+    fn annotate_screenshot_supports_vision_flag() {
+        let tool_vision = AnnotateScreenshotTool::new(PathBuf::from("/tmp"), true);
+        assert!(tool_vision.supports_vision);
+        let tool_text = AnnotateScreenshotTool::new(PathBuf::from("/tmp"), false);
+        assert!(!tool_text.supports_vision);
+    }
 }

@@ -944,4 +944,115 @@ mod tests {
             collect_all_ids(&el.children, ids);
         }
     }
+
+    // ── Additional parse_element_counter edge cases ───────────────────────
+
+    #[test]
+    fn parse_element_counter_just_e() {
+        // Just "e" without dot prefix — no ".e" separator found.
+        assert_eq!(parse_element_counter("e"), None);
+        assert_eq!(parse_element_counter("e0"), None);
+    }
+
+    #[test]
+    fn parse_element_counter_double_dot_e() {
+        // "..e0" — split on ".e" gives ["", "", "0"] → nth(1) = "" → None.
+        // Actually: "..e0".split(".e") → ["..", "0"] → nth(1) = "0" → Some(0).
+        // The parser finds ".e" at position 1 (the second dot + e).
+        assert_eq!(parse_element_counter("..e0"), Some(0));
+    }
+
+    #[test]
+    fn parse_element_counter_tab_in_id() {
+        assert_eq!(parse_element_counter("w0.e0\t"), None);
+        assert_eq!(parse_element_counter("w0.e\t0"), None);
+    }
+
+    #[test]
+    fn parse_element_counter_newline_in_id() {
+        assert_eq!(parse_element_counter("w0.e0\n"), None);
+        assert_eq!(parse_element_counter("w0.e\n0"), None);
+    }
+
+    #[test]
+    fn parse_element_counter_very_long_id() {
+        // Very long prefix before ".e" — should still parse.
+        let long_prefix = "w".repeat(10000);
+        let id = format!("{long_prefix}.e42");
+        assert_eq!(parse_element_counter(&id), Some(42));
+    }
+
+    #[test]
+    fn parse_element_counter_only_dot_e() {
+        // Just ".e" with nothing after — split gives ["", ""] → nth(1) = "" → None.
+        assert_eq!(parse_element_counter(".e"), None);
+    }
+
+    #[test]
+    fn parse_element_counter_dot_e_with_trailing_dot() {
+        // ".e0." — split on ".e" → ["", "0."] → nth(1) = "0." → doesn't parse as usize.
+        assert_eq!(parse_element_counter(".e0."), None);
+    }
+
+    #[test]
+    fn parse_element_counter_hex_like() {
+        // "w0.e0xFF" — doesn't parse as decimal.
+        assert_eq!(parse_element_counter("w0.e0xFF"), None);
+    }
+
+    #[test]
+    fn parse_element_counter_plus_sign() {
+        // "+1" is valid for usize::from_str (Rust accepts leading +).
+        assert_eq!(parse_element_counter("w0.e+1"), Some(1));
+    }
+
+    #[test]
+    fn parse_element_counter_underscore_in_number() {
+        // "1_000" is not valid for usize::from_str (Rust syntax, not parsing).
+        assert_eq!(parse_element_counter("w0.e1_000"), None);
+    }
+
+    // ── inspect_element error path tests ──────────────────────────────────
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_with_malformed_element_id_errors() {
+        // "w0.e" is missing the counter — should error before UIA calls.
+        let result = inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: Some("w0.e".to_string()),
+            max_depth: 3,
+            raw_view: false,
+        });
+        assert!(result.is_err(), "malformed element_id should error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("invalid") || err.contains("format") || err.contains("parse"),
+            "error should mention invalid format, got: {err}"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_with_just_dot_e_errors() {
+        let result = inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: Some(".e".to_string()),
+            max_depth: 3,
+            raw_view: false,
+        });
+        assert!(result.is_err(), "malformed element_id should error");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_with_non_numeric_counter_errors() {
+        let result = inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: Some("w0.eabc".to_string()),
+            max_depth: 3,
+            raw_view: false,
+        });
+        assert!(result.is_err(), "non-numeric counter should error");
+    }
 }

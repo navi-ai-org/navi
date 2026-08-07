@@ -343,4 +343,145 @@ mod tests {
             "recovery hint for unknown code should not be empty"
         );
     }
+
+    // ── Less common error codes ───────────────────────────────────────────
+
+    #[test]
+    fn shellexecute_error_meaning_all_known_codes() {
+        // Verify every documented code returns a meaningful description.
+        let codes = [0, 1, 2, 3, 5, 8, 11, 26, 27, 28, 29, 30, 31, 32];
+        for code in codes {
+            let meaning = shellexecute_error_meaning(code);
+            assert!(
+                !meaning.contains("Unknown"),
+                "code {code} should have a known meaning, got: {meaning}"
+            );
+        }
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_1_invalid_function() {
+        assert!(shellexecute_error_meaning(1).contains("Invalid function"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_8_not_enough_memory() {
+        assert!(shellexecute_error_meaning(8).contains("Not enough memory"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_11_invalid_exe() {
+        assert!(shellexecute_error_meaning(11).contains("Invalid .exe"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_27_association_incomplete() {
+        assert!(shellexecute_error_meaning(27).contains("Association incomplete"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_28_dde_timeout() {
+        assert!(shellexecute_error_meaning(28).contains("DDE timeout"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_29_dde_busy() {
+        assert!(shellexecute_error_meaning(29).contains("DDE busy"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_code_30_no_dde_conversation() {
+        assert!(shellexecute_error_meaning(30).contains("No DDE conversation"));
+    }
+
+    // ── recovery_hint for less common codes ───────────────────────────────
+
+    #[test]
+    fn recovery_hint_access_denied_mentions_elevation() {
+        let hint = recovery_hint(5, "myapp");
+        assert!(
+            hint.contains("elevation") || hint.contains("permission") || hint.contains("in use"),
+            "recovery hint for code 5 should mention elevation/permission, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_path_not_found_suggests_full_path() {
+        let hint = recovery_hint(3, "myapp");
+        assert!(
+            hint.contains("full path") || hint.contains("inspect_desktop"),
+            "recovery hint for code 3 should suggest full path, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_for_all_known_codes_is_non_empty() {
+        let codes = [0, 1, 2, 3, 5, 8, 11, 26, 27, 28, 29, 30, 31, 32];
+        for code in codes {
+            let hint = recovery_hint(code, "testapp");
+            assert!(
+                !hint.is_empty(),
+                "recovery hint for code {code} should not be empty"
+            );
+        }
+    }
+
+    #[test]
+    fn recovery_hint_includes_app_name_for_file_not_found() {
+        let hint = recovery_hint(2, "myapp");
+        assert!(
+            hint.contains("myapp"),
+            "recovery hint should include app name, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_includes_app_name_for_no_association() {
+        let hint = recovery_hint(31, "myapp");
+        assert!(
+            hint.contains("myapp"),
+            "recovery hint should include app name, got: {hint}"
+        );
+    }
+
+    // ── to_wide additional edge cases ─────────────────────────────────────
+
+    #[test]
+    fn to_wide_single_char() {
+        let wide = to_wide("A");
+        assert_eq!(wide, vec![b'A' as u16, 0]);
+    }
+
+    #[test]
+    fn to_wide_ascii_string() {
+        let wide = to_wide("hello");
+        assert_eq!(
+            wide,
+            vec![
+                b'h' as u16,
+                b'e' as u16,
+                b'l' as u16,
+                b'l' as u16,
+                b'o' as u16,
+                0
+            ]
+        );
+    }
+
+    #[test]
+    fn to_wide_mixed_ascii_and_unicode() {
+        let wide = to_wide("aé");
+        // 'a' = 0x61, 'é' = 0xE9
+        assert_eq!(wide, vec![0x61, 0xE9, 0]);
+    }
+
+    #[test]
+    fn to_wide_null_terminator_always_present() {
+        let wide = to_wide("test");
+        assert_eq!(
+            *wide.last().unwrap(),
+            0u16,
+            "last element must be null terminator"
+        );
+    }
 }

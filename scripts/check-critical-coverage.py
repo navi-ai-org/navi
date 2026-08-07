@@ -32,9 +32,11 @@ CRITICAL_FILES: dict[str, float] = {
     "crates/navi-core/src/update.rs": 30.0,  # ~40% baseline (installer OS branches)
     "crates/navi-core/src/tool/builtin/plan.rs": 50.0,  # ~87% baseline
     # ── Tool files (computer-use) ──────────────────────────────────────────
-    "crates/navi-core/src/tool/builtin/computer_use.rs": 40.0,  # unit+edge+integration
-    "crates/navi-os-windows/src/inspect.rs": 50.0,  # unit+edge+integration
-    "crates/navi-os-windows/src/open_app.rs": 70.0,  # unit+edge (small file, high coverage)
+    "crates/navi-core/src/tool/builtin/computer_use.rs": 90.0,  # ~95% baseline
+    "crates/navi-os-windows/src/inspect.rs": 80.0,  # ~85% baseline
+    "crates/navi-os-windows/src/open_app.rs": 90.0,  # ~95% baseline
+    "crates/navi-os-windows/src/input.rs": 85.0,  # ~92% baseline
+    "crates/navi-os-windows/src/capture.rs": 80.0,  # ~90% baseline
 }
 
 # Function name substrings that must have been executed at least once.
@@ -47,6 +49,11 @@ CRITICAL_FUNCTIONS: list[str] = [
     "resolve_element_ids",
     "parse_element_counter",
     "shellexecute_error_meaning",
+    "simulate_input",
+    "key_to_vk",
+    "encode_bmp",
+    "collect_element_rects",
+    "count_elements",
 ]
 
 

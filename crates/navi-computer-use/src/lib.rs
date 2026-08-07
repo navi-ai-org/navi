@@ -29,7 +29,7 @@ pub struct Screenshot {
     pub size_bytes: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,

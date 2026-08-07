@@ -186,6 +186,8 @@ fn encode_bmp(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    // ── encode_bmp unit tests ─────────────────────────────────────────────
+
     #[test]
     fn encode_bmp_produces_valid_header() {
         let width = 2u32;
@@ -212,5 +214,129 @@ mod tests {
         // bpp at offset 28
         let bpp = u16::from_le_bytes([bmp[28], bmp[29]]);
         assert_eq!(bpp, 32);
+    }
+
+    #[test]
+    fn encode_bmp_1x1_pixel() {
+        let pixels = vec![0xFF, 0x00, 0x00, 0xFF]; // 1 pixel, BGRA
+        let bmp = encode_bmp(1, 1, &pixels);
+        assert_eq!(&bmp[0..2], b"BM");
+        // File size = 14 + 40 + 4 = 58
+        let file_size = u32::from_le_bytes([bmp[2], bmp[3], bmp[4], bmp[5]]);
+        assert_eq!(file_size, 58);
+        // Width = 1
+        let w = i32::from_le_bytes([bmp[18], bmp[19], bmp[20], bmp[21]]);
+        assert_eq!(w, 1);
+        // Height = 1
+        let h = i32::from_le_bytes([bmp[22], bmp[23], bmp[24], bmp[25]]);
+        assert_eq!(h, 1);
+        // Pixel data starts at offset 54, should be the 4 bytes we passed.
+        assert_eq!(&bmp[54..58], &[0xFF, 0x00, 0x00, 0xFF]);
+    }
+
+    #[test]
+    fn encode_bmp_pixel_data_is_bottom_up() {
+        // 2 rows × 2 cols × 4 bytes = 16 bytes.
+        // Row 0 (top): all red (BGRA: 0,0,255,0)
+        // Row 1 (bottom): all blue (BGRA: 255,0,0,0)
+        let mut pixels = vec![0u8; 16];
+        // Top row (row 0): red
+        pixels[0..4].copy_from_slice(&[0, 0, 255, 0]);
+        pixels[4..8].copy_from_slice(&[0, 0, 255, 0]);
+        // Bottom row (row 1): blue
+        pixels[8..12].copy_from_slice(&[255, 0, 0, 0]);
+        pixels[12..16].copy_from_slice(&[255, 0, 0, 0]);
+
+        let bmp = encode_bmp(2, 2, &pixels);
+        // BMP stores bottom-up, so the first pixel row in the file
+        // should be the bottom row (blue).
+        let pixel_start = 54;
+        assert_eq!(
+            &bmp[pixel_start..pixel_start + 4],
+            &[255, 0, 0, 0],
+            "first pixel row in BMP should be bottom (blue)"
+        );
+        // Second row in file should be top (red).
+        assert_eq!(
+            &bmp[pixel_start + 8..pixel_start + 12],
+            &[0, 0, 255, 0],
+            "second pixel row in BMP should be top (red)"
+        );
+    }
+
+    #[test]
+    fn encode_bmp_large_dimensions() {
+        // 4K screenshot: 3840×2160
+        let width = 3840u32;
+        let height = 2160u32;
+        let pixel_count = (width as usize) * (height as usize);
+        let pixels = vec![0u8; pixel_count * 4];
+        let bmp = encode_bmp(width, height, &pixels);
+        assert_eq!(&bmp[0..2], b"BM");
+        let file_size = u32::from_le_bytes([bmp[2], bmp[3], bmp[4], bmp[5]]);
+        // 14 + 40 + (3840 * 2160 * 4)
+        let expected = 14 + 40 + (3840 * 2160 * 4);
+        assert_eq!(file_size as usize, expected);
+        let w = i32::from_le_bytes([bmp[18], bmp[19], bmp[20], bmp[21]]);
+        assert_eq!(w, 3840);
+        let h = i32::from_le_bytes([bmp[22], bmp[23], bmp[24], bmp[25]]);
+        assert_eq!(h, 2160);
+    }
+
+    #[test]
+    fn encode_bmp_compression_is_bi_rgb() {
+        let pixels = vec![0u8; 4];
+        let bmp = encode_bmp(1, 1, &pixels);
+        // Compression at offset 30 (after header start at 14 + 16 bytes)
+        let compression = u32::from_le_bytes([bmp[30], bmp[31], bmp[32], bmp[33]]);
+        assert_eq!(compression, 0, "BI_RGB = 0");
+    }
+
+    #[test]
+    fn encode_bmp_planes_is_one() {
+        let pixels = vec![0u8; 4];
+        let bmp = encode_bmp(1, 1, &pixels);
+        // Planes at offset 26
+        let planes = u16::from_le_bytes([bmp[26], bmp[27]]);
+        assert_eq!(planes, 1);
+    }
+
+    // ── capture_screen error path tests ───────────────────────────────────
+    //
+    // These test error paths that fail before reaching GDI calls.
+    // They should work without a desktop.
+
+    #[test]
+    #[cfg(windows)]
+    fn capture_screen_invalid_dir_errors() {
+        // A path with a null byte is invalid on Windows.
+        let result = capture_screen("invalid\0path");
+        assert!(result.is_err(), "invalid path should error");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn capture_screen_writable_temp_dir_succeeds_or_skips() {
+        let tmp = std::env::temp_dir().join("navi_capture_test");
+        let result = capture_screen(tmp.to_str().unwrap());
+        match result {
+            Ok(screenshot) => {
+                assert!(screenshot.width > 0, "width should be positive");
+                assert!(screenshot.height > 0, "height should be positive");
+                assert!(screenshot.size_bytes > 0, "size should be positive");
+                assert!(
+                    screenshot.path.contains("screenshot_"),
+                    "path should contain screenshot_, got: {}",
+                    screenshot.path
+                );
+                // Clean up.
+                let _ = std::fs::remove_file(&screenshot.path);
+            }
+            Err(e) => {
+                eprintln!("skipping capture_screen_writable: {e}");
+            }
+        }
+        // Clean up temp dir.
+        let _ = std::fs::remove_dir(&tmp);
     }
 }
