@@ -285,19 +285,83 @@ fn windows_program_exists(_program: &str) -> bool {
     false
 }
 
+/// Returns true when the user has explicitly opted into a bash shell on
+/// Windows via the `NAVI_BASH_SHELL` environment variable.
+///
+/// The default Windows shell is PowerShell (see [`windows_shell_program`]).
+/// Users who have Git Bash / MSYS2 installed and want the familiar bash
+/// behavior can set `NAVI_BASH_SHELL=bash` (or a path to a bash executable)
+/// to restore the previous bash-based execution. This avoids routing to
+/// WSL's `bash.exe` launcher, which fails with exit 1 when no distribution
+/// is installed.
+#[cfg(windows)]
+fn windows_use_bash() -> bool {
+    use_bash_from_override(std::env::var("NAVI_BASH_SHELL").ok().as_deref())
+}
+
+#[cfg(not(windows))]
+fn windows_use_bash() -> bool {
+    false
+}
+
+/// Pure helper: decide whether a given override value selects bash.
+fn use_bash_from_override(override_val: Option<&str>) -> bool {
+    override_val.map(|s| !s.trim().is_empty()).unwrap_or(false)
+}
+
+/// Select the shell program for Windows.
+///
+/// Default: PowerShell — `pwsh.exe` (PowerShell 7+) when available, otherwise
+/// the built-in `powershell.exe`. PowerShell is always present on Windows, so
+/// the bash tool works out of the box without WSL or Git Bash.
+///
+/// Override: set `NAVI_BASH_SHELL=bash` (or a path to a bash executable) to
+/// use Git Bash / MSYS2, keeping backward compat for users who configured it.
+#[cfg(windows)]
+fn windows_shell_program() -> PathBuf {
+    shell_program_from_override(std::env::var("NAVI_BASH_SHELL").ok().as_deref())
+}
+
+#[cfg(not(windows))]
+fn windows_shell_program() -> PathBuf {
+    PathBuf::from("bash")
+}
+
+/// Pure helper: resolve the shell program from an optional override value.
+/// Split out so tests can exercise both the default (PowerShell) and the
+/// bash opt-in paths without mutating the process-wide environment.
+#[cfg(windows)]
+fn shell_program_from_override(override_val: Option<&str>) -> PathBuf {
+    if let Some(shell) = override_val {
+        let trimmed = shell.trim();
+        if !trimmed.is_empty() {
+            // "bash" => resolve via well-known Git Bash locations / PATH.
+            if trimmed.eq_ignore_ascii_case("bash") {
+                return find_windows_bash().unwrap_or_else(|| PathBuf::from("bash"));
+            }
+            // Any other value is treated as an explicit path to a shell.
+            return PathBuf::from(trimmed);
+        }
+    }
+    // Default: PowerShell. Prefer PowerShell 7 (pwsh) when on PATH.
+    if windows_program_exists("pwsh.exe") {
+        PathBuf::from("pwsh")
+    } else {
+        PathBuf::from("powershell")
+    }
+}
+
 /// Select the shell program + args for the current platform.
 ///
 /// Unix: `bash -lc`.
-/// Windows: prefers Git Bash (PATH or well-known install locations), then
-/// `powershell -NoProfile -Command`, falling back to `cmd /C`.
+/// Windows: PowerShell (`-NoProfile -Command`) by default, or `bash -lc` when
+/// the user opts in via `NAVI_BASH_SHELL`.
 fn shell_argv(shell_cmd: &str) -> Vec<&str> {
     if cfg!(windows) {
-        match find_windows_bash() {
-            Some(_) => vec!["-lc", shell_cmd],
-            None if windows_program_exists("powershell.exe") => {
-                vec!["-NoProfile", "-Command", shell_cmd]
-            }
-            _ => vec!["/C", shell_cmd],
+        if windows_use_bash() {
+            vec!["-lc", shell_cmd]
+        } else {
+            vec!["-NoProfile", "-Command", shell_cmd]
         }
     } else {
         vec!["-lc", shell_cmd]
@@ -307,15 +371,11 @@ fn shell_argv(shell_cmd: &str) -> Vec<&str> {
 /// Build the shell command for the current platform.
 ///
 /// Unix: `bash -lc <command>`.
-/// Windows: prefers Git Bash (PATH or well-known install locations), then
-/// `powershell -NoProfile -Command`, falling back to `cmd /C`.
+/// Windows: PowerShell (`-NoProfile -Command <command>`) by default, or
+/// `bash -lc <command>` when the user opts in via `NAVI_BASH_SHELL`.
 fn shell_command(shell_cmd: &str, project_root: &std::path::Path) -> tokio::process::Command {
     let mut cmd = if cfg!(windows) {
-        let program = match find_windows_bash() {
-            Some(bash) => bash,
-            None if windows_program_exists("powershell.exe") => PathBuf::from("powershell"),
-            _ => PathBuf::from("cmd"),
-        };
+        let program = windows_shell_program();
         let mut c = tokio::process::Command::new(program);
         for arg in shell_argv(shell_cmd) {
             c.arg(arg);
@@ -1695,6 +1755,70 @@ mod shell_select_tests {
         assert!(
             ok,
             "argv must match bash/powershell/cmd signatures: {joined:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_defaults_to_powershell_without_override() {
+        // When NAVI_BASH_SHELL is not set, the default Windows shell must be
+        // PowerShell (pwsh or powershell), never WSL/bash. This guards against
+        // the regression where `where bash.exe` found WSL's launcher and every
+        // command failed with exit 1. Uses the pure helper so no env mutation
+        // is needed (safe under parallel test execution).
+        let program = shell_program_from_override(None);
+        let name = program
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(
+            name == "pwsh.exe"
+                || name == "pwsh"
+                || name == "powershell.exe"
+                || name == "powershell",
+            "default Windows shell must be PowerShell, got: {program:?}"
+        );
+        assert!(
+            !use_bash_from_override(None),
+            "no override must not select bash"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_bash_override_uses_bash() {
+        // Setting NAVI_BASH_SHELL=bash opts into bash execution (Git Bash /
+        // MSYS2) and must select a bash program + `bash -lc` argv shape.
+        assert!(
+            use_bash_from_override(Some("bash")),
+            "NAVI_BASH_SHELL=bash must opt into bash"
+        );
+        let program = shell_program_from_override(Some("bash"));
+        // Either a resolved path ending in bash.exe, or the bare "bash" name.
+        let name = program
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(
+            name == "bash" || name == "bash.exe",
+            "bash override must resolve to bash, got: {program:?}"
+        );
+        // An explicit path override is used verbatim.
+        let explicit = shell_program_from_override(Some(r"C:\tools\sh.exe"));
+        assert_eq!(explicit, PathBuf::from(r"C:\tools\sh.exe"));
+        // Whitespace-only override falls back to the PowerShell default.
+        assert!(!use_bash_from_override(Some("   ")));
+        let pwsh = shell_program_from_override(Some("   "));
+        let pname = pwsh
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        assert!(
+            pname == "pwsh" || pname == "powershell",
+            "whitespace override must fall back to PowerShell, got: {pwsh:?}"
         );
     }
 

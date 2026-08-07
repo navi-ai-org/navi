@@ -90,7 +90,7 @@ cargo test -p <crate> -- --test-threads=4
 
 The workspace compiles and tests on Windows (CI runs `windows-latest` for fmt/test/clippy). Notes:
 
-- **Bash required:** the `bash` tool and justfile recipes use Git Bash or MSYS2. Ensure `bash` is on `PATH`.
+- **Bash tool shell:** on Windows the `bash` tool defaults to PowerShell (`pwsh.exe` if available, else `powershell.exe`) with `-NoProfile -Command`, so it works without WSL or Git Bash. Set `NAVI_BASH_SHELL=bash` (or a path to a bash executable) to opt into Git Bash / MSYS2. The justfile recipes still use Git Bash or MSYS2 — ensure `bash` is on `PATH` for those.
 - **Path separators:** tool outputs (search, fs_browser) normalize to forward slashes via `display_path`. Tests comparing paths should use `to_string_lossy().replace('\\', "/")` and strip the `\\?\` verbatim prefix from `canonicalize()` results.
 - **Sandbox snapshots:** `SandboxManager::create_snapshot` stores raw (non-canonicalized) paths so that `PathBuf` equality works cross-platform. Non-existent file paths are added as roots (not their parent dir) so rollback doesn't try to delete locked sibling files (e.g. SQLite DBs).
 - **Process termination:** background bash tasks are assigned to a Win32 Job Object (`win_job` module in `bash.rs`) so the entire process tree is killed on timeout. Unix uses `setsid` + process-group signals.

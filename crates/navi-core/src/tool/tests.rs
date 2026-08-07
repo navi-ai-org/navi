@@ -3,6 +3,7 @@ use crate::{
     PermissionMode, PermissiveSecurityPolicy, SecurityConfig, SecurityDecision, SecurityPolicy,
 };
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 
 fn executor(root: &Path) -> ToolExecutor {
@@ -575,11 +576,14 @@ async fn bash_runs_with_project_root_as_cwd() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
-    // On Windows, MSYS2/Git Bash `pwd` returns a Unix-style mount path
-    // (e.g. `/tmp/foo`). `pwd -W` returns the native Windows path with
-    // forward slashes (e.g. `C:/msys64/tmp/foo`), which we can compare
-    // against the canonicalized tempdir path.
-    let command = if cfg!(windows) { "pwd -W" } else { "pwd" };
+    // On Windows the default shell is PowerShell; `(Get-Location).Path`
+    // prints the native Windows path (e.g. `C:\tmp\foo`). On Unix, `pwd`
+    // prints the POSIX path. Both are normalized to forward slashes below.
+    let command = if cfg!(windows) {
+        "(Get-Location).Path"
+    } else {
+        "pwd"
+    };
     let result = executor
         .invoke(ToolInvocation {
             id: "pwd".to_string(),
@@ -596,7 +600,10 @@ async fn bash_runs_with_project_root_as_cwd() {
         .strip_prefix(r"\\?\")
         .unwrap_or(&expected_raw)
         .replace('\\', "/");
-    assert_eq!(actual, expected_str);
+    // PowerShell `(Get-Location).Path` emits native backslash separators;
+    // normalize both sides to forward slashes for comparison.
+    let actual_str = actual.replace('\\', "/");
+    assert_eq!(actual_str, expected_str);
 }
 
 #[tokio::test]
@@ -628,15 +635,21 @@ async fn bash_timeout_kills_child_process() {
 
     // Write a pid file then sleep past the timeout. After the tool returns,
     // the process must be gone (not left running under kill_on_drop only).
+    // Cross-platform: PowerShell on Windows, bash on Unix.
+    let command = if cfg!(windows) {
+        format!(
+            "Set-Content -Path '{marker}' -Value $PID; Start-Sleep -Seconds 30",
+            marker = marker_s
+        )
+    } else {
+        format!("echo $$ > '{marker}'; sleep 30", marker = marker_s)
+    };
     let result = executor
         .invoke(ToolInvocation {
             id: "bash-timeout-kill".to_string(),
             tool_name: "bash".to_string(),
             input: json!({
-                "command": format!(
-                    "echo $$ > '{marker}'; sleep 30",
-                    marker = marker_s
-                ),
+                "command": command,
                 "timeout_ms": 200
             }),
         })
@@ -649,19 +662,30 @@ async fn bash_timeout_kills_child_process() {
     );
 
     // Give the reaper a moment, then ensure the recorded pid is not alive.
+    // The pid-alive check is platform-specific: `kill -0` on Unix, and
+    // `Get-Process -Id` on Windows (PowerShell).
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     if marker.exists() {
         let pid_txt = std::fs::read_to_string(&marker).expect("pid file");
         let pid: i32 = pid_txt.trim().parse().expect("pid");
-        // kill -0 returns non-zero when process is gone.
-        let status = std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .expect("kill -0");
-        assert!(
-            !status.success(),
-            "timed-out bash child pid {pid} is still running"
-        );
+        let alive = if cfg!(windows) {
+            // SAFETY: read-only process query; no env mutation.
+            std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &format!("Get-Process -Id {pid}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        } else {
+            // kill -0 returns non-zero when process is gone.
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        assert!(!alive, "timed-out bash child pid {pid} is still running");
     }
 }
 
@@ -714,12 +738,19 @@ async fn bash_background_task_can_be_polled() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
+    // Cross-platform: sleep briefly then write "done" with no trailing
+    // newline so stdout equals exactly "done".
+    let command = if cfg!(windows) {
+        "Start-Sleep -Milliseconds 50; [Console]::Out.Write('done')"
+    } else {
+        "sleep 0.05 && printf done"
+    };
     let started = executor
         .invoke(ToolInvocation {
             id: "bash-bg-start".to_string(),
             tool_name: "bash".to_string(),
             input: json!({
-                "command": "sleep 0.05 && printf done",
+                "command": command,
                 "background": true,
                 "wait_ms": 1,
                 "timeout_ms": 1000
@@ -749,12 +780,23 @@ async fn bash_background_supports_multiple_tasks_and_list() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
+    // Cross-platform sleep+write helpers.
+    let cmd_one = if cfg!(windows) {
+        "Start-Sleep -Milliseconds 50; [Console]::Out.Write('one')"
+    } else {
+        "sleep 0.05 && printf one"
+    };
+    let cmd_two = if cfg!(windows) {
+        "Start-Sleep -Milliseconds 50; [Console]::Out.Write('two')"
+    } else {
+        "sleep 0.05 && printf two"
+    };
     let first = executor
         .invoke(ToolInvocation {
             id: "bash-bg-one".to_string(),
             tool_name: "bash".to_string(),
             input: json!({
-                "command": "sleep 0.05 && printf one",
+                "command": cmd_one,
                 "background": true,
                 "wait_ms": 1,
                 "timeout_ms": 1000
@@ -766,7 +808,7 @@ async fn bash_background_supports_multiple_tasks_and_list() {
             id: "bash-bg-two".to_string(),
             tool_name: "bash".to_string(),
             input: json!({
-                "command": "sleep 0.05 && printf two",
+                "command": cmd_two,
                 "background": true,
                 "wait_ms": 1,
                 "timeout_ms": 1000
@@ -1857,11 +1899,18 @@ async fn regression_bash_foreground_captures_stderr() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
+    // Cross-platform: write "error" to stderr. PowerShell uses
+    // [Console]::Error.Write; bash uses `echo error >&2`.
+    let command = if cfg!(windows) {
+        "[Console]::Error.Write('error')"
+    } else {
+        "echo error >&2"
+    };
     let result = executor
         .invoke(ToolInvocation {
             id: "test".to_string(),
             tool_name: "bash".to_string(),
-            input: json!({"command": "echo error >&2", "timeout_ms": 5000}),
+            input: json!({"command": command, "timeout_ms": 5000}),
         })
         .await;
 
