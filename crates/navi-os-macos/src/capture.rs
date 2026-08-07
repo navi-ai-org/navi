@@ -3,7 +3,7 @@
 //! Captures the primary display to a PNG file. Requires Screen Recording
 //! permission (System Settings → Privacy & Security → Screen Recording).
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use std::io::Cursor;
 use std::path::Path;
 
@@ -17,8 +17,8 @@ pub fn capture_screen(out_dir: &str) -> Result<MacScreenshot> {
 
     let display = CGDisplay::main();
     let cg_image = display
-        .screenshot()
-        .map_err(|e| anyhow!("CGDisplayCreateImage failed: {e:?}"))?;
+        .image()
+        .ok_or_else(|| anyhow!("CGDisplayCreateImage failed"))?;
 
     let width = cg_image.width();
     let height = cg_image.height();
@@ -93,9 +93,7 @@ pub fn capture_screen(out_dir: &str) -> Result<MacScreenshot> {
 pub fn main_display_rect() -> Result<MacRect> {
     use core_graphics::display::CGDisplay;
     let display = CGDisplay::main();
-    let bounds = display
-        .bounds()
-        .map_err(|_| bail!("failed to get display bounds"))?;
+    let bounds = display.bounds();
     Ok(MacRect {
         x: bounds.origin.x as i32,
         y: bounds.origin.y as i32,

@@ -55,215 +55,235 @@ pub fn simulate_input(actions: &[Value]) -> Result<MacInputResult> {
 }
 
 unsafe fn do_mouse_move(action: &Value) -> Result<()> {
-    let x = action
-        .get("x")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| anyhow!("mouse_move: missing 'x'"))?;
-    let y = action
-        .get("y")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| anyhow!("mouse_move: missing 'y'"))?;
+    unsafe {
+        let x = action
+            .get("x")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow!("mouse_move: missing 'x'"))?;
+        let y = action
+            .get("y")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow!("mouse_move: missing 'y'"))?;
 
-    let event = core_graphics::event::CGEvent::new_mouse_event(
-        core_graphics::event::CGEventSource::new(
-            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+        let event = core_graphics::event::CGEvent::new_mouse_event(
+            core_graphics::event_source::CGEventSource::new(
+                core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+            )
+            .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?,
+            core_graphics::event::CGEventType::MouseMoved,
+            core_graphics::geometry::CGPoint { x, y },
+            core_graphics::event::CGMouseButton::Left,
         )
-        .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?,
-        core_graphics::event::CGEventType::MouseMoved,
-        core_graphics::geometry::CGPoint { x, y },
-        core_graphics::event::CGMouseButton::Left,
-    )
-    .map_err(|e| anyhow!("CGEvent creation failed: {e:?}"))?;
+        .map_err(|e| anyhow!("CGEvent creation failed: {e:?}"))?;
 
-    event.post(core_graphics::event::CGEventTapLocation::HID);
-    Ok(())
+        event.post(core_graphics::event::CGEventTapLocation::HID);
+        Ok(())
+    }
 }
 
 unsafe fn do_click(action: &Value, double: bool) -> Result<()> {
-    let x = action
-        .get("x")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| anyhow!("click: missing 'x'"))?;
-    let y = action
-        .get("y")
-        .and_then(|v| v.as_f64())
-        .ok_or_else(|| anyhow!("click: missing 'y'"))?;
-    let button = action
-        .get("button")
-        .and_then(|v| v.as_str())
-        .unwrap_or("left");
+    unsafe {
+        let x = action
+            .get("x")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow!("click: missing 'x'"))?;
+        let y = action
+            .get("y")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| anyhow!("click: missing 'y'"))?;
+        let button = action
+            .get("button")
+            .and_then(|v| v.as_str())
+            .unwrap_or("left");
 
-    let (cg_button, down_event, up_event) = match button {
-        "left" => (
-            core_graphics::event::CGMouseButton::Left,
-            core_graphics::event::CGEventType::LeftMouseDown,
-            core_graphics::event::CGEventType::LeftMouseUp,
-        ),
-        "right" => (
-            core_graphics::event::CGMouseButton::Right,
-            core_graphics::event::CGEventType::RightMouseDown,
-            core_graphics::event::CGEventType::RightMouseUp,
-        ),
-        "middle" => (
-            core_graphics::event::CGMouseButton::Center,
-            core_graphics::event::CGEventType::OtherMouseDown,
-            core_graphics::event::CGEventType::OtherMouseUp,
-        ),
-        other => return Err(anyhow!("unknown button: {other}")),
-    };
+        let (cg_button, down_event, up_event) = match button {
+            "left" => (
+                core_graphics::event::CGMouseButton::Left,
+                core_graphics::event::CGEventType::LeftMouseDown,
+                core_graphics::event::CGEventType::LeftMouseUp,
+            ),
+            "right" => (
+                core_graphics::event::CGMouseButton::Right,
+                core_graphics::event::CGEventType::RightMouseDown,
+                core_graphics::event::CGEventType::RightMouseUp,
+            ),
+            "middle" => (
+                core_graphics::event::CGMouseButton::Center,
+                core_graphics::event::CGEventType::OtherMouseDown,
+                core_graphics::event::CGEventType::OtherMouseUp,
+            ),
+            other => return Err(anyhow!("unknown button: {other}")),
+        };
 
-    let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-    )
-    .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
+        let source = core_graphics::event_source::CGEventSource::new(
+            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+        )
+        .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
-    let point = core_graphics::geometry::CGPoint { x, y };
+        let point = core_graphics::geometry::CGPoint { x, y };
 
-    // Move to position first.
-    let move_event = core_graphics::event::CGEvent::new_mouse_event(
-        source.clone(),
-        core_graphics::event::CGEventType::MouseMoved,
-        point,
-        cg_button,
-    )
-    .map_err(|e| anyhow!("CGEvent move failed: {e:?}"))?;
-    move_event.post(core_graphics::event::CGEventTapLocation::HID);
+        // Move to position first.
+        let move_event = core_graphics::event::CGEvent::new_mouse_event(
+            source.clone(),
+            core_graphics::event::CGEventType::MouseMoved,
+            point,
+            cg_button,
+        )
+        .map_err(|e| anyhow!("CGEvent move failed: {e:?}"))?;
+        move_event.post(core_graphics::event::CGEventTapLocation::HID);
 
-    // Mouse down.
-    let down = core_graphics::event::CGEvent::new_mouse_event(
-        source.clone(),
-        down_event,
-        point,
-        cg_button,
-    )
-    .map_err(|e| anyhow!("CGEvent down failed: {e:?}"))?;
-    down.post(core_graphics::event::CGEventTapLocation::HID);
-
-    // Mouse up.
-    let up =
-        core_graphics::event::CGEvent::new_mouse_event(source.clone(), up_event, point, cg_button)
-            .map_err(|e| anyhow!("CGEvent up failed: {e:?}"))?;
-    up.post(core_graphics::event::CGEventTapLocation::HID);
-
-    // Double click: send another down/up with click count set.
-    if double {
-        let down2 = core_graphics::event::CGEvent::new_mouse_event(
+        // Mouse down.
+        let down = core_graphics::event::CGEvent::new_mouse_event(
             source.clone(),
             down_event,
             point,
             cg_button,
         )
-        .map_err(|e| anyhow!("CGEvent down2 failed: {e:?}"))?;
-        down2.set_integer_value_field(core_graphics::event::CGEventField::MouseEventClickState, 2);
-        down2.post(core_graphics::event::CGEventTapLocation::HID);
+        .map_err(|e| anyhow!("CGEvent down failed: {e:?}"))?;
+        down.post(core_graphics::event::CGEventTapLocation::HID);
 
-        let up2 =
-            core_graphics::event::CGEvent::new_mouse_event(source, up_event, point, cg_button)
-                .map_err(|e| anyhow!("CGEvent up2 failed: {e:?}"))?;
-        up2.set_integer_value_field(core_graphics::event::CGEventField::MouseEventClickState, 2);
-        up2.post(core_graphics::event::CGEventTapLocation::HID);
+        // Mouse up.
+        let up = core_graphics::event::CGEvent::new_mouse_event(
+            source.clone(),
+            up_event,
+            point,
+            cg_button,
+        )
+        .map_err(|e| anyhow!("CGEvent up failed: {e:?}"))?;
+        up.post(core_graphics::event::CGEventTapLocation::HID);
+
+        // Double click: send another down/up with click count set.
+        if double {
+            let down2 = core_graphics::event::CGEvent::new_mouse_event(
+                source.clone(),
+                down_event,
+                point,
+                cg_button,
+            )
+            .map_err(|e| anyhow!("CGEvent down2 failed: {e:?}"))?;
+            down2.set_integer_value_field(
+                core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
+                2,
+            );
+            down2.post(core_graphics::event::CGEventTapLocation::HID);
+
+            let up2 =
+                core_graphics::event::CGEvent::new_mouse_event(source, up_event, point, cg_button)
+                    .map_err(|e| anyhow!("CGEvent up2 failed: {e:?}"))?;
+            up2.set_integer_value_field(
+                core_graphics::event::EventField::MOUSE_EVENT_CLICK_STATE,
+                2,
+            );
+            up2.post(core_graphics::event::CGEventTapLocation::HID);
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 unsafe fn do_scroll(action: &Value) -> Result<()> {
-    let delta = action
-        .get("delta")
-        .and_then(|v| v.as_i64())
-        .ok_or_else(|| anyhow!("scroll: missing 'delta'"))?;
-    let x = action.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let y = action.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    unsafe {
+        let delta = action
+            .get("delta")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow!("scroll: missing 'delta'"))?;
+        let x = action.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let y = action.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-    let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-    )
-    .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
+        let source = core_graphics::event_source::CGEventSource::new(
+            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+        )
+        .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
-    // Move to position first.
-    let move_event = core_graphics::event::CGEvent::new_mouse_event(
-        source.clone(),
-        core_graphics::event::CGEventType::MouseMoved,
-        core_graphics::geometry::CGPoint { x, y },
-        core_graphics::event::CGMouseButton::Left,
-    )
-    .map_err(|e| anyhow!("CGEvent move failed: {e:?}"))?;
-    move_event.post(core_graphics::event::CGEventTapLocation::HID);
+        // Move to position first.
+        let move_event = core_graphics::event::CGEvent::new_mouse_event(
+            source.clone(),
+            core_graphics::event::CGEventType::MouseMoved,
+            core_graphics::geometry::CGPoint { x, y },
+            core_graphics::event::CGMouseButton::Left,
+        )
+        .map_err(|e| anyhow!("CGEvent move failed: {e:?}"))?;
+        move_event.post(core_graphics::event::CGEventTapLocation::HID);
 
-    // Create scroll event.
-    let scroll_event = core_graphics::event::CGEvent::new_scroll_event(
-        source,
-        core_graphics::event::ScrollEventUnit::LINE,
-        1,            // wheel count
-        delta as i32, // vertical delta
-        0,            // horizontal delta
-        0,            // delta axis 2
-    )
-    .map_err(|e| anyhow!("CGEvent scroll failed: {e:?}"))?;
-    scroll_event.post(core_graphics::event::CGEventTapLocation::HID);
+        // Create scroll event.
+        let scroll_event = core_graphics::event::CGEvent::new_scroll_event(
+            source,
+            core_graphics::event::ScrollEventUnit::LINE,
+            1,            // wheel count
+            delta as i32, // vertical delta
+            0,            // horizontal delta
+            0,            // delta axis 2
+        )
+        .map_err(|e| anyhow!("CGEvent scroll failed: {e:?}"))?;
+        scroll_event.post(core_graphics::event::CGEventTapLocation::HID);
 
-    Ok(())
+        Ok(())
+    }
 }
 
 unsafe fn do_key(action: &Value, down: bool, up: bool) -> Result<()> {
-    let key = action
-        .get("key")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("key: missing 'key'"))?;
+    unsafe {
+        let key = action
+            .get("key")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("key: missing 'key'"))?;
 
-    let keycode = map_key_to_keycode(key).ok_or_else(|| anyhow!("unknown key: {key}"))?;
+        let keycode = map_key_to_keycode(key).ok_or_else(|| anyhow!("unknown key: {key}"))?;
 
-    let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-    )
-    .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
+        let source = core_graphics::event_source::CGEventSource::new(
+            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
+        )
+        .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
-    if down {
-        let event =
-            core_graphics::event::CGEvent::new_keyboard_event(source.clone(), keycode, true)
-                .map_err(|e| anyhow!("CGEvent key_down failed: {e:?}"))?;
-        event.post(core_graphics::event::CGEventTapLocation::HID);
+        if down {
+            let event =
+                core_graphics::event::CGEvent::new_keyboard_event(source.clone(), keycode, true)
+                    .map_err(|e| anyhow!("CGEvent key_down failed: {e:?}"))?;
+            event.post(core_graphics::event::CGEventTapLocation::HID);
+        }
+
+        if up {
+            let event = core_graphics::event::CGEvent::new_keyboard_event(source, keycode, false)
+                .map_err(|e| anyhow!("CGEvent key_up failed: {e:?}"))?;
+            event.post(core_graphics::event::CGEventTapLocation::HID);
+        }
+
+        Ok(())
     }
-
-    if up {
-        let event = core_graphics::event::CGEvent::new_keyboard_event(source, keycode, false)
-            .map_err(|e| anyhow!("CGEvent key_up failed: {e:?}"))?;
-        event.post(core_graphics::event::CGEventTapLocation::HID);
-    }
-
-    Ok(())
 }
 
 unsafe fn do_type(action: &Value) -> Result<()> {
-    let text = action
-        .get("text")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("type: missing 'text'"))?;
+    unsafe {
+        let text = action
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("type: missing 'text'"))?;
 
-    let source = core_graphics::event::CGEventSource::new(
-        core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
-    )
-    .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
-
-    for ch in text.chars() {
-        // Create a key-down event with the Unicode character.
-        let down = core_graphics::event::CGEvent::new_keyboard_event(
-            source.clone(),
-            0, // virtual key (0 = use Unicode string)
-            true,
+        let source = core_graphics::event_source::CGEventSource::new(
+            core_graphics::event_source::CGEventSourceStateID::HIDSystemState,
         )
-        .map_err(|e| anyhow!("CGEvent type_down failed: {e:?}"))?;
-        down.set_string_from_utf8(&[ch]);
-        down.post(core_graphics::event::CGEventTapLocation::HID);
+        .map_err(|e| anyhow!("CGEventSource failed: {e:?}"))?;
 
-        // Key-up.
-        let up = core_graphics::event::CGEvent::new_keyboard_event(source.clone(), 0, false)
-            .map_err(|e| anyhow!("CGEvent type_up failed: {e:?}"))?;
-        up.set_string_from_utf8(&[ch]);
-        up.post(core_graphics::event::CGEventTapLocation::HID);
+        for ch in text.chars() {
+            // Create a key-down event with the Unicode character.
+            let down = core_graphics::event::CGEvent::new_keyboard_event(
+                source.clone(),
+                0, // virtual key (0 = use Unicode string)
+                true,
+            )
+            .map_err(|e| anyhow!("CGEvent type_down failed: {e:?}"))?;
+            down.set_string(&ch.to_string());
+            down.post(core_graphics::event::CGEventTapLocation::HID);
+
+            // Key-up.
+            let up = core_graphics::event::CGEvent::new_keyboard_event(source.clone(), 0, false)
+                .map_err(|e| anyhow!("CGEvent type_up failed: {e:?}"))?;
+            up.set_string(&ch.to_string());
+            up.post(core_graphics::event::CGEventTapLocation::HID);
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 /// Maps a named key or single character to a macOS virtual keycode.
