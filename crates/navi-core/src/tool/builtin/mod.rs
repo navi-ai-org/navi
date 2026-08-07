@@ -45,8 +45,8 @@ pub(super) use code_exec::CodeExecTool;
 pub(super) use code_tool::CodeReadTool;
 #[cfg(feature = "computer-use")]
 pub(super) use computer_use::{
-    AnnotateScreenshotTool, CaptureScreenTool, EnumerateWindowsTool, InspectElementTool,
-    SimulateInputTool,
+    AnnotateScreenshotTool, CaptureScreenTool, EnumerateWindowsTool, InspectDesktopTool,
+    InspectElementTool, OpenApplicationTool, SimulateInputTool,
 };
 pub(super) use edit_tool::{EditTool, MultiEditTool};
 pub(super) use helpers::truncate_tool_result;

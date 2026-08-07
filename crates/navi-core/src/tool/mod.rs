@@ -25,8 +25,8 @@ mod tests;
 use builtin::BrowserTool;
 #[cfg(feature = "computer-use")]
 use builtin::{
-    AnnotateScreenshotTool, CaptureScreenTool, EnumerateWindowsTool, InspectElementTool,
-    SimulateInputTool,
+    AnnotateScreenshotTool, CaptureScreenTool, EnumerateWindowsTool, InspectDesktopTool,
+    InspectElementTool, OpenApplicationTool, SimulateInputTool,
 };
 use builtin::{
     AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool,
@@ -197,6 +197,13 @@ pub struct ToolExecutor {
     /// this to decide whether to include base64 image data in their output
     /// or return text-only metadata. Defaults to `true` for backward compat.
     supports_vision: bool,
+    /// Shared element cache for computer-use: populated by `inspect_desktop`
+    /// and `inspect_element`, read by `simulate_input` to resolve
+    /// `element_id` → screen coordinates. Lives on the executor so all
+    /// tool instances share the same cache.
+    #[cfg(feature = "computer-use")]
+    element_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +259,8 @@ impl ToolExecutor {
             registry: ToolRegistry::new(),
             rewind_store: None,
             supports_vision: true,
+            #[cfg(feature = "computer-use")]
+            element_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -365,6 +374,8 @@ impl ToolExecutor {
             registry: ToolRegistry::new(),
             rewind_store: None,
             supports_vision: true,
+            #[cfg(feature = "computer-use")]
+            element_cache: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
         executor.register(ReadTool::new(pr.clone()));
         executor.register(ReadTool::alias(pr.clone(), "read"));
@@ -591,6 +602,10 @@ impl ToolExecutor {
         forked.harness_profile = self.harness_profile.clone();
         forked.rewind_store = self.rewind_store.clone();
         forked.supports_vision = self.supports_vision;
+        #[cfg(feature = "computer-use")]
+        {
+            forked.element_cache = self.element_cache.clone();
+        }
         for name in allowed_tool_names {
             if let Some(tool) = self.tools.get(name) {
                 forked.register_tool(tool.clone());
@@ -1220,14 +1235,21 @@ impl ToolExecutor {
                 )
             };
             if enabled {
+                self.register(OpenApplicationTool::new());
+                self.register(InspectDesktopTool::new(self.element_cache.clone()));
                 self.register(CaptureScreenTool::new(data_dir.clone(), supports_vision));
                 self.register(EnumerateWindowsTool::new());
-                self.register(InspectElementTool::new());
+                self.register(InspectElementTool::new(self.element_cache.clone()));
                 self.register(AnnotateScreenshotTool::new(
                     data_dir.clone(),
                     supports_vision,
                 ));
-                self.register(SimulateInputTool::new(data_dir, deny_apps, permission_mode));
+                self.register(SimulateInputTool::new(
+                    data_dir,
+                    deny_apps,
+                    permission_mode,
+                    self.element_cache.clone(),
+                ));
             }
         }
         self.register(NewContextWindowTool::new());

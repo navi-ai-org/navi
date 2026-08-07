@@ -64,15 +64,26 @@ impl Default for CaptureOptions {
 pub struct InspectOptions {
     /// Window handle to inspect (None = foreground).
     pub window: Option<u64>,
+    /// Element ID to drill down from (e.g. "w0.e12"). When set, the backend
+    /// walks the sub-tree starting from this element instead of the window
+    /// root. If both `window` and `element_id` are set, `element_id` wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
     /// Max tree depth (0 = root only).
     pub max_depth: u32,
+    /// Use RawView (deeper, enters Electron/Chromium apps) instead of
+    /// ControlView (logical UI tree). Default false.
+    #[serde(default)]
+    pub raw_view: bool,
 }
 
 impl Default for InspectOptions {
     fn default() -> Self {
         Self {
             window: None,
+            element_id: None,
             max_depth: 3,
+            raw_view: false,
         }
     }
 }
@@ -85,6 +96,11 @@ pub struct ElementTree {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementInfo {
+    /// Stable element identifier (e.g. "w0.e12") assigned during
+    /// `inspect_desktop` or `inspect_element`. Use this with
+    /// `simulate_input` (click by ID) or `inspect_element` (drill-down).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
     pub name: String,
     pub control_type: String,
     pub value: Option<String>,
@@ -105,6 +121,48 @@ pub struct InputResult {
     pub actions_performed: usize,
 }
 
+// ── Desktop snapshot types ─────────────────────────────────────────────────
+
+/// Shallow snapshot of all visible windows and their top-level UI elements.
+///
+/// Returned by [`ComputerUseBackend::inspect_desktop`]. This is the
+/// text-based equivalent of looking at the screen — no screenshot needed.
+/// Each element has an `element_id` for use with `inspect_element`
+/// (drill-down) or `simulate_input` (click by ID).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopSnapshot {
+    pub windows: Vec<WindowSnapshot>,
+    pub platform: String,
+}
+
+/// One window in a [`DesktopSnapshot`], with its shallow element tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowSnapshot {
+    /// Stable window identifier (e.g. "w0", "w1").
+    pub window_id: String,
+    /// Platform-specific window handle.
+    pub hwnd: u64,
+    pub title: String,
+    pub pid: u32,
+    pub rect: Rect,
+    pub is_focused: bool,
+    /// Shallow element tree (depth 2: window → panels → controls).
+    pub elements: Vec<ElementInfo>,
+}
+
+// ── Open application types ─────────────────────────────────────────────────
+
+/// Result of [`ComputerUseBackend::open_application`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAppResult {
+    /// Whether the application was successfully launched.
+    pub launched: bool,
+    /// Process ID if available (0 if unknown).
+    pub pid: u32,
+    /// Human-readable description of what happened.
+    pub message: String,
+}
+
 // ── Backend trait ──────────────────────────────────────────────────────────
 
 /// Platform-agnostic OS automation backend.
@@ -121,11 +179,23 @@ pub trait ComputerUseBackend: Send + Sync {
     /// Enumerates visible top-level windows.
     fn enumerate_windows(&self) -> Result<Vec<WindowInfo>>;
 
-    /// Inspects the accessibility tree of a window.
+    /// Inspects the accessibility tree of a window (or sub-tree from an
+    /// element_id). Supports RawView for deeper traversal into
+    /// Electron/Chromium apps.
     fn inspect_element(&self, opts: &InspectOptions) -> Result<ElementTree>;
 
     /// Simulates a sequence of input actions (mouse + keyboard).
     fn simulate_input(&self, actions: &[serde_json::Value]) -> Result<InputResult>;
+
+    /// Returns a shallow snapshot of all visible windows and their UI
+    /// elements (depth 2). Each element gets a stable `element_id` for
+    /// drill-down via `inspect_element` or click-by-ID via `simulate_input`.
+    /// This is the text-based equivalent of looking at the screen.
+    fn inspect_desktop(&self) -> Result<DesktopSnapshot>;
+
+    /// Opens/launches an application by name or path. Bypasses the GUI
+    /// entirely — no Start menu or Spotlight simulation needed.
+    fn open_application(&self, name: &str) -> Result<OpenAppResult>;
 }
 
 // ── Platform selection ─────────────────────────────────────────────────────
@@ -167,6 +237,12 @@ impl ComputerUseBackend for UnsupportedBackend {
         bail!("computer use: no platform backend compiled for this OS")
     }
     fn simulate_input(&self, _actions: &[serde_json::Value]) -> Result<InputResult> {
+        bail!("computer use: no platform backend compiled for this OS")
+    }
+    fn inspect_desktop(&self) -> Result<DesktopSnapshot> {
+        bail!("computer use: no platform backend compiled for this OS")
+    }
+    fn open_application(&self, _name: &str) -> Result<OpenAppResult> {
         bail!("computer use: no platform backend compiled for this OS")
     }
 }
@@ -217,7 +293,9 @@ impl ComputerUseBackend for WindowsBackendAdapter {
         // Run on a blocking thread so we don't stall the tokio runtime.
         let win_opts = navi_os_windows::WinInspectOptions {
             window: opts.window,
+            element_id: opts.element_id.clone(),
             max_depth: opts.max_depth,
+            raw_view: opts.raw_view,
         };
         let tree = navi_os_windows::inspect_element(&win_opts)?;
         Ok(ElementTree {
@@ -232,6 +310,40 @@ impl ComputerUseBackend for WindowsBackendAdapter {
             actions_performed: res.actions_performed,
         })
     }
+
+    fn inspect_desktop(&self) -> Result<DesktopSnapshot> {
+        let snap = navi_os_windows::inspect_desktop()?;
+        Ok(DesktopSnapshot {
+            windows: snap
+                .windows
+                .into_iter()
+                .map(|w| WindowSnapshot {
+                    window_id: w.window_id,
+                    hwnd: w.hwnd,
+                    title: w.title,
+                    pid: w.pid,
+                    rect: Rect {
+                        x: w.rect.x,
+                        y: w.rect.y,
+                        width: w.rect.width,
+                        height: w.rect.height,
+                    },
+                    is_focused: w.is_focused,
+                    elements: w.elements.into_iter().map(convert_element).collect(),
+                })
+                .collect(),
+            platform: "windows".to_string(),
+        })
+    }
+
+    fn open_application(&self, name: &str) -> Result<OpenAppResult> {
+        let res = navi_os_windows::open_application(name)?;
+        Ok(OpenAppResult {
+            launched: res.launched,
+            pid: res.pid,
+            message: res.message,
+        })
+    }
 }
 
 /// Converts the leaf crate's `WinElementInfo` into the facade's `ElementInfo`.
@@ -241,6 +353,7 @@ impl ComputerUseBackend for WindowsBackendAdapter {
 #[cfg(windows)]
 fn convert_element(win: navi_os_windows::WinElementInfo) -> ElementInfo {
     ElementInfo {
+        element_id: win.element_id,
         name: win.name,
         control_type: win.control_type,
         value: win.value,
@@ -300,7 +413,9 @@ impl ComputerUseBackend for MacosBackendAdapter {
     fn inspect_element(&self, opts: &InspectOptions) -> Result<ElementTree> {
         let mac_opts = navi_os_macos::MacInspectOptions {
             window: opts.window,
+            element_id: opts.element_id.clone(),
             max_depth: opts.max_depth,
+            raw_view: opts.raw_view,
         };
         let tree = navi_os_macos::inspect_element(&mac_opts)?;
         Ok(ElementTree {
@@ -315,12 +430,47 @@ impl ComputerUseBackend for MacosBackendAdapter {
             actions_performed: res.actions_performed,
         })
     }
+
+    fn inspect_desktop(&self) -> Result<DesktopSnapshot> {
+        let snap = navi_os_macos::inspect_desktop()?;
+        Ok(DesktopSnapshot {
+            windows: snap
+                .windows
+                .into_iter()
+                .map(|w| WindowSnapshot {
+                    window_id: w.window_id,
+                    hwnd: w.hwnd,
+                    title: w.title,
+                    pid: w.pid,
+                    rect: Rect {
+                        x: w.rect.x,
+                        y: w.rect.y,
+                        width: w.rect.width,
+                        height: w.rect.height,
+                    },
+                    is_focused: w.is_focused,
+                    elements: w.elements.into_iter().map(convert_element_mac).collect(),
+                })
+                .collect(),
+            platform: "macos".to_string(),
+        })
+    }
+
+    fn open_application(&self, name: &str) -> Result<OpenAppResult> {
+        let res = navi_os_macos::open_application(name)?;
+        Ok(OpenAppResult {
+            launched: res.launched,
+            pid: res.pid,
+            message: res.message,
+        })
+    }
 }
 
 /// Converts the leaf crate's `MacElementInfo` into the facade's `ElementInfo`.
 #[cfg(target_os = "macos")]
 fn convert_element_mac(mac: navi_os_macos::MacElementInfo) -> ElementInfo {
     ElementInfo {
+        element_id: mac.element_id,
         name: mac.name,
         control_type: mac.control_type,
         value: mac.value,
@@ -448,6 +598,7 @@ fn is_target_sensitive_windows() -> bool {
     let opts = WinInspectOptions {
         window: None, // foreground
         max_depth: 2,
+        ..Default::default()
     };
     let tree = match inspect_element(&opts) {
         Ok(t) => t,

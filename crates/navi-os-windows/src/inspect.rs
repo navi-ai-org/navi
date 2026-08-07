@@ -8,7 +8,10 @@
 //! per process). UIA calls are cross-process and can block; the facade wraps
 //! this in `spawn_blocking` so the tokio runtime is not stalled.
 
-use super::{WinElementInfo, WinElementTree, WinInspectOptions, WinRect};
+use super::{
+    WinDesktopSnapshot, WinElementInfo, WinElementTree, WinInspectOptions, WinRect,
+    WinWindowSnapshot, enumerate_windows,
+};
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
@@ -23,11 +26,20 @@ use windows::core::BSTR;
 /// thousands of nodes at a single level; this keeps the payload bounded.
 const MAX_CHILDREN_PER_NODE: usize = 200;
 
+/// Maximum number of windows [`inspect_desktop`] inspects, to keep the
+/// response payload bounded.
+const DESKTOP_MAX_WINDOWS: usize = 20;
+
 /// Inspects the accessibility tree of a window.
 ///
 /// `opts.window` selects the target window by HWND (as `u64`); `None` uses
 /// the foreground window. `opts.max_depth` bounds the recursion (0 = root
-/// only).
+/// only). `opts.raw_view` selects the RawView walker (all nodes) instead of
+/// the ControlView walker (logical tree); use it for Electron/Chromium apps
+/// where the ControlView tree is sparse.
+///
+/// Each visited element is assigned a stable `element_id` of the form
+/// `w0.e{counter}` (single-window inspection always uses window index 0).
 pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
     super::ensure_com_initialized()?;
 
@@ -49,14 +61,23 @@ pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
             .ElementFromHandle(hwnd)
             .context("IUIAutomation::ElementFromHandle failed (UIPI may block non-elevated clients from elevated windows)")?;
 
-        // 3. Use the ControlView walker for the logical tree (skips
-        //    decorative/invisible elements that flood the RawView tree).
-        let walker = automation
-            .ControlViewWalker()
-            .context("IUIAutomation::ControlViewWalker failed")?;
+        // 3. Select the walker: RawView exposes every node (including
+        //    decorative/invisible ones that flood Chromium/Electron trees),
+        //    while ControlView skips them for a cleaner logical tree.
+        let walker = if opts.raw_view {
+            automation
+                .RawViewWalker()
+                .context("IUIAutomation::RawViewWalker failed")?
+        } else {
+            automation
+                .ControlViewWalker()
+                .context("IUIAutomation::ControlViewWalker failed")?
+        };
 
-        // 4. Walk recursively, building WinElementInfo nodes.
-        let root_info = walk_tree(&walker, &root, 0, opts.max_depth);
+        // 4. Walk recursively, building WinElementInfo nodes. Each visited
+        //    element gets a stable id "w0.e{counter}".
+        let mut counter = 0usize;
+        let root_info = walk_tree(&walker, &root, 0, opts.max_depth, 0, &mut counter);
 
         Ok(WinElementTree {
             root: root_info,
@@ -65,18 +86,98 @@ pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
     }
 }
 
+/// Returns a shallow snapshot of all visible windows and their top-level UI
+/// elements (depth 2: window -> panels -> controls).
+///
+/// Each element is assigned a stable `element_id` of the form
+/// `w{window_index}.e{counter}` (counter resets per window) for use with
+/// [`inspect_element`] (drill-down) or `simulate_input` (click by ID).
+///
+/// Windows that fail inspection are skipped rather than failing the whole
+/// call. At most [`DESKTOP_MAX_WINDOWS`] windows are inspected to keep the
+/// payload bounded.
+pub fn inspect_desktop() -> Result<WinDesktopSnapshot> {
+    super::ensure_com_initialized()?;
+
+    let wins = enumerate_windows().context("inspect_desktop: enumerate_windows failed")?;
+
+    unsafe {
+        // One IUIAutomation instance shared across all windows.
+        let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL)
+            .context("CoCreateInstance(CUIAutomation) failed")?;
+
+        let walker = automation
+            .ControlViewWalker()
+            .context("IUIAutomation::ControlViewWalker failed")?;
+
+        let mut snapshots = Vec::new();
+        for (idx, win) in wins.iter().take(DESKTOP_MAX_WINDOWS).enumerate() {
+            let hwnd = HWND(win.hwnd as *mut _);
+            if hwnd.0.is_null() {
+                continue;
+            }
+
+            // Skip windows whose root element cannot be resolved (UIPI,
+            // unresponsive app, etc.) — don't fail the whole snapshot.
+            let root = match automation.ElementFromHandle(hwnd) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::debug!(
+                        window = %win.title,
+                        hwnd = win.hwnd,
+                        error = %e,
+                        "inspect_desktop: skipping window, ElementFromHandle failed"
+                    );
+                    continue;
+                }
+            };
+
+            // Depth 2: window root -> its direct children -> their children.
+            // The counter resets per window so ids are scoped as
+            // w{idx}.e{counter}.
+            let mut counter = 0usize;
+            let root_info = walk_tree(&walker, &root, 0, 2, idx, &mut counter);
+
+            snapshots.push(WinWindowSnapshot {
+                window_id: format!("w{idx}"),
+                hwnd: win.hwnd,
+                title: win.title.clone(),
+                pid: win.pid,
+                rect: WinRect {
+                    x: win.rect.x,
+                    y: win.rect.y,
+                    width: win.rect.width,
+                    height: win.rect.height,
+                },
+                is_focused: win.is_focused,
+                elements: root_info.children,
+            });
+        }
+
+        Ok(WinDesktopSnapshot { windows: snapshots })
+    }
+}
+
 /// Recursively walks the UIA tree from `element`, building a `WinElementInfo`.
 ///
 /// Stops at `max_depth`. Each level truncates children to
 /// `MAX_CHILDREN_PER_NODE` and sets `children_truncated` if exceeded.
+///
+/// `window_idx` and `counter` are used to assign stable element ids of the
+/// form `w{window_idx}.e{counter}`. The counter is incremented for every
+/// visited element (pre-order: the parent is numbered before its children).
 unsafe fn walk_tree(
     walker: &IUIAutomationTreeWalker,
     element: &IUIAutomationElement,
     depth: u32,
     max_depth: u32,
+    window_idx: usize,
+    counter: &mut usize,
 ) -> WinElementInfo {
     unsafe {
-        let info = read_element_info(element);
+        let mut info = read_element_info(element);
+        info.element_id = Some(format!("w{window_idx}.e{counter}"));
+        *counter += 1;
 
         // Stop recursing at max_depth.
         if depth >= max_depth {
@@ -95,7 +196,8 @@ unsafe fn walk_tree(
                     truncated = true;
                     break;
                 }
-                let child_info = walk_tree(walker, &current, depth + 1, max_depth);
+                let child_info =
+                    walk_tree(walker, &current, depth + 1, max_depth, window_idx, counter);
                 children.push(child_info);
                 count += 1;
 
@@ -157,6 +259,7 @@ unsafe fn read_element_info(element: &IUIAutomationElement) -> WinElementInfo {
         };
 
         WinElementInfo {
+            element_id: None,
             name,
             control_type,
             value,
@@ -181,6 +284,7 @@ mod tests {
         let tree = match inspect_element(&WinInspectOptions {
             window: None,
             max_depth: 1,
+            ..Default::default()
         }) {
             Ok(t) => t,
             Err(e) => {
@@ -204,6 +308,7 @@ mod tests {
         let tree = match inspect_element(&WinInspectOptions {
             window: None,
             max_depth: 0,
+            ..Default::default()
         }) {
             Ok(t) => t,
             Err(e) => {

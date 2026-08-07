@@ -13,6 +13,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use super::helpers;
 use crate::config::defaults::is_deny_listed;
@@ -216,11 +217,18 @@ specific region or simulating input.",
 
 // ── InspectElementTool ─────────────────────────────────────────────────────
 
-pub(crate) struct InspectElementTool;
+pub(crate) struct InspectElementTool {
+    element_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>>,
+}
 
 impl InspectElementTool {
-    pub(crate) fn new() -> Self {
-        Self
+    pub(crate) fn new(
+        element_cache: Arc<
+            std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>,
+        >,
+    ) -> Self {
+        Self { element_cache }
     }
 }
 
@@ -229,22 +237,31 @@ impl Tool for InspectElementTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition_with_meta(
             "inspect_element",
-            "Inspect the accessibility tree of a window (UI Automation / AXUIElement / AT-SPI). \
-Returns element names, control types, values, bounding rectangles, and whether elements are \
-password fields. Pass `window` (hwnd from enumerate_windows) to target a specific window, or \
-omit to inspect the foreground window. **Spike:** returns the foreground window root only; \
-full tree walk is not yet implemented.",
+            "Inspect the accessibility tree of a window or sub-element. Returns element names, \
+control types, values, bounding rectangles, and element_ids for drill-down or click-by-ID. \
+Pass `element_id` (from inspect_desktop) to drill down into a specific element's children, or \
+`window` (hwnd) to inspect a specific window. Omit both for the foreground window. Set \
+`raw_view: true` to use RawView (deeper traversal into Electron/Chromium apps like Discord, \
+VS Code, Zen Browser). Default is ControlView (logical UI tree, cleaner but shallower).",
             ToolKind::Read,
             json!({
                 "type": "object",
                 "properties": {
                     "window": {
                         "type": "integer",
-                        "description": "Window handle (hwnd) from enumerate_windows. Omit for foreground window."
+                        "description": "Window handle (hwnd) from enumerate_windows or inspect_desktop. Omit for foreground window."
+                    },
+                    "element_id": {
+                        "type": "string",
+                        "description": "Element ID from inspect_desktop (e.g. 'w0.e12'). Drill down from this element instead of window root."
                     },
                     "max_depth": {
                         "type": "integer",
                         "description": "Maximum tree depth to traverse (default 3, 0 = root only)."
+                    },
+                    "raw_view": {
+                        "type": "boolean",
+                        "description": "Use RawView for deeper traversal into Electron/Chromium apps. Default false."
                     }
                 },
                 "additionalProperties": false,
@@ -268,19 +285,39 @@ full tree walk is not yet implemented.",
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let window = invocation.input.get("window").and_then(Value::as_u64);
+        let element_id = invocation
+            .input
+            .get("element_id")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
         let max_depth = invocation
             .input
             .get("max_depth")
             .and_then(Value::as_u64)
             .unwrap_or(3) as u32;
+        let raw_view = invocation
+            .input
+            .get("raw_view")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let backend = navi_computer_use::platform_backend();
         // UIA calls are cross-process and can block on unresponsive apps.
         // Run on a blocking thread so we don't stall the tokio runtime.
-        let opts = navi_computer_use::InspectOptions { window, max_depth };
+        let opts = navi_computer_use::InspectOptions {
+            window,
+            element_id,
+            max_depth,
+            raw_view,
+        };
         let tree = tokio::task::spawn_blocking(move || backend.inspect_element(&opts))
             .await
             .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"))??;
+
+        // Update the element cache with any new element_ids from this inspect.
+        if let Ok(mut cache) = self.element_cache.lock() {
+            collect_element_rects(&tree.root, &mut cache);
+        }
 
         Ok(helpers::ok(
             invocation.id,
@@ -295,6 +332,7 @@ full tree walk is not yet implemented.",
 
 fn element_to_json(el: &navi_computer_use::ElementInfo) -> Value {
     json!({
+        "element_id": el.element_id,
         "name": el.name,
         "control_type": el.control_type,
         "value": el.value,
@@ -305,6 +343,201 @@ fn element_to_json(el: &navi_computer_use::ElementInfo) -> Value {
         "children_truncated": el.children_truncated,
         "children": el.children.iter().map(element_to_json).collect::<Vec<_>>(),
     })
+}
+
+/// Recursively collects all element_ids and their rects from an element tree.
+/// Used to populate the element cache for `simulate_input` click-by-ID.
+fn collect_element_rects(
+    el: &navi_computer_use::ElementInfo,
+    map: &mut std::collections::HashMap<String, navi_computer_use::Rect>,
+) {
+    if let (Some(id), Some(rect)) = (&el.element_id, &el.rect) {
+        map.insert(id.clone(), rect.clone());
+    }
+    for child in &el.children {
+        collect_element_rects(child, map);
+    }
+}
+
+// ── InspectDesktopTool ─────────────────────────────────────────────────────
+
+pub(crate) struct InspectDesktopTool {
+    /// Shared element cache — populated on each inspect call, read by
+    /// SimulateInputTool to resolve element_id → coordinates.
+    element_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>>,
+}
+
+impl InspectDesktopTool {
+    pub(crate) fn new(
+        element_cache: Arc<
+            std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>,
+        >,
+    ) -> Self {
+        Self { element_cache }
+    }
+}
+
+#[async_trait]
+impl Tool for InspectDesktopTool {
+    fn definition(&self) -> ToolDefinition {
+        helpers::definition_with_meta(
+            "inspect_desktop",
+            "Returns a text snapshot of all visible windows and their UI elements (depth 2). \
+Each element has an element_id (e.g. 'w0.e12') for use with inspect_element (drill-down) or \
+simulate_input (click by ID). This is the text-based equivalent of looking at the screen — \
+no screenshot or vision capability needed. Use this as the first step in any desktop \
+automation task: inspect_desktop → identify target → simulate_input or inspect_element.",
+            ToolKind::Read,
+            json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false,
+            }),
+            ToolMetadata {
+                namespace: "computer-use".to_string(),
+                risk: ToolRisk::Low,
+                is_read_only: true,
+                is_concurrency_safe: false,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec!["os.accessibility.read".to_string()],
+                tags: vec![
+                    "desktop".to_string(),
+                    "accessibility".to_string(),
+                    "snapshot".to_string(),
+                    "inspect".to_string(),
+                ],
+                ..ToolMetadata::default()
+            },
+        )
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        let cache = self.element_cache.clone();
+        let backend = navi_computer_use::platform_backend();
+        let snapshot = tokio::task::spawn_blocking(move || backend.inspect_desktop())
+            .await
+            .map_err(|e| anyhow::anyhow!("inspect_desktop worker panicked: {e}"))??;
+
+        // Populate the element cache with all element_ids → rects.
+        if let Ok(mut cache) = cache.lock() {
+            cache.clear();
+            for window in &snapshot.windows {
+                for el in &window.elements {
+                    collect_element_rects(el, &mut cache);
+                }
+            }
+        }
+
+        let windows_json: Vec<Value> = snapshot
+            .windows
+            .iter()
+            .map(|w| {
+                json!({
+                    "window_id": w.window_id,
+                    "hwnd": w.hwnd,
+                    "title": w.title,
+                    "pid": w.pid,
+                    "rect": {
+                        "x": w.rect.x,
+                        "y": w.rect.y,
+                        "width": w.rect.width,
+                        "height": w.rect.height,
+                    },
+                    "is_focused": w.is_focused,
+                    "elements": w.elements.iter().map(element_to_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+
+        Ok(helpers::ok(
+            invocation.id,
+            json!({
+                "windows": windows_json,
+                "window_count": snapshot.windows.len(),
+                "platform": snapshot.platform,
+                "message": format!(
+                    "Found {} visible window(s). Each element has an element_id — \
+                     use it with simulate_input (click by ID) or inspect_element \
+                     (drill-down with raw_view=true for Electron apps).",
+                    snapshot.windows.len()
+                ),
+            }),
+        ))
+    }
+}
+
+// ── OpenApplicationTool ────────────────────────────────────────────────────
+
+pub(crate) struct OpenApplicationTool;
+
+impl OpenApplicationTool {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl Tool for OpenApplicationTool {
+    fn definition(&self) -> ToolDefinition {
+        helpers::definition_with_meta(
+            "open_application",
+            "Launch an application by name (e.g. 'zen', 'notepad', 'chrome', 'Safari'). \
+Bypasses the GUI entirely — no Start menu or Spotlight simulation needed. \
+On Windows uses ShellExecute (searches App Paths registry, PATH, file associations). \
+On macOS uses `open -a`. Returns whether the app was launched successfully.",
+            ToolKind::Command,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Application name or executable path (e.g. 'zen', 'notepad', 'chrome')."
+                    }
+                },
+                "required": ["name"],
+                "additionalProperties": false,
+            }),
+            ToolMetadata {
+                namespace: "computer-use".to_string(),
+                risk: ToolRisk::Medium,
+                is_read_only: false,
+                is_concurrency_safe: true,
+                exposure: crate::tool::ToolExposure::Direct,
+                capabilities: vec!["os.process.launch".to_string()],
+                tags: vec![
+                    "application".to_string(),
+                    "launch".to_string(),
+                    "open".to_string(),
+                ],
+                ..ToolMetadata::default()
+            },
+        )
+    }
+
+    async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
+        let name = invocation
+            .input
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("missing required `name` field"))?;
+
+        let backend = navi_computer_use::platform_backend();
+        let name_owned = name.to_string();
+        let result = tokio::task::spawn_blocking(move || backend.open_application(&name_owned))
+            .await
+            .map_err(|e| anyhow::anyhow!("open_application worker panicked: {e}"))??;
+
+        Ok(helpers::ok(
+            invocation.id,
+            json!({
+                "launched": result.launched,
+                "pid": result.pid,
+                "message": result.message,
+                "platform": navi_computer_use::platform_backend().platform_name(),
+            }),
+        ))
+    }
 }
 
 // ── AnnotateScreenshotTool ──────────────────────────────────────────────────
@@ -390,7 +623,12 @@ control types by position.",
         )?;
 
         // 2. Inspect the accessibility tree
-        let inspect_opts = navi_computer_use::InspectOptions { window, max_depth };
+        let inspect_opts = navi_computer_use::InspectOptions {
+            window,
+            element_id: None,
+            max_depth,
+            raw_view: false,
+        };
         let backend2 = navi_computer_use::platform_backend();
         let tree = tokio::task::spawn_blocking(move || backend2.inspect_element(&inspect_opts))
             .await
@@ -491,6 +729,10 @@ pub(crate) struct SimulateInputTool {
     deny_apps: Vec<String>,
     /// Current permission mode — Yolo bypasses the deny-list.
     permission_mode: PermissionMode,
+    /// Shared element cache — populated by InspectDesktopTool/InspectElementTool,
+    /// read here to resolve element_id → coordinates before calling the backend.
+    element_cache:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>>,
 }
 
 impl SimulateInputTool {
@@ -498,12 +740,49 @@ impl SimulateInputTool {
         data_dir: PathBuf,
         deny_apps: Vec<String>,
         permission_mode: PermissionMode,
+        element_cache: Arc<
+            std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>,
+        >,
     ) -> Self {
         Self {
             data_dir,
             deny_apps,
             permission_mode,
+            element_cache,
         }
+    }
+
+    /// Resolves `element_id` in a mouse action to x/y coordinates using the
+    /// element cache. Returns a new actions Vec with resolved coordinates.
+    /// If an element_id is not found in the cache, returns an error message.
+    fn resolve_element_ids(&self, actions: &[Value]) -> std::result::Result<Vec<Value>, String> {
+        let cache = self
+            .element_cache
+            .lock()
+            .map_err(|e| format!("element cache lock failed: {e}"))?;
+        let mut resolved = Vec::with_capacity(actions.len());
+        for action in actions {
+            if let Some(element_id) = action.get("element_id").and_then(Value::as_str) {
+                let rect = cache.get(element_id).ok_or_else(|| {
+                    format!(
+                        "element_id '{element_id}' not found in cache. \
+                         The element may have moved or been destroyed. \
+                         Re-run inspect_desktop to refresh the element cache."
+                    )
+                })?;
+                let center_x = rect.x + rect.width / 2;
+                let center_y = rect.y + rect.height / 2;
+                let mut new_action = action.clone();
+                if let Some(obj) = new_action.as_object_mut() {
+                    obj.insert("x".to_string(), json!(center_x));
+                    obj.insert("y".to_string(), json!(center_y));
+                }
+                resolved.push(new_action);
+            } else {
+                resolved.push(action.clone());
+            }
+        }
+        Ok(resolved)
     }
 }
 
@@ -517,7 +796,10 @@ input action objects executed in order. Each action has an `action` field: \
 `mouse_move` (x, y), `click` (button: left/right/middle, x, y), `double_click` (button, x, y), \
 `scroll` (delta: wheel notches, x, y), `key` (key: e.g. Enter, Tab, Escape), `key_down` (key), \
 `key_up` (key), `type` (text: string to type character by character). \
-**High risk:** this tool controls the real desktop. Requires approval in all modes except Yolo.",
+Mouse actions accept either `x`/`y` coordinates OR `element_id` (from inspect_desktop) — \
+when `element_id` is provided, the tool resolves it to the element's center coordinates \
+automatically. **High risk:** this tool controls the real desktop. Requires approval in all \
+modes except Yolo.",
             ToolKind::Command,
             json!({
                 "type": "object",
@@ -533,8 +815,9 @@ input action objects executed in order. Each action has an `action` field: \
                                     "enum": ["mouse_move", "click", "double_click", "scroll", "key", "key_down", "key_up", "type"],
                                     "description": "Input action type."
                                 },
-                                "x": { "type": "integer", "description": "X coordinate for mouse actions." },
-                                "y": { "type": "integer", "description": "Y coordinate for mouse actions." },
+                                "x": { "type": "integer", "description": "X coordinate for mouse actions. Required if element_id is not provided." },
+                                "y": { "type": "integer", "description": "Y coordinate for mouse actions. Required if element_id is not provided." },
+                                "element_id": { "type": "string", "description": "Element ID from inspect_desktop (e.g. 'w0.e12'). When provided, resolves to the element's center coordinates. Alternative to x/y." },
                                 "button": { "type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button for click/double_click." },
                                 "delta": { "type": "integer", "description": "Wheel notches for scroll (positive = up, negative = down)." },
                                 "key": { "type": "string", "description": "Key name for key/key_down/key_up (e.g. Enter, Tab, Escape, A)." },
@@ -568,13 +851,13 @@ input action objects executed in order. Each action has an `action` field: \
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-        let actions = invocation
+        let raw_actions = invocation
             .input
             .get("actions")
             .and_then(Value::as_array)
             .ok_or_else(|| anyhow::anyhow!("missing required `actions` array"))?;
 
-        if actions.is_empty() {
+        if raw_actions.is_empty() {
             return Ok(helpers::ok(
                 invocation.id,
                 json!({
@@ -584,12 +867,31 @@ input action objects executed in order. Each action has an `action` field: \
             ));
         }
 
+        // ── Resolve element_id → coordinates ──────────────────────────────
+        // Any mouse action with an `element_id` field gets resolved to x/y
+        // using the element cache populated by inspect_desktop/inspect_element.
+        let actions = match self.resolve_element_ids(raw_actions) {
+            Ok(resolved) => resolved,
+            Err(msg) => {
+                return Ok(helpers::ok(
+                    invocation.id,
+                    json!({
+                        "actions_performed": 0,
+                        "error": msg,
+                        "message": format!(
+                            "Could not resolve element_id to coordinates: {msg}"
+                        ),
+                    }),
+                ));
+            }
+        };
+
         // ── Deny-list enforcement (ADR 0016) ──────────────────────────────
         // Resolve the target app from the first mouse action's coordinates,
         // or fall back to the foreground window for keyboard-only actions.
         // Yolo bypasses the deny-list entirely.
         if self.permission_mode != PermissionMode::Yolo && !self.deny_apps.is_empty() {
-            if let Some(deny_reason) = self.check_deny_list(actions) {
+            if let Some(deny_reason) = self.check_deny_list(&actions) {
                 return Ok(helpers::ok(
                     invocation.id,
                     json!({
@@ -613,7 +915,7 @@ input action objects executed in order. Each action has an `action` field: \
         // layer (`SecurityRisk::UiAutomation`); Yolo bypasses entirely.
         // We only block here in Auto — the other modes are handled upstream.
         if self.permission_mode == PermissionMode::Auto
-            && self.actions_target_keyboard(actions)
+            && self.actions_target_keyboard(&actions)
             && navi_computer_use::is_target_sensitive()
         {
             return Ok(helpers::ok(
@@ -631,7 +933,7 @@ input action objects executed in order. Each action has an `action` field: \
         }
 
         let backend = navi_computer_use::platform_backend();
-        let result = backend.simulate_input(actions)?;
+        let result = backend.simulate_input(&actions)?;
 
         Ok(helpers::ok(
             invocation.id,
@@ -709,6 +1011,11 @@ impl SimulateInputTool {
 mod tests {
     use super::*;
 
+    fn test_cache()
+    -> Arc<std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>> {
+        Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()))
+    }
+
     #[test]
     fn capture_screen_definition_is_deferred_read() {
         let tool = CaptureScreenTool::new(PathBuf::from("/tmp"), true);
@@ -731,11 +1038,31 @@ mod tests {
 
     #[test]
     fn inspect_element_definition_is_deferred_read() {
-        let tool = InspectElementTool::new();
+        let tool = InspectElementTool::new(test_cache());
         let def = tool.definition();
         assert_eq!(def.name, "inspect_element");
         assert_eq!(def.kind, ToolKind::Read);
         assert_eq!(def.metadata.exposure, crate::tool::ToolExposure::Deferred);
+    }
+
+    #[test]
+    fn inspect_desktop_definition_is_direct_read() {
+        let tool = InspectDesktopTool::new(test_cache());
+        let def = tool.definition();
+        assert_eq!(def.name, "inspect_desktop");
+        assert_eq!(def.kind, ToolKind::Read);
+        assert_eq!(def.metadata.exposure, crate::tool::ToolExposure::Direct);
+        assert_eq!(def.metadata.risk, ToolRisk::Low);
+        assert!(def.metadata.is_read_only);
+    }
+
+    #[test]
+    fn open_application_definition_is_direct_command() {
+        let tool = OpenApplicationTool::new();
+        let def = tool.definition();
+        assert_eq!(def.name, "open_application");
+        assert_eq!(def.kind, ToolKind::Command);
+        assert_eq!(def.metadata.exposure, crate::tool::ToolExposure::Direct);
     }
 
     #[test]
@@ -744,6 +1071,7 @@ mod tests {
             PathBuf::from("/tmp"),
             Vec::new(),
             PermissionMode::Restricted,
+            test_cache(),
         );
         let def = tool.definition();
         assert_eq!(def.name, "simulate_input");
@@ -755,7 +1083,12 @@ mod tests {
 
     #[test]
     fn simulate_input_deny_list_check_returns_none_for_empty_list() {
-        let tool = SimulateInputTool::new(PathBuf::from("/tmp"), Vec::new(), PermissionMode::Auto);
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Auto,
+            test_cache(),
+        );
         // Empty deny-list → never blocks.
         assert_eq!(
             tool.check_deny_list(&[json!({"action": "click", "x": 0, "y": 0})]),
@@ -773,6 +1106,7 @@ mod tests {
             PathBuf::from("/tmp"),
             vec!["definitely_not_running_app_xyz".to_string()],
             PermissionMode::Auto,
+            test_cache(),
         );
         // The deny-list has an entry, but the target app at (0,0) won't match
         // it (unless someone is running an app with that exact name). This
@@ -780,6 +1114,47 @@ mod tests {
         // We can't assert None unconditionally (depends on what's at 0,0),
         // so we just assert the call doesn't panic.
         let _ = tool.check_deny_list(&[json!({"action": "click", "x": 0, "y": 0})]);
+    }
+
+    #[test]
+    fn simulate_input_resolves_element_id_to_coordinates() {
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e1".to_string(),
+                navi_computer_use::Rect {
+                    x: 100,
+                    y: 200,
+                    width: 50,
+                    height: 40,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![json!({"action": "click", "element_id": "w0.e1", "button": "left"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], 125); // 100 + 50/2
+        assert_eq!(resolved[0]["y"], 220); // 200 + 40/2
+    }
+
+    #[test]
+    fn simulate_input_element_id_not_in_cache_returns_error() {
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            test_cache(),
+        );
+        let actions = vec![json!({"action": "click", "element_id": "w99.e99"})];
+        let result = tool.resolve_element_ids(&actions);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found in cache"));
     }
 
     #[tokio::test]
@@ -806,6 +1181,7 @@ mod tests {
             PathBuf::from("/tmp"),
             vec![target.exe_name.clone()],
             PermissionMode::Auto,
+            test_cache(),
         );
         let invocation = ToolInvocation {
             id: "test-deny".to_string(),
@@ -858,6 +1234,7 @@ mod tests {
             PathBuf::from("/tmp"),
             vec![target.exe_name.clone()],
             PermissionMode::Yolo,
+            test_cache(),
         );
         let invocation = ToolInvocation {
             id: "test-yolo".to_string(),
@@ -883,7 +1260,12 @@ mod tests {
 
     #[test]
     fn actions_target_keyboard_detects_keyboard_actions() {
-        let tool = SimulateInputTool::new(PathBuf::from("/tmp"), Vec::new(), PermissionMode::Auto);
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Auto,
+            test_cache(),
+        );
         assert!(tool.actions_target_keyboard(&[json!({"action": "type", "text": "hi"})]));
         assert!(tool.actions_target_keyboard(&[json!({"action": "key", "key": "Enter"})]));
         assert!(tool.actions_target_keyboard(&[json!({"action": "key_down", "key": "Shift"})]));

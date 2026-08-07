@@ -7,16 +7,29 @@
 use anyhow::{Result, anyhow, bail};
 use std::ffi::CString;
 
-use crate::{MacElementInfo, MacElementTree, MacInspectOptions, MacRect};
+use crate::{
+    MacDesktopSnapshot, MacElementInfo, MacElementTree, MacInspectOptions, MacRect,
+    MacWindowSnapshot,
+};
 
 /// Maximum children per node before truncation (matches Windows backend).
 const MAX_CHILDREN_PER_NODE: usize = 200;
+
+/// Maximum number of windows inspected by `inspect_desktop`.
+const MAX_DESKTOP_WINDOWS: usize = 20;
 
 /// Inspects the accessibility tree of a window.
 ///
 /// If `opts.window` is None, inspects the focused UI element.
 /// If `opts.window` is Some, looks up the window by its CGWindowNumber
 /// and inspects the AXUIElement for that application.
+///
+/// Element IDs are assigned in the format `"w0.e{counter}"` (window index 0
+/// for direct `inspect_element` calls; `inspect_desktop` reassigns them with
+/// the correct window index). The `raw_view` option has no effect on macOS —
+/// AXUIElement always exposes the full tree (no ControlView/RawView split).
+/// The `element_id` option (drill-down) is accepted for API compatibility but
+/// not yet supported on macOS; the full window tree is returned instead.
 pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
     unsafe {
         // Check Accessibility permission first.
@@ -58,7 +71,10 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
             }
         };
 
-        let root = walk_element(root_element, opts.max_depth, 0);
+        // Direct inspect_element calls use window index 0 for element IDs.
+        // inspect_desktop reassigns IDs with the correct per-window index.
+        let mut counter: usize = 0;
+        let root = walk_element(root_element, opts.max_depth, 0, 0, &mut counter);
         accessibility_sys::CFRelease(root_element as _);
 
         Ok(MacElementTree {
@@ -68,11 +84,71 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
     }
 }
 
-/// Recursively walks the AXUIElement tree.
+/// Returns a shallow snapshot of all visible windows and their top-level UI
+/// elements (depth 2). Each element gets a stable `element_id` of the form
+/// `"w{window_index}.e{counter}"` for drill-down via `inspect_element` or
+/// click-by-ID via `simulate_input`.
+///
+/// Windows that fail inspection are skipped. At most [`MAX_DESKTOP_WINDOWS`]
+/// windows are inspected.
+pub fn inspect_desktop() -> Result<MacDesktopSnapshot> {
+    let windows = crate::enumerate_windows()?;
+    let mut snapshots = Vec::with_capacity(windows.len().min(MAX_DESKTOP_WINDOWS));
+
+    for (index, win) in windows.into_iter().enumerate() {
+        if index >= MAX_DESKTOP_WINDOWS {
+            break;
+        }
+
+        let opts = MacInspectOptions {
+            window: Some(win.hwnd),
+            element_id: None,
+            max_depth: 2,
+            raw_view: false,
+        };
+
+        // Skip windows that fail inspection (e.g. no accessibility access for
+        // that process) rather than failing the whole desktop snapshot.
+        let tree = match inspect_element(&opts) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+
+        // Reassign element IDs with the correct window index ("w{index}.e{n}").
+        let mut counter: usize = 0;
+        let mut root = tree.root;
+        assign_element_ids(&mut root, index, &mut counter);
+
+        snapshots.push(MacWindowSnapshot {
+            window_id: format!("w{index}"),
+            hwnd: win.hwnd,
+            title: win.title,
+            pid: win.pid,
+            rect: win.rect,
+            is_focused: win.is_focused,
+            elements: vec![root],
+        });
+    }
+
+    Ok(MacDesktopSnapshot { windows: snapshots })
+}
+
+/// Recursively assigns stable element IDs in the format `"w{window_index}.e{counter}"`.
+fn assign_element_ids(element: &mut MacElementInfo, window_index: usize, counter: &mut usize) {
+    element.element_id = Some(format!("w{window_index}.e{counter}"));
+    *counter += 1;
+    for child in &mut element.children {
+        assign_element_ids(child, window_index, counter);
+    }
+}
+
+/// Recursively walks the AXUIElement tree, assigning stable element IDs.
 unsafe fn walk_element(
     element: accessibility_sys::AXUIElementRef,
     max_depth: u32,
     current_depth: u32,
+    window_index: usize,
+    counter: &mut usize,
 ) -> MacElementInfo {
     let role = get_string_attribute(element, "AXRole").unwrap_or_default();
     let title = get_string_attribute(element, "AXTitle").unwrap_or_default();
@@ -84,13 +160,18 @@ unsafe fn walk_element(
     };
     let rect = get_position_and_size(element);
 
+    // Assign a stable element ID: "w{window_index}.e{counter}".
+    let element_id = Some(format!("w{window_index}.e{counter}"));
+    *counter += 1;
+
     let (children, children_truncated) = if current_depth < max_depth {
-        get_children(element, max_depth, current_depth)
+        get_children(element, max_depth, current_depth, window_index, counter)
     } else {
         (Vec::new(), false)
     };
 
     MacElementInfo {
+        element_id,
         name: title,
         control_type: map_ax_role(&role),
         value,
@@ -297,6 +378,8 @@ unsafe fn get_children(
     element: accessibility_sys::AXUIElementRef,
     max_depth: u32,
     current_depth: u32,
+    window_index: usize,
+    counter: &mut usize,
 ) -> (Vec<MacElementInfo>, bool) {
     let attr_cf = match cf_string_create("AXChildren") {
         Some(a) => a,
@@ -323,6 +406,8 @@ unsafe fn get_children(
                 child as accessibility_sys::AXUIElementRef,
                 max_depth,
                 current_depth + 1,
+                window_index,
+                counter,
             ));
         }
     }

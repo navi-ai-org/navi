@@ -74,6 +74,11 @@ pub struct WinTargetApp {
 /// the `WindowsBackendAdapter` converts `WinElementInfo` → `ElementInfo`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WinElementInfo {
+    /// Stable element identifier (e.g. "w0.e12") assigned during
+    /// `inspect_desktop` or `inspect_element`. Use this with `simulate_input`
+    /// (click by ID) or `inspect_element` (drill-down).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
     pub name: String,
     pub control_type: String,
     pub value: Option<String>,
@@ -96,21 +101,74 @@ pub struct WinElementTree {
     pub supported: bool,
 }
 
+// ── Desktop snapshot types ──────────────────────────────────────────────────
+
+/// One window in a [`WinDesktopSnapshot`], with its shallow element tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WinWindowSnapshot {
+    /// Stable window identifier (e.g. "w0", "w1").
+    pub window_id: String,
+    /// Platform-specific window handle.
+    pub hwnd: u64,
+    pub title: String,
+    pub pid: u32,
+    pub rect: WinRect,
+    pub is_focused: bool,
+    /// Shallow element tree (depth 2: window -> panels -> controls).
+    pub elements: Vec<WinElementInfo>,
+}
+
+/// Shallow snapshot of all visible windows and their top-level UI elements.
+///
+/// Returned by [`inspect_desktop`]. This is the text-based equivalent of
+/// looking at the screen — no screenshot needed. Each element has an
+/// `element_id` for use with `inspect_element` (drill-down) or
+/// `simulate_input` (click by ID).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WinDesktopSnapshot {
+    pub windows: Vec<WinWindowSnapshot>,
+}
+
+// ── Open application types ──────────────────────────────────────────────────
+
+/// Result of [`open_application`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WinOpenAppResult {
+    /// Whether the application was successfully launched.
+    pub launched: bool,
+    /// Process ID if available (0 if unknown — `ShellExecuteW` does not
+    /// return a PID).
+    pub pid: u32,
+    /// Human-readable description of what happened.
+    pub message: String,
+}
+
 /// Options for `inspect_element`. Mirrors `navi_computer_use::InspectOptions`
 /// without the facade dependency.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WinInspectOptions {
     /// Window handle to inspect (None = foreground).
     pub window: Option<u64>,
+    /// Drill-down into a specific element by its `element_id` (e.g. "w0.e12").
+    /// When set, the walk starts from that element instead of the window root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element_id: Option<String>,
     /// Max tree depth (0 = root only).
     pub max_depth: u32,
+    /// `true` to walk the RawView tree (all nodes, including decorative ones)
+    /// instead of the ControlView tree. Useful for Electron/Chromium apps
+    /// where the ControlView tree is sparse.
+    #[serde(default)]
+    pub raw_view: bool,
 }
 
 impl Default for WinInspectOptions {
     fn default() -> Self {
         Self {
             window: None,
+            element_id: None,
             max_depth: 3,
+            raw_view: false,
         }
     }
 }
@@ -137,6 +195,16 @@ pub fn simulate_input(_actions: &[serde_json::Value]) -> Result<WinInputResult> 
     bail!(UNSUPPORTED_PLATFORM)
 }
 
+#[cfg(not(windows))]
+pub fn inspect_desktop() -> Result<WinDesktopSnapshot> {
+    bail!(UNSUPPORTED_PLATFORM)
+}
+
+#[cfg(not(windows))]
+pub fn open_application(_name: &str) -> Result<WinOpenAppResult> {
+    bail!(UNSUPPORTED_PLATFORM)
+}
+
 // ── Windows implementation ─────────────────────────────────────────────────
 
 #[cfg(windows)]
@@ -147,6 +215,8 @@ mod com;
 mod input;
 #[cfg(windows)]
 mod inspect;
+#[cfg(windows)]
+mod open_app;
 #[cfg(windows)]
 mod target;
 #[cfg(windows)]
@@ -159,7 +229,9 @@ pub use com::ensure_com_initialized;
 #[cfg(windows)]
 pub use input::simulate_input;
 #[cfg(windows)]
-pub use inspect::inspect_element;
+pub use inspect::{inspect_desktop, inspect_element};
+#[cfg(windows)]
+pub use open_app::open_application;
 #[cfg(windows)]
 pub use target::{resolve_target_for_point, resolve_target_foreground};
 #[cfg(windows)]
