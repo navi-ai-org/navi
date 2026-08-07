@@ -955,9 +955,80 @@ fn count_entries(entries: &[Value]) -> usize {
 
 fn matches_pattern(name: &str, pattern: Option<&str>) -> bool {
     match pattern {
-        Some(p) => name.contains(p),
+        Some(p) => {
+            // Support glob-style patterns (e.g. "*.txt", "src/*.rs").
+            // If the pattern contains glob metacharacters, use glob matching;
+            // otherwise fall back to substring matching for backward compat.
+            if p.contains('*') || p.contains('?') {
+                glob_match(name, p)
+            } else {
+                name.contains(p)
+            }
+        }
         None => true,
     }
+}
+
+/// Simple glob matcher supporting `*` (any sequence), `?` (single char),
+/// and `**/` (zero or more path segments). Matches against the full string
+/// (anchored). Case-insensitive for ASCII letters.
+fn glob_match(text: &str, pattern: &str) -> bool {
+    // Handle `**/` prefix: matches zero or more leading path segments.
+    // e.g. `**/*.rs` matches both `main.rs` and `src/deep/main.rs`.
+    if let Some(rest) = pattern.strip_prefix("**/") {
+        // Try matching with the `**/ ` consuming zero segments first,
+        // then with it consuming progressively more.
+        if glob_match(text, rest) {
+            return true;
+        }
+        // Try matching `**/ ` against each prefix ending at a `/`.
+        let bytes = text.as_bytes();
+        for i in 0..bytes.len() {
+            if bytes[i] == b'/' {
+                if glob_match(&text[i + 1..], rest) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    let text_bytes = text.as_bytes();
+    let pat_bytes = pattern.as_bytes();
+    glob_match_impl(text_bytes, pat_bytes)
+}
+
+fn glob_match_impl(text: &[u8], pattern: &[u8]) -> bool {
+    // Iterative glob with backtracking for `*`.
+    let mut ti = 0;
+    let mut pi = 0;
+    let mut star_pi: Option<usize> = None;
+    let mut star_ti = 0;
+
+    while ti < text.len() {
+        if pi < pattern.len() && pattern[pi] == b'*' {
+            star_pi = Some(pi);
+            star_ti = ti;
+            pi += 1;
+        } else if pi < pattern.len()
+            && (pattern[pi] == b'?' || pattern[pi].eq_ignore_ascii_case(&text[ti]))
+        {
+            ti += 1;
+            pi += 1;
+        } else if let Some(spi) = star_pi {
+            // Backtrack: consume one more char with the last `*`.
+            pi = spi + 1;
+            star_ti += 1;
+            ti = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    // Consume trailing `*` in pattern.
+    while pi < pattern.len() && pattern[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pattern.len()
 }
 
 fn should_skip_dir(name: &str) -> bool {
@@ -1228,5 +1299,70 @@ mod tests {
             .expect("symlink should be listed");
         assert_eq!(pfx["type"], "symlink");
         assert_eq!(pfx["children"], 0);
+    }
+
+    // ── matches_pattern / glob_match ──────────────────────────────────────
+
+    #[test]
+    fn matches_pattern_none_matches_all() {
+        assert!(matches_pattern("anything", None));
+        assert!(matches_pattern("", None));
+    }
+
+    #[test]
+    fn matches_pattern_substring() {
+        assert!(matches_pattern("sample.txt", Some(".txt")));
+        assert!(matches_pattern("src/main.rs", Some("main")));
+        assert!(!matches_pattern("sample.txt", Some(".rs")));
+    }
+
+    #[test]
+    fn matches_pattern_glob_star() {
+        assert!(matches_pattern("sample.txt", Some("*.txt")));
+        assert!(matches_pattern("main.rs", Some("*.rs")));
+        assert!(!matches_pattern("sample.txt", Some("*.rs")));
+    }
+
+    #[test]
+    fn matches_pattern_glob_question() {
+        assert!(matches_pattern("a.txt", Some("?.txt")));
+        assert!(!matches_pattern("ab.txt", Some("?.txt")));
+    }
+
+    #[test]
+    fn matches_pattern_glob_path() {
+        assert!(matches_pattern("src/main.rs", Some("src/*.rs")));
+        assert!(matches_pattern("src/main.rs", Some("*/main.rs")));
+        assert!(!matches_pattern("src/main.rs", Some("test/*.rs")));
+    }
+
+    #[test]
+    fn matches_pattern_glob_double_star() {
+        assert!(matches_pattern("src/deep/main.rs", Some("**/*.rs")));
+        assert!(matches_pattern("main.rs", Some("**/*.rs")));
+    }
+
+    #[test]
+    fn glob_match_exact() {
+        assert!(glob_match("hello", "hello"));
+        assert!(!glob_match("hello", "world"));
+    }
+
+    #[test]
+    fn glob_match_star_only() {
+        assert!(glob_match("anything", "*"));
+        assert!(glob_match("", "*"));
+    }
+
+    #[test]
+    fn glob_match_empty_pattern() {
+        assert!(glob_match("", ""));
+        assert!(!glob_match("x", ""));
+    }
+
+    #[test]
+    fn glob_match_case_insensitive() {
+        assert!(glob_match("Sample.TXT", "*.txt"));
+        assert!(glob_match("MAIN.RS", "main.rs"));
     }
 }

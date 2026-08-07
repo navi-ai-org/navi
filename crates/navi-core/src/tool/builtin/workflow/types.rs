@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::policy::{EffectiveAgentPolicy, RunPolicy, default_run_policy};
+use super::policy::{EffectiveAgentPolicy, RunPolicy};
 use crate::cancel::CancelToken;
 
 /// Default max Lua script size (64 KiB).
@@ -87,6 +87,7 @@ pub struct AgentBackendResult {
 
 #[cfg(test)]
 mod tests {
+    use super::super::policy::default_run_policy;
     use super::*;
 
     #[test]
