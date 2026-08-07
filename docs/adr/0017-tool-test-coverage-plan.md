@@ -46,7 +46,7 @@ phase is complete only when:
 |-------|-------------|-------|-----------------|--------|
 | 1 | Computer Use | `input.rs`, `capture.rs`, `computer_use.rs`, `inspect.rs`, `open_app.rs` | 80%+ per file | **Complete** |
 | 2 | Workflow / Lua | `workflow/backends.rs`, `plan.rs` | 60%+ per file | **Complete** |
-| 3 | Subagent | `subagent.rs` | 40%+ | Pending |
+| 3 | Subagent | `subagent.rs` | 40%+ | **Complete** |
 | 4 | Update / installer | `update.rs` | 40%+ | Pending |
 | 5 | Remaining tools | all other `builtin/*.rs` | 70%+ per file | Pending |
 

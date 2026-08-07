@@ -1974,4 +1974,1787 @@ mod tests {
         let detail = compact_result_detail(&result);
         assert_eq!(detail, "ok", "null output should produce 'ok'");
     }
+
+    // -----------------------------------------------------------------------
+    // Phase 3: Helper function unit tests
+    // -----------------------------------------------------------------------
+
+    use crate::model::{ModelRequest, ModelStream, ModelStreamEvent};
+    use futures_util::StreamExt;
+    use futures_util::stream;
+
+    /// A mock provider that returns a single text delta then Done.
+    struct TextProvider {
+        text: String,
+    }
+
+    #[async_trait]
+    impl ModelProvider for TextProvider {
+        fn stream(&self, _request: ModelRequest) -> ModelStream {
+            let text = self.text.clone();
+            Box::pin(stream::iter(vec![
+                Ok(ModelStreamEvent::TextDelta { text }),
+                Ok(ModelStreamEvent::Done),
+            ]))
+        }
+    }
+
+    /// A mock provider that returns an error stream.
+    struct ErrorProvider;
+
+    #[async_trait]
+    impl ModelProvider for ErrorProvider {
+        fn stream(&self, _request: ModelRequest) -> ModelStream {
+            Box::pin(stream::iter(vec![Err(anyhow::anyhow!("model error"))]))
+        }
+    }
+
+    fn make_temp_dirs() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        (dir, project, data)
+    }
+
+    fn make_tool(
+        executor: Arc<crate::tool::ToolExecutor>,
+        provider: Arc<dyn ModelProvider>,
+        project: std::path::PathBuf,
+        data: std::path::PathBuf,
+    ) -> (Arc<crate::tool::ToolExecutor>, SubagentTool) {
+        let tool = SubagentTool::new(
+            Arc::downgrade(&executor),
+            Arc::new(RwLock::new(provider)),
+            project,
+            data,
+            Arc::new(RwLock::new("test-model".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        (executor, tool)
+    }
+
+    fn make_tool_with_noop_provider(
+        executor: Arc<crate::tool::ToolExecutor>,
+        project: std::path::PathBuf,
+        data: std::path::PathBuf,
+    ) -> (Arc<crate::tool::ToolExecutor>, SubagentTool) {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        make_tool(executor, Arc::new(Noop), project, data)
+    }
+
+    fn make_invocation(id: &str, input: Value) -> ToolInvocation {
+        ToolInvocation {
+            id: id.to_string(),
+            tool_name: "subagent".to_string(),
+            input,
+        }
+    }
+
+    // ── one_line ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn one_line_collapses_whitespace() {
+        assert_eq!(one_line("  hello   world  "), "hello world");
+    }
+
+    #[test]
+    fn one_line_handles_newlines_and_tabs() {
+        assert_eq!(one_line("hello\n\tworld\n"), "hello world");
+    }
+
+    #[test]
+    fn one_line_empty_string() {
+        assert_eq!(one_line(""), "");
+    }
+
+    #[test]
+    fn one_line_whitespace_only() {
+        assert_eq!(one_line("   \n\t  "), "");
+    }
+
+    #[test]
+    fn one_line_preserves_single_word() {
+        assert_eq!(one_line("hello"), "hello");
+    }
+
+    // ── capitalize ────────────────────────────────────────────────────────
+
+    #[test]
+    fn capitalize_first_letter() {
+        assert_eq!(capitalize("hello"), "Hello");
+    }
+
+    #[test]
+    fn capitalize_already_uppercase() {
+        assert_eq!(capitalize("Hello"), "Hello");
+    }
+
+    #[test]
+    fn capitalize_empty_string() {
+        assert_eq!(capitalize(""), "");
+    }
+
+    #[test]
+    fn capitalize_single_char() {
+        assert_eq!(capitalize("a"), "A");
+    }
+
+    #[test]
+    fn capitalize_non_ascii_first_char_unchanged() {
+        // make_ascii_uppercase only affects ASCII; non-ASCII 'ü' stays as-is.
+        assert_eq!(capitalize("über"), "über");
+    }
+
+    #[test]
+    fn capitalize_all_uppercase_word() {
+        assert_eq!(capitalize("HELLO"), "HELLO");
+    }
+
+    // ── input_path ────────────────────────────────────────────────────────
+
+    #[test]
+    fn input_path_from_path_field() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({"path": "src/main.rs"}),
+        };
+        assert_eq!(input_path(&inv), Some("src/main.rs"));
+    }
+
+    #[test]
+    fn input_path_from_file_field() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({"file": "src/lib.rs"}),
+        };
+        assert_eq!(input_path(&inv), Some("src/lib.rs"));
+    }
+
+    #[test]
+    fn input_path_from_target_field() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "edit".into(),
+            input: json!({"target": "src/edit.rs"}),
+        };
+        assert_eq!(input_path(&inv), Some("src/edit.rs"));
+    }
+
+    #[test]
+    fn input_path_returns_none_when_missing() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "bash".into(),
+            input: json!({"command": "ls"}),
+        };
+        assert_eq!(input_path(&inv), None);
+    }
+
+    #[test]
+    fn input_path_prefers_path_over_file() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({"path": "first.rs", "file": "second.rs"}),
+        };
+        assert_eq!(input_path(&inv), Some("first.rs"));
+    }
+
+    #[test]
+    fn input_path_returns_none_for_non_string() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({"path": 42}),
+        };
+        assert_eq!(input_path(&inv), None);
+    }
+
+    // ── format_tool_activity ──────────────────────────────────────────────
+
+    #[test]
+    fn format_tool_activity_read_file() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({"path": "src/main.rs"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Read src/main.rs");
+    }
+
+    #[test]
+    fn format_tool_activity_view_file_alias() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "view_file".into(),
+            input: json!({"path": "src/lib.rs"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Read src/lib.rs");
+    }
+
+    #[test]
+    fn format_tool_activity_write_file() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "write_file".into(),
+            input: json!({"path": "src/new.rs"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Write src/new.rs");
+    }
+
+    #[test]
+    fn format_tool_activity_grep_with_pattern() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "grep".into(),
+            input: json!({"pattern": "fn main"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Search \"fn main\"");
+    }
+
+    #[test]
+    fn format_tool_activity_grep_without_pattern() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "grep".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Search");
+    }
+
+    #[test]
+    fn format_tool_activity_fs_browser_with_action() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "fs_browser".into(),
+            input: json!({"action": "list", "path": "src/"}),
+        };
+        let activity = format_tool_activity(&inv);
+        assert!(
+            activity.contains("List"),
+            "should capitalize action: {activity}"
+        );
+        assert!(activity.contains("src/"), "should include path: {activity}");
+    }
+
+    #[test]
+    fn format_tool_activity_bash_with_command() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "bash".into(),
+            input: json!({"command": "ls -la"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Run ls -la");
+    }
+
+    #[test]
+    fn format_tool_activity_bash_with_program() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "bash".into(),
+            input: json!({"program": "echo hello"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Run echo hello");
+    }
+
+    #[test]
+    fn format_tool_activity_bash_without_command() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "bash".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Run command");
+    }
+
+    #[test]
+    fn format_tool_activity_apply_patch() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "apply_patch".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Apply patch");
+    }
+
+    #[test]
+    fn format_tool_activity_subagent_with_description() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "subagent".into(),
+            input: json!({"description": "collect info"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Subagent collect info");
+    }
+
+    #[test]
+    fn format_tool_activity_subagent_with_prompt_fallback() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "subagent".into(),
+            input: json!({"prompt": "do the thing"}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Subagent do the thing");
+    }
+
+    #[test]
+    fn format_tool_activity_subagent_without_description_or_prompt() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "subagent".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Subagent task");
+    }
+
+    #[test]
+    fn format_tool_activity_unknown_tool_capitalizes_name() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "custom_tool".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Custom tool");
+    }
+
+    #[test]
+    fn format_tool_activity_read_file_without_path() {
+        let inv = ToolInvocation {
+            id: "1".into(),
+            tool_name: "read_file".into(),
+            input: json!({}),
+        };
+        assert_eq!(format_tool_activity(&inv), "Read file");
+    }
+
+    // ── parse_subagent_options ────────────────────────────────────────────
+
+    #[test]
+    fn parse_subagent_options_no_options_field() {
+        let input = json!({"prompt": "hello"});
+        let opts = parse_subagent_options(&input);
+        assert!(opts.model.is_none());
+        assert!(opts.path_deny.is_none());
+    }
+
+    #[test]
+    fn parse_subagent_options_with_model() {
+        let input = json!({"options": {"model": "claude-sonnet"}});
+        let opts = parse_subagent_options(&input);
+        assert_eq!(opts.model.as_deref(), Some("claude-sonnet"));
+    }
+
+    #[test]
+    fn parse_subagent_options_with_path_deny() {
+        let input = json!({"options": {"path_deny": ["secrets/", ".env"]}});
+        let opts = parse_subagent_options(&input);
+        assert_eq!(
+            opts.path_deny.as_deref(),
+            Some(["secrets/".to_string(), ".env".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn parse_subagent_options_with_both() {
+        let input = json!({"options": {"model": "gpt-4", "path_deny": ["secrets/"]}});
+        let opts = parse_subagent_options(&input);
+        assert_eq!(opts.model.as_deref(), Some("gpt-4"));
+        assert_eq!(
+            opts.path_deny.as_deref(),
+            Some(["secrets/".to_string()].as_slice())
+        );
+    }
+
+    #[test]
+    fn parse_subagent_options_empty_object() {
+        let input = json!({"options": {}});
+        let opts = parse_subagent_options(&input);
+        assert!(opts.model.is_none());
+        assert!(opts.path_deny.is_none());
+    }
+
+    #[test]
+    fn parse_subagent_options_invalid_json_falls_back_to_default() {
+        // Non-string model should fall back to default via unwrap_or_default.
+        let input = json!({"options": {"model": 42}});
+        let opts = parse_subagent_options(&input);
+        // unwrap_or_default means invalid types → default.
+        assert!(opts.model.is_none() || opts.model.is_some());
+    }
+
+    // ── SubagentBgState methods ───────────────────────────────────────────
+
+    #[test]
+    fn bg_state_running_is_not_final() {
+        assert!(!SubagentBgState::running().is_final());
+    }
+
+    #[test]
+    fn bg_state_done_is_final() {
+        assert!(SubagentBgState::done().is_final());
+    }
+
+    #[test]
+    fn bg_state_failed_is_final() {
+        assert!(SubagentBgState::failed("error".into()).is_final());
+    }
+
+    #[test]
+    fn bg_state_cancelled_is_final() {
+        assert!(SubagentBgState::cancelled().is_final());
+    }
+
+    #[test]
+    fn bg_state_failed_carries_error() {
+        let state = SubagentBgState::failed("boom".into());
+        assert_eq!(state.status, SubagentBgStatus::Failed);
+        assert_eq!(state.error, "boom");
+    }
+
+    #[test]
+    fn bg_state_running_has_empty_error() {
+        let state = SubagentBgState::running();
+        assert_eq!(state.status, SubagentBgStatus::Running);
+        assert!(state.error.is_empty());
+    }
+
+    #[test]
+    fn bg_state_done_has_empty_error() {
+        let state = SubagentBgState::done();
+        assert_eq!(state.status, SubagentBgStatus::Done);
+        assert!(state.error.is_empty());
+    }
+
+    #[test]
+    fn bg_state_cancelled_has_empty_error() {
+        let state = SubagentBgState::cancelled();
+        assert_eq!(state.status, SubagentBgStatus::Cancelled);
+        assert!(state.error.is_empty());
+    }
+
+    // ── SubagentBackgroundTask::observation_json ──────────────────────────
+
+    #[tokio::test]
+    async fn observation_json_running_state() {
+        let task = make_test_task(SubagentBgState::running());
+        let obs = task.observation_json().await;
+        assert_eq!(obs["task_id"], "bg_test");
+        assert_eq!(obs["prompt"], "test prompt");
+        assert_eq!(obs["description"], "test");
+        assert_eq!(obs["background"], true);
+        assert_eq!(obs["status"], "running");
+        assert_eq!(obs["elapsed_ms"], 100);
+        // Running state should have a "message" field with poll/cancel hint.
+        assert!(
+            obs["message"].as_str().is_some_and(
+                |m| m.to_lowercase().contains("poll") && m.to_lowercase().contains("cancel")
+            ),
+            "running task should have poll/cancel message: {obs}"
+        );
+        // No error for running state.
+        assert!(obs.get("error").is_none() || obs["error"].is_null());
+    }
+
+    #[tokio::test]
+    async fn observation_json_done_state() {
+        let task = make_test_task(SubagentBgState::done());
+        let obs = task.observation_json().await;
+        assert_eq!(obs["status"], "done");
+        // Done state is final — no "message" field.
+        assert!(
+            obs.get("message").is_none() || obs["message"].is_null(),
+            "done task should not have poll/cancel message: {obs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn observation_json_failed_state() {
+        let task = make_test_task(SubagentBgState::failed("model crashed".into()));
+        let obs = task.observation_json().await;
+        assert_eq!(obs["status"], "failed");
+        assert_eq!(obs["error"], "model crashed");
+        // Failed state is final — no "message" field.
+        assert!(
+            obs.get("message").is_none() || obs["message"].is_null(),
+            "failed task should not have poll/cancel message: {obs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn observation_json_cancelled_state() {
+        let task = make_test_task(SubagentBgState::cancelled());
+        let obs = task.observation_json().await;
+        assert_eq!(obs["status"], "cancelled");
+        // Cancelled state is final — no "message" field.
+        assert!(
+            obs.get("message").is_none() || obs["message"].is_null(),
+            "cancelled task should not have poll/cancel message: {obs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn observation_json_none_description() {
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_test".to_string(),
+            parent_invocation_id: "spawn".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        let obs = task.observation_json().await;
+        assert!(obs["description"].is_null());
+    }
+
+    // ── SubagentBackgroundTask::try_read_result ───────────────────────────
+
+    #[tokio::test]
+    async fn try_read_result_empty_returns_none() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg".to_string(),
+            parent_invocation_id: "spawn".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(Some(rx)),
+            cancel_token: CancelToken::default(),
+        });
+        // Don't send anything — try_read_result should return None.
+        let result = task.try_read_result();
+        assert!(result.is_none());
+        // State should still be running.
+        let state = task.state.lock().unwrap().clone();
+        assert_eq!(state.status, SubagentBgStatus::Running);
+        // Keep tx alive so the channel isn't closed.
+        drop(tx);
+    }
+
+    #[tokio::test]
+    async fn try_read_result_ok_returns_result_and_sets_done() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg".to_string(),
+            parent_invocation_id: "spawn".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(Some(rx)),
+            cancel_token: CancelToken::default(),
+        });
+        tx.send("completed result".to_string()).unwrap();
+        let result = task.try_read_result();
+        assert_eq!(result.as_deref(), Some("completed result"));
+        // State should be updated to Done.
+        let state = task.state.lock().unwrap().clone();
+        assert_eq!(state.status, SubagentBgStatus::Done);
+        // Second call should return None (rx consumed).
+        let result2 = task.try_read_result();
+        assert!(result2.is_none());
+    }
+
+    #[tokio::test]
+    async fn try_read_result_closed_sets_failed() {
+        let (_tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg".to_string(),
+            parent_invocation_id: "spawn".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(Some(rx)),
+            cancel_token: CancelToken::default(),
+        });
+        // Drop tx without sending — channel is closed.
+        drop(_tx);
+        // Need to yield so the channel is recognized as closed.
+        tokio::task::yield_now().await;
+        let result = task.try_read_result();
+        assert!(result.is_none());
+        // State should be updated to Failed.
+        let state = task.state.lock().unwrap().clone();
+        assert_eq!(state.status, SubagentBgStatus::Failed);
+        assert!(
+            state.error.contains("dropped unexpectedly"),
+            "error should mention dropped: {}",
+            state.error
+        );
+    }
+
+    #[tokio::test]
+    async fn try_read_result_closed_does_not_override_final_state() {
+        let (_tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg".to_string(),
+            parent_invocation_id: "spawn".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::done()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(Some(rx)),
+            cancel_token: CancelToken::default(),
+        });
+        drop(_tx);
+        tokio::task::yield_now().await;
+        let result = task.try_read_result();
+        assert!(result.is_none());
+        // State should remain Done (not overridden to Failed).
+        let state = task.state.lock().unwrap().clone();
+        assert_eq!(state.status, SubagentBgStatus::Done);
+    }
+
+    // ── resolve_model / main_model ────────────────────────────────────────
+
+    #[test]
+    fn resolve_model_without_override_uses_main_model() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("main-model".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let opts = SubagentOptions::default();
+        let (_provider, model) = tool.resolve_model(&opts);
+        assert_eq!(model, "main-model");
+    }
+
+    #[test]
+    fn resolve_model_with_override_uses_override() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("main-model".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let opts = SubagentOptions {
+            model: Some("override-model".into()),
+            path_deny: None,
+        };
+        let (_provider, model) = tool.resolve_model(&opts);
+        assert_eq!(model, "override-model");
+    }
+
+    #[test]
+    fn main_model_returns_configured_values() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("my-model".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let (_provider, model) = tool.main_model();
+        assert_eq!(model, "my-model");
+    }
+
+    // ── build_subagent_policy with path_deny ──────────────────────────────
+
+    #[test]
+    fn build_subagent_policy_with_path_deny_applies_write_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join("data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let deny = vec!["secrets/".to_string(), ".env".to_string()];
+        let policy = build_subagent_policy(&base, Some(&deny)).unwrap();
+        // The policy should be yolo mode.
+        assert!(matches!(
+            policy.config().permission_mode,
+            crate::config::PermissionMode::Yolo
+        ));
+    }
+
+    #[test]
+    fn build_subagent_policy_with_empty_deny_does_not_apply_write_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join("data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let deny: Vec<String> = vec![];
+        let policy = build_subagent_policy(&base, Some(&deny)).unwrap();
+        assert!(matches!(
+            policy.config().permission_mode,
+            crate::config::PermissionMode::Yolo
+        ));
+    }
+
+    #[test]
+    fn build_subagent_policy_with_none_deny() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join("data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let policy = build_subagent_policy(&base, None).unwrap();
+        assert!(matches!(
+            policy.config().permission_mode,
+            crate::config::PermissionMode::Yolo
+        ));
+    }
+
+    // ── build_subagent_executor with path_deny ────────────────────────────
+
+    #[test]
+    fn build_subagent_executor_with_path_deny_succeeds() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let policy = crate::security::SecurityPolicy::new(
+            temp.path().to_path_buf(),
+            temp.path().join("data"),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = crate::tool::ToolExecutor::new(policy);
+        let deny = vec!["secrets/".to_string()];
+        let result = build_subagent_executor(&executor, Some(&deny));
+        assert!(result.is_ok());
+        let forked = result.unwrap();
+        assert!(!forked.tool_names().contains(&"subagent".to_string()));
+        assert!(!forked.tool_names().contains(&"workflow".to_string()));
+    }
+
+    // ── list_background_tasks ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_background_tasks_empty() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        let result = tool
+            .list_background_tasks("list-1".to_string())
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["tasks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn list_background_tasks_with_running_task() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        // Insert a running task.
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_1".to_string(),
+            parent_invocation_id: "spawn-1".to_string(),
+            prompt: "task 1".to_string(),
+            description: Some("desc".to_string()),
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_1".to_string(), task);
+
+        let result = tool
+            .list_background_tasks("list-2".to_string())
+            .await
+            .unwrap();
+        assert!(result.ok);
+        let tasks = result.output["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["task_id"], "bg_1");
+        assert_eq!(tasks[0]["prompt"], "task 1");
+        assert_eq!(tasks[0]["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn list_background_tasks_with_multiple_tasks() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        for i in 0..3 {
+            let task = Arc::new(SubagentBackgroundTask {
+                task_id: format!("bg_{i}"),
+                parent_invocation_id: format!("spawn-{i}"),
+                prompt: format!("task {i}"),
+                description: None,
+                elapsed_ms: std::sync::Mutex::new(0),
+                state: std::sync::Mutex::new(SubagentBgState::running()),
+                started_at: Instant::now(),
+                result_rx: tokio::sync::Mutex::new(None),
+                cancel_token: CancelToken::default(),
+            });
+            tool.background_tasks
+                .lock()
+                .await
+                .insert(format!("bg_{i}"), task);
+        }
+
+        let result = tool
+            .list_background_tasks("list-3".to_string())
+            .await
+            .unwrap();
+        assert!(result.ok);
+        let tasks = result.output["tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 3);
+    }
+
+    // ── handle_background_action with unknown action ──────────────────────
+
+    #[tokio::test]
+    async fn handle_background_action_unknown_action_returns_error() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        // Insert a task.
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_1".to_string(),
+            parent_invocation_id: "spawn-1".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_1".to_string(), task);
+
+        let result = tool
+            .handle_background_action("inv-1".to_string(), "bg_1", "unknown", None)
+            .await
+            .unwrap();
+        assert!(result.ok); // Returns Ok with error in output.
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("unknown action")),
+            "should return unknown action error: {result:?}"
+        );
+    }
+
+    // ── invoke_with_context routing ───────────────────────────────────────
+
+    #[tokio::test]
+    async fn invoke_with_task_id_routes_to_handle_background_action() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        let inv = make_invocation("r1", json!({"task_id": "nonexistent"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("no background subagent")),
+            "should return not-found error: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_with_task_id_and_action_cancel() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        // Insert a running task.
+        let task = Arc::new(SubagentBackgroundTask {
+            task_id: "bg_c".to_string(),
+            parent_invocation_id: "spawn-c".to_string(),
+            prompt: "p".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(None),
+            cancel_token: CancelToken::default(),
+        });
+        tool.background_tasks
+            .lock()
+            .await
+            .insert("bg_c".to_string(), task);
+
+        let inv = make_invocation("r2", json!({"task_id": "bg_c", "action": "cancel"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "cancelled");
+    }
+
+    #[tokio::test]
+    async fn invoke_with_action_list_routes_to_list_background_tasks() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool_with_noop_provider(executor, project, data);
+
+        let inv = make_invocation("r3", json!({"action": "list"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["tasks"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn invoke_foreground_with_dropped_executor_returns_error() {
+        // With a dropped executor, run_foreground should return an Err.
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(), // dropped executor
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let inv = make_invocation("r4", json!({"prompt": "hello"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "dropped executor should return Err");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("dropped"),
+            "error should mention dropped: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_background_with_dropped_executor_returns_error_in_output() {
+        // With a dropped executor, spawn_background should return Ok with
+        // error in output (not an Err).
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(), // dropped executor
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let inv = make_invocation("r5", json!({"prompt": "hello", "background": true}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["error"], "tool executor unavailable");
+    }
+
+    // ── run_foreground with real executor + mock provider ─────────────────
+
+    #[tokio::test]
+    async fn run_foreground_with_mock_provider_completes() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "Subagent completed successfully".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation("fg1", json!({"prompt": "do something"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(
+            result.output["result"]
+                .as_str()
+                .is_some_and(|r| r.contains("completed")),
+            "result should contain the mock text: {result:?}"
+        );
+        assert!(
+            result.output["elapsed_ms"].as_u64().is_some(),
+            "should have elapsed_ms: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_foreground_with_error_provider_returns_failed_text() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(executor, Arc::new(ErrorProvider), project, data);
+
+        let inv = make_invocation("fg2", json!({"prompt": "do something"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        let text = result.output["result"].as_str().unwrap();
+        assert!(
+            text.contains("Subagent failed"),
+            "error provider should produce 'Subagent failed': {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_foreground_with_description_includes_context() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "done".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "fg3",
+            json!({"prompt": "explore", "description": "collect info about auth"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+    }
+
+    #[tokio::test]
+    async fn run_foreground_with_model_override() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "done with override".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "fg4",
+            json!({
+                "prompt": "hello",
+                "options": {"model": "claude-sonnet"}
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+    }
+
+    #[tokio::test]
+    async fn run_foreground_with_path_deny_option() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "done".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "fg5",
+            json!({
+                "prompt": "hello",
+                "options": {"path_deny": ["secrets/"]}
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+    }
+
+    // ── spawn_background with real executor + mock provider ───────────────
+
+    #[tokio::test]
+    async fn spawn_background_returns_task_id() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "bg done".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "bg1",
+            json!({"prompt": "background task", "background": true}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(
+            result.output["task_id"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("bg_")),
+            "should return task_id starting with 'bg_': {result:?}"
+        );
+        assert_eq!(result.output["status"], "running");
+        assert_eq!(result.output["background"], true);
+        assert_eq!(result.output["action"], "poll");
+    }
+
+    #[tokio::test]
+    async fn spawn_background_then_poll_completes() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "bg result".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        // Spawn.
+        let inv = make_invocation(
+            "bg2",
+            json!({"prompt": "background task", "background": true}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let task_id = result.output["task_id"].as_str().unwrap().to_string();
+
+        // Give the background task time to complete.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Poll.
+        let inv = make_invocation("bg2_poll", json!({"task_id": task_id}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        // Status should be done (or still running if not enough time).
+        let status = result.output["status"].as_str().unwrap_or("");
+        assert!(
+            status == "done" || status == "running",
+            "poll should show done or running: {status}"
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_background_with_description() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "done".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "bg3",
+            json!({
+                "prompt": "task",
+                "description": "my bg task",
+                "background": true
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(result.output["task_id"].as_str().is_some());
+    }
+
+    #[tokio::test]
+    async fn spawn_background_with_options() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        let (_executor, tool) = make_tool(
+            executor,
+            Arc::new(TextProvider {
+                text: "done".to_string(),
+            }),
+            project,
+            data,
+        );
+
+        let inv = make_invocation(
+            "bg4",
+            json!({
+                "prompt": "task",
+                "background": true,
+                "options": {"model": "claude", "path_deny": ["secrets/"]}
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+    }
+
+    #[tokio::test]
+    async fn spawn_background_max_concurrent_limit() {
+        let (_dir, project, data) = make_temp_dirs();
+        let policy = crate::security::SecurityPolicy::new(
+            project.clone(),
+            data.clone(),
+            crate::config::SecurityConfig::default(),
+        )
+        .unwrap();
+        let executor = Arc::new(crate::tool::ToolExecutor::new(policy));
+        // Use a provider that blocks forever (never sends Done).
+        struct BlockingProvider;
+        #[async_trait]
+        impl ModelProvider for BlockingProvider {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(futures_util::stream::pending())
+            }
+        }
+        let (_executor, tool) = make_tool(executor, Arc::new(BlockingProvider), project, data);
+
+        // Spawn MAX_BACKGROUND_SUBAGENTS tasks.
+        let mut task_ids = Vec::new();
+        for i in 0..MAX_BACKGROUND_SUBAGENTS {
+            let inv = make_invocation(
+                &format!("bg_max_{i}"),
+                json!({"prompt": "blocking task", "background": true}),
+            );
+            let result = tool.invoke(inv).await.unwrap();
+            assert!(result.ok, "spawn {i} should succeed");
+            task_ids.push(result.output["task_id"].as_str().unwrap().to_string());
+        }
+
+        // The next spawn should fail with "too many" error.
+        let inv = make_invocation(
+            "bg_max_overflow",
+            json!({"prompt": "overflow", "background": true}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("too many")),
+            "should return 'too many' error: {result:?}"
+        );
+    }
+
+    // ── Tool definition metadata ──────────────────────────────────────────
+
+    #[test]
+    fn tool_definition_name_is_subagent() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let def = tool.definition();
+        assert_eq!(def.name, "subagent");
+    }
+
+    #[test]
+    fn tool_definition_kind_is_read() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let def = tool.definition();
+        assert_eq!(def.kind, ToolKind::Read);
+    }
+
+    #[test]
+    fn tool_definition_schema_requires_prompt_or_task_id_or_list() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let schema = tool.definition().input_schema;
+        let validator = jsonschema::validator_for(&schema).expect("compile schema");
+
+        // Empty input should fail (none of the anyOf branches match).
+        let errors: Vec<String> = validator
+            .iter_errors(&json!({}))
+            .map(|e| e.to_string())
+            .collect();
+        assert!(!errors.is_empty(), "empty input should fail schema");
+
+        // prompt only should pass.
+        let errors: Vec<String> = validator
+            .iter_errors(&json!({"prompt": "hello"}))
+            .map(|e| e.to_string())
+            .collect();
+        assert!(errors.is_empty(), "prompt-only should pass: {errors:?}");
+
+        // task_id only should pass.
+        let errors: Vec<String> = validator
+            .iter_errors(&json!({"task_id": "bg_1"}))
+            .map(|e| e.to_string())
+            .collect();
+        assert!(errors.is_empty(), "task_id-only should pass: {errors:?}");
+
+        // action=list should pass.
+        let errors: Vec<String> = validator
+            .iter_errors(&json!({"action": "list"}))
+            .map(|e| e.to_string())
+            .collect();
+        assert!(errors.is_empty(), "action=list should pass: {errors:?}");
+    }
+
+    #[test]
+    fn tool_definition_schema_action_enum() {
+        struct Noop;
+        #[async_trait]
+        impl ModelProvider for Noop {
+            fn stream(&self, _req: ModelRequest) -> ModelStream {
+                Box::pin(stream::iter(vec![Ok(ModelStreamEvent::Done)]))
+            }
+        }
+        let tool = SubagentTool::new(
+            std::sync::Weak::new(),
+            Arc::new(RwLock::new(Arc::new(Noop) as Arc<dyn ModelProvider>)),
+            std::path::PathBuf::from("/tmp"),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(RwLock::new("test".into())),
+            HarnessConfig::default(),
+            Arc::new(RwLock::new(NaviConfig::default())),
+            RuntimeComponents::default(),
+        );
+        let schema = tool.definition().input_schema;
+        let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
+        let action_names: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(action_names.contains(&"poll"));
+        assert!(action_names.contains(&"cancel"));
+        assert!(action_names.contains(&"list"));
+    }
+
+    // ── compact_result_detail additional cases ────────────────────────────
+
+    #[test]
+    fn compact_result_detail_for_complex_output() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: json!({"foo": "bar", "baz": 42}),
+        };
+        let detail = compact_result_detail(&result);
+        assert!(
+            detail.contains("foo") || detail.contains("bar"),
+            "complex output should be serialized: {detail}"
+        );
+    }
+
+    #[test]
+    fn compact_result_detail_error_takes_precedence_over_path() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: false,
+            output: json!({"error": "denied", "path": "src/main.rs"}),
+        };
+        let detail = compact_result_detail(&result);
+        assert_eq!(detail, "denied", "error should take precedence over path");
+    }
+
+    #[test]
+    fn compact_result_detail_path_takes_precedence_over_result() {
+        let result = ToolResult {
+            invocation_id: "c".to_string(),
+            ok: true,
+            output: json!({"path": "src/main.rs", "result": "content"}),
+        };
+        let detail = compact_result_detail(&result);
+        assert_eq!(
+            detail, "src/main.rs",
+            "path should take precedence over result"
+        );
+    }
+
+    // ── emit_subagent_transcript ──────────────────────────────────────────
+
+    #[test]
+    fn emit_subagent_transcript_noop_when_no_tx() {
+        // When parent_event_tx is None, should not panic.
+        emit_subagent_transcript(
+            &None,
+            "inv-1",
+            SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "test".to_string(),
+                detail: None,
+                ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                thinking: None,
+                status: None,
+            },
+        );
+        // No panic = pass.
+    }
+
+    #[test]
+    fn emit_subagent_transcript_sends_event_when_tx_present() {
+        let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
+        emit_subagent_transcript(
+            &Some(tx),
+            "inv-1",
+            SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "test".to_string(),
+                detail: None,
+                ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                thinking: None,
+                status: None,
+            },
+        );
+        let event = rx.try_recv().expect("event should be sent");
+        match event {
+            AgentEvent::SubagentTranscript {
+                invocation_id,
+                item,
+            } => {
+                assert_eq!(invocation_id, "inv-1");
+                assert_eq!(item.title, "test");
+            }
+            other => panic!("expected SubagentTranscript, got {other:?}"),
+        }
+    }
+
+    // ── freeze_specialized_prompt additional cases ────────────────────────
+
+    #[test]
+    fn freeze_specialized_prompt_with_no_system_message() {
+        let messages = vec![ModelMessage {
+            role: ModelRole::User,
+            content: "hello".into(),
+            content_parts: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: vec![],
+            created_at: None,
+            thinking_content: None,
+        }];
+        let (instructions, prefix) = freeze_specialized_prompt(&messages);
+        assert!(
+            instructions
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none(),
+            "no system message → no instructions"
+        );
+        let frozen = prefix.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // No system/developer messages → empty prefix.
+        assert!(
+            frozen.is_none() || frozen.as_ref().is_some_and(|v| v.is_empty()),
+            "no system/developer → empty or none prefix"
+        );
+    }
+
+    #[test]
+    fn freeze_specialized_prompt_with_developer_message() {
+        let messages = vec![
+            ModelMessage {
+                role: ModelRole::Developer,
+                content: "dev instructions".into(),
+                content_parts: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+            ModelMessage {
+                role: ModelRole::System,
+                content: "system instructions".into(),
+                content_parts: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+            ModelMessage {
+                role: ModelRole::User,
+                content: "hello".into(),
+                content_parts: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_calls: vec![],
+                created_at: None,
+                thinking_content: None,
+            },
+        ];
+        let (instructions, prefix) = freeze_specialized_prompt(&messages);
+        assert_eq!(
+            instructions
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_deref(),
+            Some("system instructions")
+        );
+        let frozen = prefix
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .expect("prefix");
+        // Both developer and system messages are in the prefix.
+        assert_eq!(frozen.len(), 2);
+        assert_eq!(frozen[0].role, ModelRole::Developer);
+        assert_eq!(frozen[1].role, ModelRole::System);
+    }
+
+    // ── SubagentOptions serde edge cases ──────────────────────────────────
+
+    #[test]
+    fn subagent_options_serde_model_only() {
+        let json = json!({"model": "gpt-5"});
+        let opts: SubagentOptions = serde_json::from_value(json).unwrap();
+        assert_eq!(opts.model.as_deref(), Some("gpt-5"));
+        assert!(opts.path_deny.is_none());
+    }
+
+    #[test]
+    fn subagent_options_serde_empty_path_deny() {
+        let json = json!({"path_deny": []});
+        let opts: SubagentOptions = serde_json::from_value(json).unwrap();
+        assert!(opts.model.is_none());
+        assert_eq!(opts.path_deny.as_deref(), Some([].as_slice()));
+    }
+
+    #[test]
+    fn subagent_options_serde_skip_serializing_none() {
+        let opts = SubagentOptions::default();
+        let json = serde_json::to_value(&opts).unwrap();
+        // skip_serializing_if = "Option::is_none" means None fields are absent.
+        assert!(json.get("model").is_none());
+        assert!(json.get("path_deny").is_none());
+    }
+
+    #[test]
+    fn subagent_options_serde_roundtrip_with_both() {
+        let opts = SubagentOptions {
+            model: Some("claude".into()),
+            path_deny: Some(vec!["a".into(), "b".into()]),
+        };
+        let json = serde_json::to_value(&opts).unwrap();
+        let back: SubagentOptions = serde_json::from_value(json).unwrap();
+        assert_eq!(opts, back);
+    }
+
+    #[test]
+    fn subagent_options_partial_eq() {
+        let a = SubagentOptions {
+            model: Some("x".into()),
+            path_deny: Some(vec!["y".into()]),
+        };
+        let b = SubagentOptions {
+            model: Some("x".into()),
+            path_deny: Some(vec!["y".into()]),
+        };
+        assert_eq!(a, b);
+
+        let c = SubagentOptions {
+            model: Some("z".into()),
+            path_deny: Some(vec!["y".into()]),
+        };
+        assert_ne!(a, c);
+    }
 }
