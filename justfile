@@ -224,6 +224,26 @@ coverage-core: _require-llvm-cov
 coverage-core-check:
     python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
 
+# Tool-specific coverage gate: runs cargo-llvm-cov on tool crates
+# (navi-core + navi-os-windows) and checks per-file floors + critical
+# function hits via scripts/check-critical-coverage.py.
+# See AGENTS.md "Tool testing requirements" for the three-layer test policy.
+coverage_tools_lcov := "coverage/lcov-tools.info"
+coverage-tools: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p coverage
+    cargo llvm-cov -p navi-core -p navi-os-windows --lib --lcov \
+      --output-path {{coverage_tools_lcov}} \
+      --ignore-run-fail \
+      -- --test-threads={{coverage_test_threads}}
+    echo "Wrote {{coverage_tools_lcov}}"
+    python3 scripts/check-critical-coverage.py {{coverage_tools_lcov}}
+
+# Re-check tool floors against an existing lcov (no re-run of tests).
+coverage-tools-check:
+    python3 scripts/check-critical-coverage.py {{coverage_tools_lcov}}
+
 # ─── Rust tooling (direct cargo) ─────────────────────────────────────────────
 
 # Product-path clippy (matches CI). Full-workspace style -D is too slow/noisy.

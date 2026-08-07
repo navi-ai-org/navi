@@ -64,6 +64,75 @@ Core Direct (typical): `search`, `read_file`, `edit`, `write_file`, `bash`, `pla
 
 **Plan mode:** source of truth is markdown under `{data_dir}/plans/{session}.md` (design doc). Prefer `plan(write)` / `plan(submit)` or write/edit that file only — not JSON step arrays as primary content. See plan tool + `plan_store` / `plan_mode`.
 
+## Tool testing requirements
+
+Every tool in `navi-core/src/tool/builtin/` and every backend function in `navi-os-*/src/` that is callable from a tool **must** have three layers of tests. Coverage is enforced via `scripts/check-critical-coverage.py` (per-file floors + critical-function hits). Run `just coverage-tools` to check locally.
+
+### Layer 1 — Unit tests (required, deterministic, no desktop)
+
+Test pure logic: `definition()` metadata (name, kind, exposure, risk), input parsing, helper functions, error mapping, cache resolution. These must pass in CI without a desktop.
+
+```rust
+#[test]
+fn my_tool_definition_is_deferred_read() {
+    let tool = MyTool::new(/* minimal args */);
+    let def = tool.definition();
+    assert_eq!(def.name, "my_tool");
+    assert_eq!(def.kind, ToolKind::Read);
+}
+```
+
+### Layer 2 — Edge case tests (required, deterministic)
+
+Test boundary and adversarial inputs. Every tool must cover at minimum:
+
+- **Empty / null**: empty string, empty vec, `None`, missing JSON fields
+- **Boundary values**: `0`, `usize::MAX`, negative numbers (where applicable), very large inputs (10k+ chars)
+- **Invalid format**: malformed IDs, wrong types, garbage input
+- **Unicode**: non-ASCII names, emoji, surrogate pairs, mixed scripts
+- **Concurrency-relevant**: cache with 1000+ entries, poisoned mutex (if applicable)
+- **Error paths**: every `bail!` / `Err` branch must have a test that verifies the error message contains a recovery hint or human-readable description (not just a raw code)
+
+### Layer 3 — Integration tests (required, desktop-dependent, skip-on-failure)
+
+Test the full `invoke()` path against the real backend (UIA, AX, shell). These call the actual OS APIs and must skip gracefully when the desktop is unavailable (headless CI, no foreground window, etc.).
+
+```rust
+#[tokio::test]
+#[cfg(all(windows, feature = "computer-use"))]
+async fn my_tool_invoke_works_against_real_backend() {
+    let result = match tool.invoke(invocation).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("skipping: {e}");
+            return;
+        }
+    };
+    assert!(result.ok);
+}
+```
+
+### Coverage gate
+
+`scripts/check-critical-coverage.py` enforces per-file line-coverage floors and critical-function hit counts. Tool files are listed in `CRITICAL_FILES` with floors set at baseline. Floors ratchet up as tests improve — never lower a floor without justification.
+
+```bash
+just coverage-tools          # run coverage gate for tool crates
+just coverage-core           # run coverage gate for navi-core (includes tools)
+just coverage --list         # list all file coverage without gating
+```
+
+### What "100% coverage" means in practice
+
+Line coverage is necessary but not sufficient. The real target is:
+
+1. **Every error path** has a test that verifies the error message is model-friendly (includes a description + recovery hint, not just a code)
+2. **Every public function** is called by at least one test (critical-function gate)
+3. **Every edge case category** above has at least one test per tool
+4. **Integration tests** verify the tool works against the real backend, not just mocks
+
+A tool with 100% line coverage but no edge case tests or no integration tests is **not complete**.
+
 ## TUI (when editing `navi-tui`)
 
 - No second Tokio runtime (CLI owns it). Async work → `AsyncEvent`.

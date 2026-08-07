@@ -22,11 +22,19 @@ from pathlib import Path
 # Floors sit below measured baseline (2026-07 dry-run) with headroom so CI is not
 # flaky, but still fail hard if production-path tests are removed (→ ~0%).
 # backends/plan are well unit-tested; subagent/update mix large runtime/OS paths.
+#
+# Tool files (computer-use, etc.) have floors set at their current baseline.
+# See AGENTS.md "Tool testing requirements" for the three-layer test policy.
+# Floors ratchet up as tests improve — never lower without justification.
 CRITICAL_FILES: dict[str, float] = {
     "crates/navi-core/src/tool/builtin/workflow/backends.rs": 50.0,  # ~92% baseline
     "crates/navi-core/src/tool/builtin/subagent.rs": 30.0,  # ~38% baseline (large runtime)
     "crates/navi-core/src/update.rs": 30.0,  # ~40% baseline (installer OS branches)
     "crates/navi-core/src/tool/builtin/plan.rs": 50.0,  # ~87% baseline
+    # ── Tool files (computer-use) ──────────────────────────────────────────
+    "crates/navi-core/src/tool/builtin/computer_use.rs": 40.0,  # unit+edge+integration
+    "crates/navi-os-windows/src/inspect.rs": 50.0,  # unit+edge+integration
+    "crates/navi-os-windows/src/open_app.rs": 70.0,  # unit+edge (small file, high coverage)
 }
 
 # Function name substrings that must have been executed at least once.
@@ -35,6 +43,10 @@ CRITICAL_FILES: dict[str, float] = {
 CRITICAL_FUNCTIONS: list[str] = [
     "build_subagent_bridge_input",
     "run_silent",
+    # Tool functions — verify the core paths are hit by at least one test.
+    "resolve_element_ids",
+    "parse_element_counter",
+    "shellexecute_error_meaning",
 ]
 
 
