@@ -268,22 +268,29 @@ pub(crate) struct ViewImageTool {
     /// NAVI data dir — durable attachment blobs live under `attachments/`.
     data_dir: PathBuf,
     name: &'static str,
+    supports_vision: bool,
 }
 
 impl ViewImageTool {
-    pub(crate) fn new(project_root: PathBuf, data_dir: PathBuf) -> Self {
+    pub(crate) fn new(project_root: PathBuf, data_dir: PathBuf, supports_vision: bool) -> Self {
         Self {
             project_root,
             data_dir,
             name: "view_image",
+            supports_vision,
         }
     }
 
-    pub(crate) fn inspect_image(project_root: PathBuf, data_dir: PathBuf) -> Self {
+    pub(crate) fn inspect_image(
+        project_root: PathBuf,
+        data_dir: PathBuf,
+        supports_vision: bool,
+    ) -> Self {
         Self {
             project_root,
             data_dir,
             name: "inspect_image",
+            supports_vision,
         }
     }
 }
@@ -308,8 +315,9 @@ impl Tool for ViewImageTool {
         helpers::definition(
             self.name,
             "Load an image from the project and attach it for visual analysis by the chat model. \
-On vision-capable models the image bytes are sent directly in the next API request. \
-Returns path, format, size, and confirmation that the image was attached.",
+On vision-capable models the image bytes are sent directly in the next API request. On \
+text-only models the image is persisted but not attached — only metadata (path, format, \
+size) is returned. Returns path, format, size, and attachment status.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -360,33 +368,48 @@ Returns path, format, size, and confirmation that the image was attached.",
             );
         }
 
+        // Always persist a durable copy so session restore works.
         let bytes = std::fs::read(&full_path)
             .map_err(|e| anyhow::anyhow!("failed to read image file: {e}"))?;
-        use base64::Engine;
-        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-
-        // Durable copy so session restore works after the project file is gone.
         let attachment_id = crate::attachment_store::store_bytes(&self.data_dir, &bytes, &ext)
             .map_err(|e| anyhow::anyhow!("failed to persist image attachment: {e}"))?;
 
-        // `_navi_content_parts` is stripped by the turn loop before observations
-        // and ToolCompleted events; only the model request receives the image.
-        // `attachment_id` remains so restore can reload from `{data_dir}/attachments/`.
-        let mut output = json!({
-            "path": raw_path,
-            "format": ext,
-            "media_type": media_type,
-            "size_bytes": size_bytes,
-            "image_attached": true,
-            "attachment_id": attachment_id,
-            "message": "Image attached for multimodal analysis on the next model request.",
-        });
-        output[crate::tool::NAVI_CONTENT_PARTS_KEY] = json!([{
-            "type": "image",
-            "media_type": media_type,
-            "data": data,
-        }]);
-        Ok(helpers::ok(invocation.id, output))
+        if self.supports_vision {
+            use base64::Engine;
+            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+            let mut output = json!({
+                "path": raw_path,
+                "format": ext,
+                "media_type": media_type,
+                "size_bytes": size_bytes,
+                "image_attached": true,
+                "attachment_id": attachment_id,
+                "message": "Image attached for multimodal analysis on the next model request.",
+            });
+            output[crate::tool::NAVI_CONTENT_PARTS_KEY] = json!([{
+                "type": "image",
+                "media_type": media_type,
+                "data": data,
+            }]);
+            Ok(helpers::ok(invocation.id, output))
+        } else {
+            // Text-only model: return metadata without the base64 image.
+            Ok(helpers::ok(
+                invocation.id,
+                json!({
+                    "path": raw_path,
+                    "format": ext,
+                    "media_type": media_type,
+                    "size_bytes": size_bytes,
+                    "image_attached": false,
+                    "attachment_id": attachment_id,
+                    "message": "Image metadata returned (text-only mode — image not attached). \
+                                The current model does not support image input. Switch to a \
+                                vision-capable model to analyze this image.",
+                }),
+            ))
+        }
     }
 }
 
@@ -813,7 +836,7 @@ mod tests {
 
     #[test]
     fn view_image_definition_has_correct_name() {
-        let tool = ViewImageTool::new(PathBuf::from("/tmp"), PathBuf::from("/tmp/navi-data"));
+        let tool = ViewImageTool::new(PathBuf::from("/tmp"), PathBuf::from("/tmp/navi-data"), true);
         let def: ToolDefinition = tool.definition();
         assert_eq!(def.name, "view_image");
         assert!(matches!(def.kind, ToolKind::Read));
@@ -841,7 +864,11 @@ mod tests {
         fs::write(&img_path, minimal_png).unwrap();
 
         let data_dir = tempfile::tempdir().unwrap();
-        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+        let tool = ViewImageTool::new(
+            dir.path().to_path_buf(),
+            data_dir.path().to_path_buf(),
+            true,
+        );
         let mut result = tool
             .invoke(ToolInvocation {
                 id: "t13".into(),
@@ -885,7 +912,11 @@ mod tests {
         fs::write(&img_path, "not an image").unwrap();
 
         let data_dir = tempfile::tempdir().unwrap();
-        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+        let tool = ViewImageTool::new(
+            dir.path().to_path_buf(),
+            data_dir.path().to_path_buf(),
+            true,
+        );
         let result = tool
             .invoke(ToolInvocation {
                 id: "t14".into(),
@@ -900,7 +931,7 @@ mod tests {
     #[tokio::test]
     async fn view_image_handles_missing_file() {
         let data_dir = tempfile::tempdir().unwrap();
-        let tool = ViewImageTool::new(PathBuf::from("/tmp"), data_dir.path().to_path_buf());
+        let tool = ViewImageTool::new(PathBuf::from("/tmp"), data_dir.path().to_path_buf(), true);
         let result = tool
             .invoke(ToolInvocation {
                 id: "t15".into(),
@@ -919,7 +950,11 @@ mod tests {
         let img_path = dir.path().join("abs.png");
         fs::write(&img_path, "fake png content").unwrap();
 
-        let tool = ViewImageTool::new(PathBuf::from("/nonexistent"), data_dir.path().to_path_buf());
+        let tool = ViewImageTool::new(
+            PathBuf::from("/nonexistent"),
+            data_dir.path().to_path_buf(),
+            true,
+        );
         let result = tool
             .invoke(ToolInvocation {
                 id: "t16".into(),
@@ -941,7 +976,11 @@ mod tests {
             let img_path = dir.path().join(format!("test.{ext}"));
             fs::write(&img_path, format!("fake {ext} content")).unwrap();
 
-            let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+            let tool = ViewImageTool::new(
+                dir.path().to_path_buf(),
+                data_dir.path().to_path_buf(),
+                true,
+            );
             let result = tool
                 .invoke(ToolInvocation {
                     id: format!("t17-{ext}"),
@@ -969,7 +1008,11 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
         ];
         fs::write(&img_path, minimal_png).unwrap();
-        let tool = ViewImageTool::new(dir.path().to_path_buf(), data_dir.path().to_path_buf());
+        let tool = ViewImageTool::new(
+            dir.path().to_path_buf(),
+            data_dir.path().to_path_buf(),
+            true,
+        );
         let result = tool
             .invoke(ToolInvocation {
                 id: "t18".into(),

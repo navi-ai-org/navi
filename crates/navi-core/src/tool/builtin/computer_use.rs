@@ -31,11 +31,15 @@ const SCREENSHOT_SUBDIR: &str = "screenshots";
 
 pub(crate) struct CaptureScreenTool {
     data_dir: PathBuf,
+    supports_vision: bool,
 }
 
 impl CaptureScreenTool {
-    pub(crate) fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+    pub(crate) fn new(data_dir: PathBuf, supports_vision: bool) -> Self {
+        Self {
+            data_dir,
+            supports_vision,
+        }
     }
 }
 
@@ -44,10 +48,11 @@ impl Tool for CaptureScreenTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition_with_meta(
             "capture_screen",
-            "Capture the primary monitor screen as a screenshot. The image is saved as a BMP \
-file under the NAVI data directory and attached for visual analysis by the chat model on \
-the next request. Returns the file path, dimensions, and size. Use `view_image` to \
-re-examine a previously captured screenshot.",
+            "Capture the primary monitor screen as a screenshot. The image is saved as a file \
+under the NAVI data directory. On vision-capable models the image is also attached for \
+visual analysis on the next request; on text-only models only the file path, dimensions, \
+and size are returned (use `inspect_element` for a text-based view of the UI). Returns the \
+file path, dimensions, and size.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -79,36 +84,57 @@ re-examine a previously captured screenshot.",
             &navi_computer_use::CaptureOptions::default(),
         )?;
 
-        // Read the BMP file and embed it as multimodal content so the model
-        // sees the screenshot directly (same pattern as `view_image`).
         let path = std::path::Path::new(&screenshot.path);
-        let bytes =
-            std::fs::read(path).map_err(|e| anyhow::anyhow!("failed to read screenshot: {e}"))?;
-        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
-
-        // Persist to the attachment store for session restore.
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("bmp");
-        let attachment_id = crate::attachment_store::store_bytes(&self.data_dir, &bytes, ext)
-            .map_err(|e| anyhow::anyhow!("failed to persist screenshot attachment: {e}"))?;
 
-        let mut output = json!({
-            "path": screenshot.path,
-            "width": screenshot.width,
-            "height": screenshot.height,
-            "size_bytes": screenshot.size_bytes,
-            "format": ext,
-            "media_type": "image/bmp",
-            "image_attached": true,
-            "attachment_id": attachment_id,
-            "message": "Screenshot captured and attached for multimodal analysis on the next model request.",
-        });
-        output[NAVI_CONTENT_PARTS_KEY] = json!([{
-            "type": "image",
-            "media_type": "image/bmp",
-            "data": data,
-        }]);
+        if self.supports_vision {
+            // Read the file and embed it as multimodal content so the model
+            // sees the screenshot directly (same pattern as `view_image`).
+            let bytes = std::fs::read(path)
+                .map_err(|e| anyhow::anyhow!("failed to read screenshot: {e}"))?;
+            let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
 
-        Ok(helpers::ok(invocation.id, output))
+            // Persist to the attachment store for session restore.
+            let attachment_id =
+                crate::attachment_store::store_bytes(&self.data_dir, &bytes, ext)
+                    .map_err(|e| anyhow::anyhow!("failed to persist screenshot attachment: {e}"))?;
+
+            let mut output = json!({
+                "path": screenshot.path,
+                "width": screenshot.width,
+                "height": screenshot.height,
+                "size_bytes": screenshot.size_bytes,
+                "format": ext,
+                "media_type": "image/bmp",
+                "image_attached": true,
+                "attachment_id": attachment_id,
+                "message": "Screenshot captured and attached for multimodal analysis on the next model request.",
+            });
+            output[NAVI_CONTENT_PARTS_KEY] = json!([{
+                "type": "image",
+                "media_type": "image/bmp",
+                "data": data,
+            }]);
+            Ok(helpers::ok(invocation.id, output))
+        } else {
+            // Text-only model: return metadata without the base64 image.
+            // The screenshot file is still saved on disk for later use
+            // (e.g. switching to a vision model or manual inspection).
+            Ok(helpers::ok(
+                invocation.id,
+                json!({
+                    "path": screenshot.path,
+                    "width": screenshot.width,
+                    "height": screenshot.height,
+                    "size_bytes": screenshot.size_bytes,
+                    "format": ext,
+                    "image_attached": false,
+                    "message": "Screenshot saved to disk. The current model does not support \
+                                image input — use `inspect_element` for a text-based view of \
+                                the UI, or switch to a vision-capable model to analyze the image.",
+                }),
+            ))
+        }
     }
 }
 
@@ -285,11 +311,15 @@ fn element_to_json(el: &navi_computer_use::ElementInfo) -> Value {
 
 pub(crate) struct AnnotateScreenshotTool {
     data_dir: PathBuf,
+    supports_vision: bool,
 }
 
 impl AnnotateScreenshotTool {
-    pub(crate) fn new(data_dir: PathBuf) -> Self {
-        Self { data_dir }
+    pub(crate) fn new(data_dir: PathBuf, supports_vision: bool) -> Self {
+        Self {
+            data_dir,
+            supports_vision,
+        }
     }
 }
 
@@ -299,12 +329,14 @@ impl Tool for AnnotateScreenshotTool {
         helpers::definition_with_meta(
             "annotate_screenshot",
             "Capture a screenshot and overlay bounding-box rectangles for each UI element \
-from the accessibility tree. The annotated image (PNG) is attached for visual analysis. \
-This closes the loop between `inspect_element` (which returns coordinates) and \
-`capture_screen` (which returns pixels) — the model can see exactly which UI elements \
-are where. Box colors: red = password field, green = interactive (button/edit/etc), \
-blue = container (window/pane/group), gray = other. The element tree JSON is also \
-returned so the model can correlate boxes with names and control types by position.",
+from the accessibility tree. On vision-capable models the annotated image (PNG) is \
+attached for visual analysis; on text-only models only the element tree JSON is returned \
+(with names, control types, and coordinates — no image). This closes the loop between \
+`inspect_element` (which returns coordinates) and `capture_screen` (which returns pixels) \
+— the model can see exactly which UI elements are where. Box colors: red = password field, \
+green = interactive (button/edit/etc), blue = container (window/pane/group), gray = other. \
+The element tree JSON is always returned so the model can correlate boxes with names and \
+control types by position.",
             ToolKind::Read,
             json!({
                 "type": "object",
@@ -364,55 +396,80 @@ returned so the model can correlate boxes with names and control types by positi
             .await
             .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"))??;
 
-        // 3. Read screenshot bytes and annotate
-        let screenshot_path = std::path::Path::new(&screenshot.path);
-        let image_bytes = std::fs::read(screenshot_path)
-            .map_err(|e| anyhow::anyhow!("failed to read screenshot: {e}"))?;
-
-        // Count elements before moving the tree into the annotation closure.
+        // 3. Count elements and serialize tree JSON (always needed).
         let element_count = count_elements(&tree.root);
         let password_count = count_passwords(&tree.root);
         let tree_json = element_to_json(&tree.root);
         let tree_supported = tree.supported;
 
-        let annotated_png = tokio::task::spawn_blocking(move || {
-            navi_computer_use::annotate_screenshot(&image_bytes, &tree)
-        })
-        .await
-        .map_err(|e| anyhow::anyhow!("annotate worker panicked: {e}"))??;
+        if self.supports_vision {
+            // Read screenshot bytes and annotate.
+            let screenshot_path = std::path::Path::new(&screenshot.path);
+            let image_bytes = std::fs::read(screenshot_path)
+                .map_err(|e| anyhow::anyhow!("failed to read screenshot: {e}"))?;
 
-        // 4. Persist annotated PNG to attachment store
-        let attachment_id =
-            crate::attachment_store::store_bytes(&self.data_dir, &annotated_png, "png")
-                .map_err(|e| anyhow::anyhow!("failed to persist annotated attachment: {e}"))?;
+            let annotated_png = tokio::task::spawn_blocking(move || {
+                navi_computer_use::annotate_screenshot(&image_bytes, &tree)
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("annotate worker panicked: {e}"))??;
 
-        let data = base64::engine::general_purpose::STANDARD.encode(&annotated_png);
+            // Persist annotated PNG to attachment store.
+            let attachment_id =
+                crate::attachment_store::store_bytes(&self.data_dir, &annotated_png, "png")
+                    .map_err(|e| anyhow::anyhow!("failed to persist annotated attachment: {e}"))?;
 
-        let mut output = json!({
-            "screenshot_path": screenshot.path,
-            "screenshot_width": screenshot.width,
-            "screenshot_height": screenshot.height,
-            "annotated_format": "png",
-            "annotated_media_type": "image/png",
-            "annotated_size_bytes": annotated_png.len(),
-            "image_attached": true,
-            "attachment_id": attachment_id,
-            "annotated_elements": element_count,
-            "password_fields_found": password_count,
-            "platform": navi_computer_use::platform_backend().platform_name(),
-            "element_tree": {
-                "supported": tree_supported,
-                "root": tree_json,
-            },
-            "message": "Annotated screenshot attached. Each UI element has a colored bounding box: red=password, green=interactive, blue=container, gray=other. The element_tree field contains names and control types for correlating with the visual boxes.",
-        });
-        output[NAVI_CONTENT_PARTS_KEY] = json!([{
-            "type": "image",
-            "media_type": "image/png",
-            "data": data,
-        }]);
+            let data = base64::engine::general_purpose::STANDARD.encode(&annotated_png);
 
-        Ok(helpers::ok(invocation.id, output))
+            let mut output = json!({
+                "screenshot_path": screenshot.path,
+                "screenshot_width": screenshot.width,
+                "screenshot_height": screenshot.height,
+                "annotated_format": "png",
+                "annotated_media_type": "image/png",
+                "annotated_size_bytes": annotated_png.len(),
+                "image_attached": true,
+                "attachment_id": attachment_id,
+                "annotated_elements": element_count,
+                "password_fields_found": password_count,
+                "platform": navi_computer_use::platform_backend().platform_name(),
+                "element_tree": {
+                    "supported": tree_supported,
+                    "root": tree_json,
+                },
+                "message": "Annotated screenshot attached. Each UI element has a colored bounding box: red=password, green=interactive, blue=container, gray=other. The element_tree field contains names and control types for correlating with the visual boxes.",
+            });
+            output[NAVI_CONTENT_PARTS_KEY] = json!([{
+                "type": "image",
+                "media_type": "image/png",
+                "data": data,
+            }]);
+            Ok(helpers::ok(invocation.id, output))
+        } else {
+            // Text-only model: return the element tree JSON without the
+            // annotated image. The tree has names, control types, and
+            // coordinates — sufficient for coordinate-based automation.
+            Ok(helpers::ok(
+                invocation.id,
+                json!({
+                    "screenshot_path": screenshot.path,
+                    "screenshot_width": screenshot.width,
+                    "screenshot_height": screenshot.height,
+                    "image_attached": false,
+                    "annotated_elements": element_count,
+                    "password_fields_found": password_count,
+                    "platform": navi_computer_use::platform_backend().platform_name(),
+                    "element_tree": {
+                        "supported": tree_supported,
+                        "root": tree_json,
+                    },
+                    "message": "Element tree captured (text-only mode — no image attached). \
+                                The element_tree field contains names, control types, and \
+                                coordinates for each UI element. Use these coordinates with \
+                                `simulate_input` for click/type actions.",
+                }),
+            ))
+        }
     }
 }
 
@@ -654,7 +711,7 @@ mod tests {
 
     #[test]
     fn capture_screen_definition_is_deferred_read() {
-        let tool = CaptureScreenTool::new(PathBuf::from("/tmp"));
+        let tool = CaptureScreenTool::new(PathBuf::from("/tmp"), true);
         let def = tool.definition();
         assert_eq!(def.name, "capture_screen");
         assert_eq!(def.kind, ToolKind::Read);

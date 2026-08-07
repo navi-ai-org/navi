@@ -192,6 +192,11 @@ pub struct ToolExecutor {
     registry: ToolRegistry,
     /// Optional session rewind store for file restore on rewind.
     rewind_store: Option<Arc<std::sync::Mutex<crate::rewind::RewindStore>>>,
+    /// Whether the current model supports vision/image input. Tools that
+    /// attach images (capture_screen, annotate_screenshot, view_image) use
+    /// this to decide whether to include base64 image data in their output
+    /// or return text-only metadata. Defaults to `true` for backward compat.
+    supports_vision: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -246,6 +251,7 @@ impl ToolExecutor {
             harness_profile: "medium".to_string(),
             registry: ToolRegistry::new(),
             rewind_store: None,
+            supports_vision: true,
         }
     }
 
@@ -266,7 +272,20 @@ impl ToolExecutor {
         policy: SecurityPolicy,
         security: Arc<dyn ToolSecurityPolicy>,
     ) -> Self {
+        Self::with_security_policy_and_vision(policy, security, true)
+    }
+
+    /// Like [`with_security_policy`](Self::with_security_policy) but lets the
+    /// caller specify whether the current model supports vision/image input.
+    /// Tools that attach images use this to decide whether to include base64
+    /// image data or return text-only metadata.
+    pub fn with_security_policy_and_vision(
+        policy: SecurityPolicy,
+        security: Arc<dyn ToolSecurityPolicy>,
+        supports_vision: bool,
+    ) -> Self {
         let mut executor = Self::empty_with_security_policy(policy, security);
+        executor.supports_vision = supports_vision;
         executor.register_builtin_tools();
         executor
     }
@@ -345,6 +364,7 @@ impl ToolExecutor {
             harness_profile: "medium".to_string(),
             registry: ToolRegistry::new(),
             rewind_store: None,
+            supports_vision: true,
         };
         executor.register(ReadTool::new(pr.clone()));
         executor.register(ReadTool::alias(pr.clone(), "read"));
@@ -570,6 +590,7 @@ impl ToolExecutor {
         let mut forked = Self::empty_with_security_policy(policy, self.security.clone());
         forked.harness_profile = self.harness_profile.clone();
         forked.rewind_store = self.rewind_store.clone();
+        forked.supports_vision = self.supports_vision;
         for name in allowed_tool_names {
             if let Some(tool) = self.tools.get(name) {
                 forked.register_tool(tool.clone());
@@ -1170,8 +1191,21 @@ impl ToolExecutor {
         self.register(RequestUserInputTool::new());
         self.register(SandboxTool::new(pr.clone()));
         let data_dir = self.policy.data_dir().to_path_buf();
-        self.register(ViewImageTool::new(pr.clone(), data_dir.clone()));
-        self.register(ViewImageTool::inspect_image(pr.clone(), data_dir));
+
+        // `supports_vision` is set by the constructor (defaults to `true`).
+        // The runtime passes the real value via `with_security_policy_and_vision`.
+        let supports_vision = self.supports_vision;
+
+        self.register(ViewImageTool::new(
+            pr.clone(),
+            data_dir.clone(),
+            supports_vision,
+        ));
+        self.register(ViewImageTool::inspect_image(
+            pr.clone(),
+            data_dir,
+            supports_vision,
+        ));
         #[cfg(feature = "browser")]
         self.register(BrowserTool::new(pr.clone()));
         #[cfg(feature = "computer-use")]
@@ -1186,10 +1220,13 @@ impl ToolExecutor {
                 )
             };
             if enabled {
-                self.register(CaptureScreenTool::new(data_dir.clone()));
+                self.register(CaptureScreenTool::new(data_dir.clone(), supports_vision));
                 self.register(EnumerateWindowsTool::new());
                 self.register(InspectElementTool::new());
-                self.register(AnnotateScreenshotTool::new(data_dir.clone()));
+                self.register(AnnotateScreenshotTool::new(
+                    data_dir.clone(),
+                    supports_vision,
+                ));
                 self.register(SimulateInputTool::new(data_dir, deny_apps, permission_mode));
             }
         }

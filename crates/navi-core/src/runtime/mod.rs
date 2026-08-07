@@ -825,6 +825,19 @@ impl AgentRuntime {
         )
     }
 
+    /// Returns `true` if the current model supports vision/image input.
+    /// Used by the tool executor to decide whether image-attaching tools
+    /// should include base64 image data or return text-only metadata.
+    pub fn model_supports_vision(&self) -> bool {
+        let (provider, model) = self.model_selection();
+        crate::config::providers::model_supports_attachment(
+            &self.loaded_config.config,
+            provider,
+            model,
+            crate::model::AttachmentKind::Image,
+        )
+    }
+
     /// Changes the selected model and emits a `ContextUpdated` event.
     pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
         self.loaded_config.config.model.provider =
@@ -855,9 +868,10 @@ impl AgentRuntime {
                 self.loaded_config.data_dir.clone(),
                 self.loaded_config.config.effective_security_config(),
             )?;
-            self.tool_executor = Some(Arc::new(ToolExecutor::with_security_policy(
+            self.tool_executor = Some(Arc::new(ToolExecutor::with_security_policy_and_vision(
                 security_policy,
                 self.runtime_components.security.clone(),
+                self.model_supports_vision(),
             )));
         }
 
@@ -1675,9 +1689,10 @@ impl AgentRuntime {
         )?;
         let harness_policy = crate::harness::select_harness_policy(&self.loaded_config.config);
         let profile_name = format!("{:?}", harness_policy.profile).to_lowercase();
-        let mut executor = ToolExecutor::with_security_policy(
+        let mut executor = ToolExecutor::with_security_policy_and_vision(
             security_policy,
             self.runtime_components.security.clone(),
+            self.model_supports_vision(),
         );
         executor.set_harness_profile(profile_name);
         Self::register_goal_tools_on_executor(
