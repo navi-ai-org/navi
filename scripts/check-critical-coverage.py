@@ -37,6 +37,11 @@ CRITICAL_FILES: dict[str, float] = {
     "crates/navi-os-windows/src/open_app.rs": 90.0,  # ~95% baseline
     "crates/navi-os-windows/src/input.rs": 85.0,  # ~92% baseline
     "crates/navi-os-windows/src/capture.rs": 80.0,  # ~90% baseline
+    # ── Phase 5: remaining builtin tools ───────────────────────────────────
+    "crates/navi-core/src/tool/builtin/workflow/types.rs": 90.0,  # ~100% baseline
+    "crates/navi-core/src/tool/builtin/sandbox_tool.rs": 90.0,  # ~98% baseline
+    "crates/navi-core/src/tool/builtin/code_exec.rs": 90.0,  # ~98% baseline
+    "crates/navi-core/src/tool/builtin/memory.rs": 90.0,  # ~95% baseline
 }
 
 # Function name substrings that must have been executed at least once.
@@ -54,6 +59,11 @@ CRITICAL_FUNCTIONS: list[str] = [
     "encode_bmp",
     "collect_element_rects",
     "count_elements",
+    # Phase 5 — remaining builtin tools.
+    "nested_invocation",
+    "truncate_value",
+    "change_set_summary",
+    "resolve_paths",
 ]
 
 

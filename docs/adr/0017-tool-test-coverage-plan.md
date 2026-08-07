@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Computer Use in progress — §3.1 is the active phase)
+Accepted (all phases complete)
 
 ## Context
 
@@ -48,7 +48,7 @@ phase is complete only when:
 | 2 | Workflow / Lua | `workflow/backends.rs`, `plan.rs` | 60%+ per file | **Complete** |
 | 3 | Subagent | `subagent.rs` | 40%+ | **Complete** |
 | 4 | Update / installer | `update.rs` | 40%+ | **Complete** |
-| 5 | Remaining tools | all other `builtin/*.rs` | 70%+ per file | Pending |
+| 5 | Remaining tools | all other `builtin/*.rs` | 70%+ per file | **Complete** |
 
 ### 3. Phase 1 — Computer Use (active)
 

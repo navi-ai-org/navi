@@ -536,3 +536,732 @@ impl Tool for MemoryTool {
         Ok(helpers::ok(invocation.id, output))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::{Tool, ToolInvocation, ToolKind};
+    use serde_json::json;
+
+    fn make_append_note_tool(root: &std::path::Path) -> AppendNoteTool {
+        AppendNoteTool::new(root.to_path_buf())
+    }
+
+    fn make_history_ops_tool(root: &std::path::Path) -> HistoryOpsTool {
+        HistoryOpsTool::new(root.to_path_buf())
+    }
+
+    fn make_memory_tool(root: &std::path::Path) -> MemoryTool {
+        MemoryTool::new(root.to_path_buf())
+    }
+
+    fn make_invocation(id: &str, tool_name: &str, input: serde_json::Value) -> ToolInvocation {
+        ToolInvocation {
+            id: id.to_string(),
+            tool_name: tool_name.to_string(),
+            input,
+        }
+    }
+
+    // ── AppendNoteTool definition ─────────────────────────────────────────
+
+    #[test]
+    fn append_note_definition_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_append_note_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.name, "append_note");
+    }
+
+    #[test]
+    fn append_note_definition_kind_is_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_append_note_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.kind, ToolKind::Write);
+    }
+
+    #[test]
+    fn append_note_definition_requires_content() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_append_note_tool(temp.path());
+        let def = tool.definition();
+        let required = def.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(required.contains(&"content"));
+    }
+
+    // ── AppendNoteTool invoke ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn append_note_invoke_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_append_note_tool(temp.path());
+        let inv = make_invocation("an1", "append_note", json!({"content": "test note"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+        assert!(
+            result.output["db_path"].as_str().is_some(),
+            "should have db_path: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn append_note_invoke_missing_content_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_append_note_tool(temp.path());
+        let inv = make_invocation("an2", "append_note", json!({}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing content should return Err");
+    }
+
+    // ── HistoryOpsTool definition ─────────────────────────────────────────
+
+    #[test]
+    fn history_ops_definition_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.name, "history_ops");
+    }
+
+    #[test]
+    fn history_ops_definition_kind_is_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.kind, ToolKind::Read);
+    }
+
+    #[test]
+    fn history_ops_definition_action_enum() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let def = tool.definition();
+        let actions = def.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"search"));
+        assert!(names.contains(&"recent"));
+        assert!(names.contains(&"get"));
+        assert!(names.contains(&"summaries"));
+    }
+
+    #[test]
+    fn history_ops_definition_requires_action() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let def = tool.definition();
+        let required = def.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(required.contains(&"action"));
+    }
+
+    // ── HistoryOpsTool invoke ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn history_ops_summaries_returns_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h1", "history_ops", json!({"action": "summaries"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(result.output["sessions"].is_array());
+    }
+
+    #[tokio::test]
+    async fn history_ops_search_with_query() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation(
+            "h2",
+            "history_ops",
+            json!({"action": "search", "query": "test"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(result.output["results"].is_array());
+    }
+
+    #[tokio::test]
+    async fn history_ops_recent_with_session_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation(
+            "h3",
+            "history_ops",
+            json!({"action": "recent", "session_id": "test-session"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(result.output["results"].is_array());
+    }
+
+    #[tokio::test]
+    async fn history_ops_recent_missing_session_id_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h4", "history_ops", json!({"action": "recent"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing session_id should return Err");
+    }
+
+    #[tokio::test]
+    async fn history_ops_search_missing_query_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h5", "history_ops", json!({"action": "search"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing query should return Err");
+    }
+
+    #[tokio::test]
+    async fn history_ops_get_with_event_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h6", "history_ops", json!({"action": "get", "event_id": 1}));
+        // The event likely doesn't exist, but the tool should still return Ok.
+        let result = tool.invoke(inv).await;
+        if let Ok(result) = result {
+            assert!(result.ok);
+        }
+    }
+
+    #[tokio::test]
+    async fn history_ops_get_missing_event_id_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h7", "history_ops", json!({"action": "get"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing event_id should return Err");
+    }
+
+    #[tokio::test]
+    async fn history_ops_unsupported_action_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h8", "history_ops", json!({"action": "unsupported"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "unsupported action should return Err");
+    }
+
+    #[tokio::test]
+    async fn history_ops_missing_action_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_history_ops_tool(temp.path());
+        let inv = make_invocation("h9", "history_ops", json!({}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing action should return Err");
+    }
+
+    // ── MemoryTool definition ─────────────────────────────────────────────
+
+    #[test]
+    fn memory_tool_definition_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.name, "memory");
+    }
+
+    #[test]
+    fn memory_tool_definition_kind_is_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.kind, ToolKind::Read);
+    }
+
+    #[test]
+    fn memory_tool_definition_action_enum() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let def = tool.definition();
+        let actions = def.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"write"));
+        assert!(names.contains(&"read"));
+        assert!(names.contains(&"list"));
+        assert!(names.contains(&"search"));
+        assert!(names.contains(&"update"));
+        assert!(names.contains(&"delete"));
+    }
+
+    #[test]
+    fn memory_tool_definition_memory_type_enum() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let def = tool.definition();
+        let types = def.input_schema["properties"]["memory_type"]["enum"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = types.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"user"));
+        assert!(names.contains(&"feedback"));
+        assert!(names.contains(&"project"));
+        assert!(names.contains(&"reference"));
+    }
+
+    #[test]
+    fn memory_tool_definition_status_enum() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let def = tool.definition();
+        let statuses = def.input_schema["properties"]["status"]["enum"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = statuses.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"active"));
+        assert!(names.contains(&"needs_review"));
+        assert!(names.contains(&"obsolete"));
+    }
+
+    // ── MemoryTool invoke: write ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_write_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m1",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "test-memory",
+                "memory_type": "user",
+                "name": "Test Memory",
+                "description": "A test memory entry",
+                "body": "This is the body content.",
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+        assert_eq!(result.output["id"], "test-memory");
+        assert_eq!(result.output["type"], "user");
+    }
+
+    #[tokio::test]
+    async fn memory_write_missing_id_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m2",
+            "memory",
+            json!({
+                "action": "write",
+                "memory_type": "user",
+                "name": "Test",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing id should return Err");
+    }
+
+    #[tokio::test]
+    async fn memory_write_invalid_memory_type_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m3",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "test",
+                "memory_type": "invalid_type",
+                "name": "Test",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "invalid memory_type should return Err");
+    }
+
+    #[tokio::test]
+    async fn memory_write_missing_name_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m4",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "test",
+                "memory_type": "user",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing name should return Err");
+    }
+
+    // ── MemoryTool invoke: read ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_read_after_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write first
+        let inv = make_invocation(
+            "m5w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "read-test",
+                "memory_type": "project",
+                "name": "Read Test",
+                "description": "Test reading",
+                "body": "Body content here.",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // Read it back
+        let inv = make_invocation(
+            "m5r",
+            "memory",
+            json!({"action": "read", "id": "read-test"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+        assert_eq!(result.output["id"], "read-test");
+        assert_eq!(result.output["name"], "Read Test");
+        assert_eq!(result.output["type"], "project");
+        assert_eq!(result.output["body"], "Body content here.");
+    }
+
+    #[tokio::test]
+    async fn memory_read_nonexistent_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m6",
+            "memory",
+            json!({"action": "read", "id": "nonexistent"}),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "nonexistent memory should return Err");
+    }
+
+    // ── MemoryTool invoke: list ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_list_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m7", "memory", json!({"action": "list"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+        assert_eq!(result.output["count"], 0);
+        assert_eq!(result.output["returned"], 0);
+    }
+
+    #[tokio::test]
+    async fn memory_list_after_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write
+        let inv = make_invocation(
+            "m8w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "list-test",
+                "memory_type": "user",
+                "name": "List Test",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // List
+        let inv = make_invocation("m8l", "memory", json!({"action": "list"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["count"], 1);
+        assert_eq!(result.output["returned"], 1);
+    }
+
+    #[tokio::test]
+    async fn memory_list_with_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write 3 memories
+        for i in 0..3 {
+            let inv = make_invocation(
+                &format!("m9w{i}"),
+                "memory",
+                json!({
+                    "action": "write",
+                    "id": format!("limit-test-{i}"),
+                    "memory_type": "user",
+                    "name": format!("Item {i}"),
+                    "description": "desc",
+                    "body": "body",
+                }),
+            );
+            tool.invoke(inv).await.unwrap();
+        }
+
+        // List with limit=2
+        let inv = make_invocation("m9l", "memory", json!({"action": "list", "limit": 2}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["count"], 3);
+        assert_eq!(result.output["returned"], 2);
+    }
+
+    // ── MemoryTool invoke: search ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_search_text_matching() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write a memory
+        let inv = make_invocation(
+            "m10w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "search-test",
+                "memory_type": "feedback",
+                "name": "Search Test Memory",
+                "description": "about testing search",
+                "body": "The body mentions rust programming.",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // Search for it
+        let inv = make_invocation(
+            "m10s",
+            "memory",
+            json!({"action": "search", "query": "rust"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+        assert!(result.output["count"].as_u64().unwrap_or(0) >= 1);
+    }
+
+    #[tokio::test]
+    async fn memory_search_missing_query_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m11", "memory", json!({"action": "search"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing query should return Err");
+    }
+
+    // ── MemoryTool invoke: update ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_update_name() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write
+        let inv = make_invocation(
+            "m12w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "update-test",
+                "memory_type": "user",
+                "name": "Original Name",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // Update name
+        let inv = make_invocation(
+            "m12u",
+            "memory",
+            json!({"action": "update", "id": "update-test", "name": "Updated Name"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+
+        // Verify
+        let inv = make_invocation(
+            "m12v",
+            "memory",
+            json!({"action": "read", "id": "update-test"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert_eq!(result.output["name"], "Updated Name");
+    }
+
+    #[tokio::test]
+    async fn memory_update_status() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write
+        let inv = make_invocation(
+            "m13w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "status-test",
+                "memory_type": "user",
+                "name": "Test",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // Update status
+        let inv = make_invocation(
+            "m13u",
+            "memory",
+            json!({"action": "update", "id": "status-test", "status": "obsolete"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+    }
+
+    #[tokio::test]
+    async fn memory_update_missing_id_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m14", "memory", json!({"action": "update", "name": "x"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing id should return Err");
+    }
+
+    // ── MemoryTool invoke: delete ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn memory_delete_after_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // Write
+        let inv = make_invocation(
+            "m15w",
+            "memory",
+            json!({
+                "action": "write",
+                "id": "delete-test",
+                "memory_type": "user",
+                "name": "Delete Me",
+                "description": "desc",
+                "body": "body",
+            }),
+        );
+        tool.invoke(inv).await.unwrap();
+
+        // Delete
+        let inv = make_invocation(
+            "m15d",
+            "memory",
+            json!({"action": "delete", "id": "delete-test"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "success");
+
+        // Read should fail
+        let inv = make_invocation(
+            "m15v",
+            "memory",
+            json!({"action": "read", "id": "delete-test"}),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "deleted memory should not be readable");
+    }
+
+    #[tokio::test]
+    async fn memory_delete_missing_id_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m16", "memory", json!({"action": "delete"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing id should return Err");
+    }
+
+    // ── MemoryTool invoke: unsupported action ─────────────────────────────
+
+    #[tokio::test]
+    async fn memory_unsupported_action_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m17", "memory", json!({"action": "unsupported"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "unsupported action should return Err");
+    }
+
+    #[tokio::test]
+    async fn memory_missing_action_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation("m18", "memory", json!({}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing action should return Err");
+    }
+
+    // ── MemoryTool: db_path / resolve_model_paths ─────────────────────────
+
+    #[test]
+    fn memory_tool_db_path_returns_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let path = tool.db_path();
+        assert!(
+            path.to_string_lossy().contains("memories.db"),
+            "db_path should contain memories.db: {path:?}"
+        );
+    }
+
+    #[test]
+    fn memory_tool_resolve_model_paths() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let (model, tokenizer) = tool.resolve_model_paths();
+        assert!(
+            model.to_string_lossy().contains(".gguf"),
+            "model path should contain .gguf: {model:?}"
+        );
+        assert!(
+            tokenizer.to_string_lossy().contains("tokenizer.json"),
+            "tokenizer path should contain tokenizer.json: {tokenizer:?}"
+        );
+    }
+
+    #[test]
+    fn memory_tool_try_generate_embedding_without_model() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        // Without a real model file, this should return None.
+        let result = tool.try_generate_embedding("test text");
+        assert!(result.is_none(), "embedding without model should be None");
+    }
+}

@@ -275,3 +275,444 @@ fn change_set_summary(cs: &ChangeSet) -> ChangeSetSummary {
         total: cs.total(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::{Tool, ToolInvocation};
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    // Serialize tests that touch the global LAST_SNAPSHOT to prevent race
+    // conditions between parallel tests.
+    static SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn make_tool(root: &std::path::Path) -> SandboxTool {
+        SandboxTool::new(root.to_path_buf())
+    }
+
+    fn make_invocation(id: &str, input: serde_json::Value) -> ToolInvocation {
+        ToolInvocation {
+            id: id.to_string(),
+            tool_name: "sandbox".to_string(),
+            input,
+        }
+    }
+
+    /// Acquire the global lock and reset LAST_SNAPSHOT before each test.
+    /// The guard is held for the duration of the test.
+    fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
+        let guard = SNAPSHOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Reset the global snapshot.
+        if let Ok(mut g) = LAST_SNAPSHOT.lock() {
+            *g = None;
+        }
+        guard
+    }
+
+    // ── definition ────────────────────────────────────────────────────────
+
+    #[test]
+    fn definition_name_is_sandbox() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.name, "sandbox");
+    }
+
+    #[test]
+    fn definition_kind_is_command() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let def = tool.definition();
+        assert_eq!(def.kind, ToolKind::Command);
+    }
+
+    #[test]
+    fn definition_schema_action_enum() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let def = tool.definition();
+        let actions = def.input_schema["properties"]["action"]["enum"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(names.contains(&"snapshot"));
+        assert!(names.contains(&"rollback"));
+        assert!(names.contains(&"status"));
+        assert!(names.contains(&"reset"));
+    }
+
+    #[test]
+    fn definition_schema_requires_action() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let def = tool.definition();
+        let required = def.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(required.contains(&"action"));
+    }
+
+    // ── resolve_paths ─────────────────────────────────────────────────────
+
+    #[test]
+    fn resolve_paths_absolute_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let abs = temp.path().join("file.txt");
+        let resolved = tool.resolve_paths(&[json!(abs.to_string_lossy())]);
+        assert_eq!(resolved, vec![abs.clone()]);
+    }
+
+    #[test]
+    fn resolve_paths_relative_joined_to_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let resolved = tool.resolve_paths(&[json!("src/main.rs")]);
+        assert_eq!(resolved, vec![temp.path().join("src/main.rs")]);
+    }
+
+    #[test]
+    fn resolve_paths_empty_vec() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let resolved = tool.resolve_paths(&[]);
+        assert!(resolved.is_empty());
+    }
+
+    #[test]
+    fn resolve_paths_filters_non_strings() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let resolved = tool.resolve_paths(&[json!("ok"), json!(42), json!(null)]);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0], temp.path().join("ok"));
+    }
+
+    #[test]
+    fn resolve_paths_mixed_absolute_and_relative() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let abs = temp.path().join("abs.txt");
+        let resolved = tool.resolve_paths(&[json!(abs.to_string_lossy()), json!("rel.txt")]);
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0], abs);
+        assert_eq!(resolved[1], temp.path().join("rel.txt"));
+    }
+
+    // ── handle_snapshot ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn snapshot_with_missing_paths_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("s1", json!({"action": "snapshot"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("paths")),
+            "should mention paths: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_empty_paths_array_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("s2", json!({"action": "snapshot", "paths": []}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_nonexistent_path_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation(
+            "s3",
+            json!({"action": "snapshot", "paths": ["nonexistent_file.txt"]}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("do not exist")),
+            "should mention missing paths: {result:?}"
+        );
+        assert!(result.output["missing_paths"].is_array());
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_existing_file_succeeds() {
+        let _guard = lock_and_reset();
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "content").unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("s4", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert!(
+            result.output["snapshot_id"].as_str().is_some(),
+            "should have snapshot_id: {result:?}"
+        );
+        assert!(
+            result.output["files_snapshotted"].as_u64().is_some(),
+            "should have files_snapshotted: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_directory_succeeds() {
+        let _guard = lock_and_reset();
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(temp.path().join("src")).unwrap();
+        std::fs::write(temp.path().join("src/lib.rs"), "fn main() {}").unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("s5", json!({"action": "snapshot", "paths": ["src"]}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn snapshot_with_absolute_path_succeeds() {
+        let _guard = lock_and_reset();
+        let temp = tempfile::tempdir().unwrap();
+        let abs = temp.path().join("abs.txt");
+        std::fs::write(&abs, "content").unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation(
+            "s6",
+            json!({"action": "snapshot", "paths": [abs.to_string_lossy()]}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+    }
+
+    // ── handle_rollback ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn rollback_without_snapshot_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        // First reset to ensure no snapshot from a previous test.
+        let _guard = lock_and_reset();
+
+        let inv = make_invocation("r1", json!({"action": "rollback"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("No snapshot")),
+            "should mention no snapshot: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_after_snapshot_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "original").unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        // Snapshot
+        let inv = make_invocation("r2s", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        tool.invoke(inv).await.unwrap();
+
+        // Modify file
+        std::fs::write(temp.path().join("file.txt"), "modified").unwrap();
+
+        // Rollback
+        let inv = make_invocation("r2r", json!({"action": "rollback"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert_eq!(result.output["rolled_back"], true);
+        // File should be restored.
+        let content = std::fs::read_to_string(temp.path().join("file.txt")).unwrap();
+        assert_eq!(content, "original");
+    }
+
+    #[tokio::test]
+    async fn rollback_with_no_changes_reports_rolled_back_false() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "unchanged").unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        // Snapshot
+        let inv = make_invocation("r3s", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        tool.invoke(inv).await.unwrap();
+
+        // Rollback without changes
+        let inv = make_invocation("r3r", json!({"action": "rollback"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert_eq!(result.output["rolled_back"], false);
+    }
+
+    // ── handle_status ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn status_without_snapshot_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        let inv = make_invocation("st1", json!({"action": "status"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
+        assert!(
+            result.output["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("No snapshot")),
+            "should mention no snapshot: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn status_after_snapshot_no_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "content").unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        let inv = make_invocation("st2s", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        tool.invoke(inv).await.unwrap();
+
+        let inv = make_invocation("st2", json!({"action": "status"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert_eq!(result.output["has_changes"], false);
+    }
+
+    #[tokio::test]
+    async fn status_after_modification_reports_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "original").unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        let inv = make_invocation("st3s", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        tool.invoke(inv).await.unwrap();
+
+        // Modify
+        std::fs::write(temp.path().join("file.txt"), "modified").unwrap();
+
+        let inv = make_invocation("st3", json!({"action": "status"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert_eq!(result.output["has_changes"], true);
+    }
+
+    // ── handle_reset ──────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn reset_clears_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join("file.txt"), "content").unwrap();
+        let tool = make_tool(temp.path());
+        let _guard = lock_and_reset();
+
+        // Snapshot
+        let inv = make_invocation("rs1s", json!({"action": "snapshot", "paths": ["file.txt"]}));
+        tool.invoke(inv).await.unwrap();
+
+        // Reset
+        let inv = make_invocation("rs1", json!({"action": "reset"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "ok");
+        assert!(
+            result.output["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("cleared")),
+            "should mention cleared: {result:?}"
+        );
+
+        // Status should now report no snapshot.
+        let inv = make_invocation("rs1v", json!({"action": "status"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert_eq!(result.output["status"], "error");
+    }
+
+    // ── unknown action ────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn unknown_action_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("u1", json!({"action": "unknown"}));
+        let result = tool.invoke(inv).await.unwrap();
+        // Unknown action returns ok=false (not a tool error, but a logical error).
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"], "unknown_action");
+        assert!(
+            result.output["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("unknown sandbox action")),
+            "should mention unknown action: {result:?}"
+        );
+    }
+
+    // ── missing action field ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn missing_action_returns_error() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation("m1", json!({}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "missing action should return Err");
+    }
+
+    // ── change_set_summary ────────────────────────────────────────────────
+
+    #[test]
+    fn change_set_summary_empty() {
+        let cs = ChangeSet {
+            files_created: vec![],
+            files_modified: vec![],
+            files_deleted: vec![],
+            diff: None,
+        };
+        let summary = change_set_summary(&cs);
+        assert!(summary.files_created.is_empty());
+        assert!(summary.files_modified.is_empty());
+        assert!(summary.files_deleted.is_empty());
+        assert_eq!(summary.total, 0);
+    }
+
+    #[test]
+    fn change_set_summary_with_entries() {
+        let cs = ChangeSet {
+            files_created: vec![std::path::PathBuf::from("new.txt")],
+            files_modified: vec![std::path::PathBuf::from("mod.txt")],
+            files_deleted: vec![std::path::PathBuf::from("del.txt")],
+            diff: None,
+        };
+        let summary = change_set_summary(&cs);
+        assert_eq!(summary.files_created, vec!["new.txt"]);
+        assert_eq!(summary.files_modified, vec!["mod.txt"]);
+        assert_eq!(summary.files_deleted, vec!["del.txt"]);
+        assert_eq!(summary.total, 3);
+    }
+}
