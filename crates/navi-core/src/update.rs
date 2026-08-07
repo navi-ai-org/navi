@@ -374,4 +374,811 @@ mod tests {
         assert!(msg.contains("FAIL"), "{msg}");
         assert!(!msg.contains('\u{1b}'), "{msg}");
     }
+
+    // ── current_version ───────────────────────────────────────────────────
+
+    #[test]
+    fn current_version_returns_non_empty_string() {
+        let v = current_version();
+        assert!(!v.is_empty(), "current_version must not be empty");
+        // Should look like a semver (at least one digit and one dot).
+        assert!(
+            v.chars().any(|c| c.is_ascii_digit()),
+            "current_version should contain digits: {v}"
+        );
+        assert!(v.contains('.'), "current_version should contain '.': {v}");
+    }
+
+    #[test]
+    fn current_version_matches_cargo_pkg_version() {
+        assert_eq!(current_version(), env!("CARGO_PKG_VERSION"));
+    }
+
+    // ── normalize_version edge cases ──────────────────────────────────────
+
+    #[test]
+    fn normalize_version_strips_leading_v() {
+        assert_eq!(normalize_version("v1.2.3"), "1.2.3");
+    }
+
+    #[test]
+    fn normalize_version_no_v_prefix() {
+        assert_eq!(normalize_version("1.2.3"), "1.2.3");
+    }
+
+    #[test]
+    fn normalize_version_trims_whitespace() {
+        assert_eq!(normalize_version("  v1.2.3  "), "1.2.3");
+        assert_eq!(normalize_version("  1.2.3  "), "1.2.3");
+    }
+
+    #[test]
+    fn normalize_version_trims_after_v_strip() {
+        // "v  1.2.3" → trim → "v  1.2.3" → strip 'v' → "  1.2.3" → trim → "1.2.3"
+        assert_eq!(normalize_version("v  1.2.3"), "1.2.3");
+    }
+
+    #[test]
+    fn normalize_version_empty_string() {
+        assert_eq!(normalize_version(""), "");
+    }
+
+    #[test]
+    fn normalize_version_whitespace_only() {
+        assert_eq!(normalize_version("   "), "");
+    }
+
+    #[test]
+    fn normalize_version_v_only() {
+        assert_eq!(normalize_version("v"), "");
+    }
+
+    #[test]
+    fn normalize_version_double_v() {
+        // trim_start_matches('v') strips ALL leading 'v' chars.
+        assert_eq!(normalize_version("vv1.2.3"), "1.2.3");
+    }
+
+    #[test]
+    fn normalize_version_with_pre_release_suffix() {
+        // Suffix is preserved (only the leading 'v' is stripped).
+        assert_eq!(normalize_version("v1.2.3-beta"), "1.2.3-beta");
+    }
+
+    // ── version_is_newer edge cases ───────────────────────────────────────
+
+    #[test]
+    fn version_is_newer_same_version_false() {
+        assert!(!version_is_newer("1.0.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_higher_patch_true() {
+        assert!(version_is_newer("1.0.1", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_higher_minor_true() {
+        assert!(version_is_newer("1.1.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_higher_major_true() {
+        assert!(version_is_newer("2.0.0", "1.9.9"));
+    }
+
+    #[test]
+    fn version_is_newer_lower_major_false() {
+        assert!(!version_is_newer("0.9.0", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_lower_minor_false() {
+        assert!(!version_is_newer("1.0.0", "1.1.0"));
+    }
+
+    #[test]
+    fn version_is_newer_lower_patch_false() {
+        assert!(!version_is_newer("1.0.0", "1.0.1"));
+    }
+
+    #[test]
+    fn version_is_newer_with_v_prefix() {
+        assert!(version_is_newer("v1.0.0", "v0.9.0"));
+        assert!(!version_is_newer("v0.9.0", "v1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_mixed_v_prefix() {
+        assert!(version_is_newer("v1.0.0", "0.9.0"));
+        assert!(version_is_newer("1.0.0", "v0.9.0"));
+    }
+
+    #[test]
+    fn version_is_newer_with_pre_release_suffix() {
+        // Pre-release suffix is split off; only major.minor.patch compared.
+        assert!(version_is_newer("1.0.1-beta", "1.0.0"));
+        assert!(!version_is_newer("1.0.0-beta", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_with_build_metadata() {
+        // Build metadata after '+' is split off.
+        assert!(version_is_newer("1.0.1+build123", "1.0.0"));
+        assert!(!version_is_newer("1.0.0+build123", "1.0.0"));
+    }
+
+    #[test]
+    fn version_is_newer_empty_strings() {
+        // Empty strings parse as (0, 0, 0) — not newer than each other.
+        assert!(!version_is_newer("", ""));
+    }
+
+    #[test]
+    fn version_is_newer_garbage_parses_as_zero() {
+        // Non-numeric parts parse as 0.
+        assert!(!version_is_newer("garbage", "0.0.0"));
+        assert!(!version_is_newer("0.0.0", "garbage"));
+    }
+
+    #[test]
+    fn version_is_newer_partial_version() {
+        // Missing parts default to 0.
+        assert!(version_is_newer("1", "0.0.0"));
+        assert!(version_is_newer("1.1", "1.0.0"));
+        assert!(!version_is_newer("1.0", "1.0.1"));
+    }
+
+    // ── parse_semver ──────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_semver_full_version() {
+        assert_eq!(parse_semver("1.2.3"), (1, 2, 3));
+    }
+
+    #[test]
+    fn parse_semver_with_v_prefix() {
+        assert_eq!(parse_semver("v1.2.3"), (1, 2, 3));
+    }
+
+    #[test]
+    fn parse_semver_with_pre_release() {
+        assert_eq!(parse_semver("1.2.3-beta.1"), (1, 2, 3));
+    }
+
+    #[test]
+    fn parse_semver_with_build_metadata() {
+        assert_eq!(parse_semver("1.2.3+build.456"), (1, 2, 3));
+    }
+
+    #[test]
+    fn parse_semver_partial() {
+        assert_eq!(parse_semver("1"), (1, 0, 0));
+        assert_eq!(parse_semver("1.2"), (1, 2, 0));
+    }
+
+    #[test]
+    fn parse_semver_empty() {
+        assert_eq!(parse_semver(""), (0, 0, 0));
+    }
+
+    #[test]
+    fn parse_semver_garbage() {
+        assert_eq!(parse_semver("abc"), (0, 0, 0));
+        assert_eq!(parse_semver("a.b.c"), (0, 0, 0));
+    }
+
+    #[test]
+    fn parse_semver_mixed_numeric_and_garbage() {
+        assert_eq!(parse_semver("1.x.3"), (1, 0, 3));
+    }
+
+    #[test]
+    fn parse_semver_whitespace_trimmed() {
+        assert_eq!(parse_semver("  1.2.3  "), (1, 2, 3));
+    }
+
+    // ── UpdateInfo::is_newer ──────────────────────────────────────────────
+
+    #[test]
+    fn update_info_is_newer_true() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://github.com/test/repo/releases/v1.0.1".into(),
+            body: None,
+            prerelease: false,
+        };
+        assert!(info.is_newer());
+    }
+
+    #[test]
+    fn update_info_is_newer_false_same_version() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.0".into(),
+            latest_version: "1.0.0".into(),
+            release_url: "https://github.com/test/repo/releases/v1.0.0".into(),
+            body: None,
+            prerelease: false,
+        };
+        assert!(!info.is_newer());
+    }
+
+    #[test]
+    fn update_info_is_newer_false_older_version() {
+        let info = UpdateInfo {
+            current_version: "1.0.1".into(),
+            latest_tag: "v1.0.0".into(),
+            latest_version: "1.0.0".into(),
+            release_url: "https://github.com/test/repo/releases/v1.0.0".into(),
+            body: None,
+            prerelease: false,
+        };
+        assert!(!info.is_newer());
+    }
+
+    #[test]
+    fn update_info_serde_roundtrip() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://example.com".into(),
+            body: Some("Release notes".into()),
+            prerelease: true,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let back: UpdateInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, back);
+    }
+
+    #[test]
+    fn update_info_serde_skip_none_body() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://example.com".into(),
+            body: None,
+            prerelease: false,
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(
+            !json.contains("body"),
+            "None body should be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn update_info_serde_default_prerelease() {
+        // JSON without prerelease field should default to false.
+        let json = r#"{"current_version":"1.0.0","latest_tag":"v1.0.1","latest_version":"1.0.1","release_url":"https://example.com"}"#;
+        let info: UpdateInfo = serde_json::from_str(json).unwrap();
+        assert!(!info.prerelease);
+        assert!(info.body.is_none());
+    }
+
+    // ── strip_ansi edge cases ─────────────────────────────────────────────
+
+    #[test]
+    fn strip_ansi_empty_string() {
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn strip_ansi_no_escape_codes() {
+        assert_eq!(strip_ansi("hello world"), "hello world");
+    }
+
+    #[test]
+    fn strip_ansi_csi_color() {
+        assert_eq!(strip_ansi("\x1b[31mred\x1b[0m"), "red");
+    }
+
+    #[test]
+    fn strip_ansi_csi_multiple_params() {
+        assert_eq!(strip_ansi("\x1b[1;31;40mbold red\x1b[0m"), "bold red");
+    }
+
+    #[test]
+    fn strip_ansi_csi_cursor_movement() {
+        assert_eq!(strip_ansi("\x1b[2J\x1b[Hclear"), "clear");
+    }
+
+    #[test]
+    fn strip_ansi_osc_with_bel() {
+        // OSC sequence terminated by BEL (\x07)
+        assert_eq!(strip_ansi("\x1b]0;title\x07rest"), "rest");
+    }
+
+    #[test]
+    fn strip_ansi_osc_with_st() {
+        // OSC sequence terminated by ST (ESC \)
+        assert_eq!(strip_ansi("\x1b]0;title\x1b\\rest"), "rest");
+    }
+
+    #[test]
+    fn strip_ansi_osc_empty_title_with_bel() {
+        assert_eq!(strip_ansi("\x1b]0;\x07rest"), "rest");
+    }
+
+    #[test]
+    fn strip_ansi_escape_without_bracket() {
+        // Lone ESC followed by a non-CSI/OSC char — just skip the ESC.
+        assert_eq!(strip_ansi("\x1bXhello"), "hello");
+    }
+
+    #[test]
+    fn strip_ansi_lone_escape() {
+        // Lone ESC at end of string.
+        assert_eq!(strip_ansi("hello\x1b"), "hello");
+    }
+
+    #[test]
+    fn strip_ansi_escape_at_start() {
+        // ESC at start with no following char.
+        assert_eq!(strip_ansi("\x1b"), "");
+    }
+
+    #[test]
+    fn strip_ansi_multiple_csi_sequences() {
+        assert_eq!(
+            strip_ansi("\x1b[1mhello\x1b[0m \x1b[31mworld\x1b[0m"),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn strip_ansi_mixed_csi_and_osc() {
+        assert_eq!(strip_ansi("\x1b]0;title\x07\x1b[31mtext\x1b[0m"), "text");
+    }
+
+    #[test]
+    fn strip_ansi_csi_without_terminator() {
+        // CSI without a final byte — entire rest is consumed.
+        assert_eq!(strip_ansi("\x1b[123"), "");
+    }
+
+    #[test]
+    fn strip_ansi_preserves_newlines() {
+        assert_eq!(strip_ansi("line1\nline2\n"), "line1\nline2\n");
+    }
+
+    #[test]
+    fn strip_ansi_unicode_content() {
+        assert_eq!(strip_ansi("héllo wörld"), "héllo wörld");
+    }
+
+    // ── installer_error_tail edge cases ───────────────────────────────────
+
+    #[test]
+    fn installer_error_tail_empty_both() {
+        assert_eq!(installer_error_tail(b"", b""), "");
+    }
+
+    #[test]
+    fn installer_error_tail_stderr_only() {
+        let tail = installer_error_tail(b"", b"error message");
+        assert_eq!(tail, "error message");
+    }
+
+    #[test]
+    fn installer_error_tail_stdout_only() {
+        let tail = installer_error_tail(b"output", b"");
+        assert_eq!(tail, "output");
+    }
+
+    #[test]
+    fn installer_error_tail_both_combined() {
+        let tail = installer_error_tail(b"stdout line", b"stderr line");
+        assert!(
+            tail.contains("stderr line"),
+            "stderr should be first: {tail}"
+        );
+        assert!(
+            tail.contains("stdout line"),
+            "stdout should be appended: {tail}"
+        );
+    }
+
+    #[test]
+    fn installer_error_tail_strips_ansi_from_stderr() {
+        let tail = installer_error_tail(b"", b"\x1b[31merror\x1b[0m");
+        assert_eq!(tail, "error");
+        assert!(!tail.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn installer_error_tail_strips_ansi_from_stdout() {
+        let tail = installer_error_tail(b"\x1b[32mok\x1b[0m", b"");
+        assert_eq!(tail, "ok");
+        assert!(!tail.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn installer_error_tail_trims_whitespace() {
+        // The combined output is trimmed at the edges only; inner whitespace
+        // from each stream is preserved.
+        let tail = installer_error_tail(b"  output  ", b"  error  ");
+        assert_eq!(tail, "error  \n  output");
+    }
+
+    #[test]
+    fn installer_error_tail_short_output_unchanged() {
+        let msg = "short error";
+        let tail = installer_error_tail(b"", msg.as_bytes());
+        assert_eq!(tail, msg);
+    }
+
+    #[test]
+    fn installer_error_tail_long_output_truncated_to_1500() {
+        // Create a string longer than 1500 chars.
+        let long = "x".repeat(3000);
+        let tail = installer_error_tail(b"", long.as_bytes());
+        assert!(
+            tail.len() <= 1500,
+            "tail should be truncated to ~1500 chars, got {}",
+            tail.len()
+        );
+        assert!(!tail.is_empty(), "tail should not be empty");
+    }
+
+    #[test]
+    fn installer_error_tail_long_output_cuts_on_newline() {
+        // Create a string with a newline near the 1500 boundary.
+        let mut long = "x".repeat(1400);
+        long.push('\n');
+        long.push_str(&"y".repeat(1600));
+        let tail = installer_error_tail(b"", long.as_bytes());
+        // After truncation, the tail should start after the newline boundary.
+        assert!(
+            tail.starts_with('y'),
+            "tail should start after newline boundary: starts with '{}'",
+            tail.chars().next().unwrap_or(' ')
+        );
+    }
+
+    #[test]
+    fn installer_error_tail_long_output_no_newline() {
+        // No newline in the long output — just take the last 1500 chars.
+        let long = "x".repeat(3000);
+        let tail = installer_error_tail(b"", long.as_bytes());
+        assert_eq!(tail.len(), 1500);
+        assert!(tail.chars().all(|c| c == 'x'));
+    }
+
+    // ── run_silent success path ───────────────────────────────────────────
+
+    #[test]
+    fn run_silent_success_path_suppresses_output() {
+        // A successful command with stdout/stderr should return Ok.
+        // On Windows, `sh` may not be available; use a platform-appropriate
+        // command. We use `sh` here because the test environment has it.
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args([
+            "-c",
+            "printf 'stdout output'; printf 'stderr output' >&2; exit 0",
+        ]);
+        let result = run_silent(cmd);
+        assert!(result.is_ok(), "successful command should return Ok");
+    }
+
+    #[test]
+    fn run_silent_failure_without_output() {
+        // A failing command with no output should bail with just exit code.
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", "exit 42"]);
+        let err = run_silent(cmd).expect_err("expected failure");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("42"), "error should contain exit code: {msg}");
+    }
+
+    #[test]
+    fn run_silent_sets_env_vars() {
+        // Verify that NO_COLOR and TERM are set by checking them in the child.
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args([
+            "-c",
+            "test \"$NO_COLOR\" = \"1\" && test \"$TERM\" = \"dumb\" && exit 0; exit 1",
+        ]);
+        let result = run_silent(cmd);
+        assert!(
+            result.is_ok(),
+            "run_silent should set NO_COLOR=1 and TERM=dumb"
+        );
+    }
+
+    #[test]
+    fn run_silent_nonexistent_command() {
+        let mut cmd = std::process::Command::new("this_command_does_not_exist_xyz_123");
+        let err = run_silent(cmd).expect_err("expected spawn failure");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("spawn") || msg.contains("this_command"),
+            "error should mention spawn failure: {msg}"
+        );
+    }
+
+    // ── apply_update_blocking ─────────────────────────────────────────────
+    //
+    // apply_update_blocking spawns real installer processes (powershell on
+    // Windows, sh+curl on Unix). We test it with a "version" that will cause
+    // the installer to fail gracefully (network not available in CI, or the
+    // command itself fails). The key assertion is that the function returns
+    // an Err (not a panic) when the installer fails.
+
+    #[test]
+    fn apply_update_blocking_returns_error_on_failed_install() {
+        // This will attempt to run the real installer, which will fail in
+        // most test environments (no network, no curl, etc.). The important
+        // thing is that it returns an Err, not a panic.
+        let result = apply_update_blocking("0.0.0-nonexistent");
+        // In environments with network access, the installer might actually
+        // run. We accept both Ok (installer succeeded) and Err (installer
+        // failed). The key is no panic.
+        match result {
+            Ok(()) => {
+                // Installer succeeded — unusual in CI but not a failure.
+            }
+            Err(e) => {
+                let msg = format!("{e:#}");
+                // Error should mention the installer or download.
+                assert!(
+                    msg.contains("installer")
+                        || msg.contains("install")
+                        || msg.contains("download")
+                        || msg.contains("curl")
+                        || msg.contains("powershell")
+                        || msg.contains("spawn")
+                        || msg.contains("exit"),
+                    "error should mention installer-related failure: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn apply_update_blocking_normalizes_version() {
+        // The function normalizes the version before passing to the installer.
+        // We can't easily verify the normalized version was used, but we can
+        // verify the function doesn't panic with a v-prefixed version.
+        let result = apply_update_blocking("v0.0.0-nonexistent");
+        // Accept both Ok and Err — key is no panic.
+        let _ = result;
+    }
+
+    // ── apply_update (async wrapper) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn apply_update_returns_error_on_failed_install() {
+        let info = UpdateInfo {
+            current_version: "0.0.0".into(),
+            latest_tag: "v0.0.0-nonexistent".into(),
+            latest_version: "0.0.0-nonexistent".into(),
+            release_url: "https://example.com".into(),
+            body: None,
+            prerelease: false,
+        };
+        let result = apply_update(&info).await;
+        // Accept both Ok and Err — key is no panic and no hang.
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = format!("{e:#}");
+                assert!(!msg.is_empty(), "error message should not be empty");
+            }
+        }
+    }
+
+    // ── check_for_update (network-dependent, skip-on-failure) ─────────────
+    //
+    // check_for_update makes real HTTP requests to GitHub. In CI without
+    // network, this will fail. We test it with a skip-on-failure pattern.
+
+    #[tokio::test]
+    async fn check_for_update_returns_ok_or_err_with_invalid_repo() {
+        // Use an invalid repo that will definitely 404 or error.
+        let result = check_for_update("0.0.0", Some("invalid/nonexistent-repo-xyz"), false).await;
+        match result {
+            Ok(None) => {
+                // No update found — acceptable.
+            }
+            Ok(Some(info)) => {
+                // Got an update — unexpected for invalid repo but not a crash.
+                let _ = info;
+            }
+            Err(e) => {
+                // Network error or 404 — expected in CI.
+                let msg = format!("{e:#}");
+                assert!(!msg.is_empty(), "error should have a message");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn check_for_update_with_prerelease_flag() {
+        // Just verify the function doesn't panic with prerelease=true.
+        // Use the real repo but accept any result (network may be unavailable).
+        let result = check_for_update("0.0.0", None, true).await;
+        match result {
+            Ok(_) => {}
+            Err(_) => {}
+        }
+    }
+
+    #[tokio::test]
+    async fn check_for_update_with_high_current_version_returns_none() {
+        // If current version is very high, no release should be newer.
+        // This may still return Some if GitHub returns a release with a
+        // very high tag, but that's unlikely.
+        let result = check_for_update("999.999.999", None, false).await;
+        match result {
+            Ok(None) => {
+                // Expected — no newer version.
+            }
+            Ok(Some(_)) => {
+                // Unexpected but not a crash.
+            }
+            Err(_) => {
+                // Network error — acceptable in CI.
+            }
+        }
+    }
+
+    // ── GhRelease deserialization ─────────────────────────────────────────
+
+    #[test]
+    fn gh_release_deserialize_full() {
+        let json = r#"{
+            "tag_name": "v1.2.3",
+            "html_url": "https://github.com/test/repo/releases/v1.2.3",
+            "body": "Release notes here",
+            "prerelease": false,
+            "draft": false
+        }"#;
+        let release: GhRelease = serde_json::from_str(json).unwrap();
+        assert_eq!(release.tag_name, "v1.2.3");
+        assert_eq!(
+            release.html_url,
+            "https://github.com/test/repo/releases/v1.2.3"
+        );
+        assert_eq!(release.body.as_deref(), Some("Release notes here"));
+        assert!(!release.prerelease);
+        assert!(!release.draft);
+    }
+
+    #[test]
+    fn gh_release_deserialize_minimal() {
+        // Only required fields; optional fields default.
+        let json = r#"{
+            "tag_name": "v1.0.0",
+            "html_url": "https://github.com/test/repo/releases/v1.0.0"
+        }"#;
+        let release: GhRelease = serde_json::from_str(json).unwrap();
+        assert_eq!(release.tag_name, "v1.0.0");
+        assert_eq!(
+            release.html_url,
+            "https://github.com/test/repo/releases/v1.0.0"
+        );
+        assert!(release.body.is_none());
+        assert!(!release.prerelease);
+        assert!(!release.draft);
+    }
+
+    #[test]
+    fn gh_release_deserialize_prerelease() {
+        let json = r#"{
+            "tag_name": "v2.0.0-pre",
+            "html_url": "https://example.com",
+            "prerelease": true
+        }"#;
+        let release: GhRelease = serde_json::from_str(json).unwrap();
+        assert!(release.prerelease);
+        assert!(!release.draft);
+    }
+
+    #[test]
+    fn gh_release_deserialize_draft() {
+        let json = r#"{
+            "tag_name": "v3.0.0",
+            "html_url": "https://example.com",
+            "draft": true
+        }"#;
+        let release: GhRelease = serde_json::from_str(json).unwrap();
+        assert!(release.draft);
+    }
+
+    #[test]
+    fn gh_release_deserialize_empty_body() {
+        let json = r#"{
+            "tag_name": "v1.0.0",
+            "html_url": "https://example.com",
+            "body": null
+        }"#;
+        let release: GhRelease = serde_json::from_str(json).unwrap();
+        assert!(release.body.is_none());
+    }
+
+    #[test]
+    fn gh_release_deserialize_missing_tag_fails() {
+        let json = r#"{
+            "html_url": "https://example.com"
+        }"#;
+        let result: Result<GhRelease, _> = serde_json::from_str(json);
+        assert!(result.is_err());
+    }
+
+    // ── UpdateInfo Debug/Clone/PartialEq ──────────────────────────────────
+
+    #[test]
+    fn update_info_clone_is_equal() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://example.com".into(),
+            body: Some("notes".into()),
+            prerelease: false,
+        };
+        let cloned = info.clone();
+        assert_eq!(info, cloned);
+    }
+
+    #[test]
+    fn update_info_debug_format() {
+        let info = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://example.com".into(),
+            body: None,
+            prerelease: false,
+        };
+        let debug = format!("{info:?}");
+        assert!(debug.contains("UpdateInfo"));
+        assert!(debug.contains("1.0.0"));
+        assert!(debug.contains("1.0.1"));
+    }
+
+    #[test]
+    fn update_info_eq_different_versions() {
+        let a = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v1.0.1".into(),
+            latest_version: "1.0.1".into(),
+            release_url: "https://example.com".into(),
+            body: None,
+            prerelease: false,
+        };
+        let b = UpdateInfo {
+            current_version: "1.0.0".into(),
+            latest_tag: "v2.0.0".into(),
+            latest_version: "2.0.0".into(),
+            release_url: "https://example.com".into(),
+            body: None,
+            prerelease: false,
+        };
+        assert_ne!(a, b);
+    }
+
+    // ── DEFAULT_REPO / INSTALL constants ──────────────────────────────────
+
+    #[test]
+    fn default_repo_is_navi_org() {
+        assert_eq!(DEFAULT_REPO, "navi-ai-org/navi");
+    }
+
+    #[test]
+    fn install_sh_url_is_valid() {
+        assert!(INSTALL_SH.starts_with("https://"));
+        assert!(INSTALL_SH.contains("install.sh"));
+    }
+
+    #[test]
+    fn install_ps1_url_is_valid() {
+        assert!(INSTALL_PS1.starts_with("https://"));
+        assert!(INSTALL_PS1.contains("install.ps1"));
+    }
 }

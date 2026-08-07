@@ -29,7 +29,7 @@ from pathlib import Path
 CRITICAL_FILES: dict[str, float] = {
     "crates/navi-core/src/tool/builtin/workflow/backends.rs": 90.0,  # ~98% baseline
     "crates/navi-core/src/tool/builtin/subagent.rs": 90.0,  # ~96% baseline
-    "crates/navi-core/src/update.rs": 30.0,  # ~40% baseline (installer OS branches)
+    "crates/navi-core/src/update.rs": 90.0,  # ~95% baseline
     "crates/navi-core/src/tool/builtin/plan.rs": 90.0,  # ~98% baseline
     # ── Tool files (computer-use) ──────────────────────────────────────────
     "crates/navi-core/src/tool/builtin/computer_use.rs": 90.0,  # ~95% baseline
