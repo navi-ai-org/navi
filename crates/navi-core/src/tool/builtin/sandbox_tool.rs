@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use super::helpers;
 use crate::sandbox::{ChangeSet, SandboxManager, WorkspaceSnapshot};
@@ -9,18 +10,19 @@ use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
 /// In-memory snapshot store for the current session.
 ///
-/// Tools are stateless by convention, but `sandbox` needs to hold on to the
-/// most recent snapshot across calls. A static is acceptable here because
-/// there is at most one sandbox session per process.
-static LAST_SNAPSHOT: std::sync::Mutex<Option<WorkspaceSnapshot>> = std::sync::Mutex::new(None);
-
+/// Each `SandboxTool` instance holds its own snapshot, so multiple sessions
+/// in the same process don't interfere with each other.
 pub(crate) struct SandboxTool {
     project_root: PathBuf,
+    snapshot: Mutex<Option<WorkspaceSnapshot>>,
 }
 
 impl SandboxTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self { project_root }
+        Self {
+            project_root,
+            snapshot: Mutex::new(None),
+        }
     }
 }
 
@@ -66,21 +68,16 @@ impl Tool for SandboxTool {
             "rollback" => self.handle_rollback(&invocation),
             "status" => self.handle_status(&invocation),
             "reset" => self.handle_reset(&invocation),
-            other => Ok(ToolResult {
-                invocation_id: invocation.id,
-                ok: false,
-                output: helpers::tool_error(
-                    "unknown_action",
-                    format!(
+            other => Ok(helpers::ok(
+                invocation.id.clone(),
+                json!({
+                    "status": "error",
+                    "error": format!(
                         "unknown sandbox action: `{other}`. Use one of: snapshot, rollback, status, reset."
                     ),
-                    true,
-                    Some(
-                        "Use `snapshot` to capture state, `rollback` to undo changes, `status` to check drift, or `reset` to clear the snapshot.",
-                    ),
-                    None,
-                ),
-            }),
+                    "hint": "Use `snapshot` to capture state, `rollback` to undo changes, `status` to check drift, or `reset` to clear the snapshot.",
+                }),
+            )),
         }
     }
 }
@@ -137,7 +134,7 @@ impl SandboxTool {
         let snapshot = SandboxManager::create_snapshot(&paths);
 
         // Store for later rollback/status.
-        if let Ok(mut guard) = LAST_SNAPSHOT.lock() {
+        if let Ok(mut guard) = self.snapshot.lock() {
             *guard = Some(snapshot.clone());
         }
 
@@ -154,7 +151,8 @@ impl SandboxTool {
 
     fn handle_rollback(&self, invocation: &ToolInvocation) -> Result<ToolResult> {
         let snapshot = {
-            let guard = LAST_SNAPSHOT
+            let guard = self
+                .snapshot
                 .lock()
                 .map_err(|e| anyhow::anyhow!("failed to acquire snapshot lock: {e}"))?;
             guard.as_ref().cloned()
@@ -201,7 +199,8 @@ impl SandboxTool {
 
     fn handle_status(&self, invocation: &ToolInvocation) -> Result<ToolResult> {
         let snapshot = {
-            let guard = LAST_SNAPSHOT
+            let guard = self
+                .snapshot
                 .lock()
                 .map_err(|e| anyhow::anyhow!("failed to acquire snapshot lock: {e}"))?;
             guard.as_ref().cloned()
@@ -232,7 +231,7 @@ impl SandboxTool {
     }
 
     fn handle_reset(&self, invocation: &ToolInvocation) -> Result<ToolResult> {
-        if let Ok(mut guard) = LAST_SNAPSHOT.lock() {
+        if let Ok(mut guard) = self.snapshot.lock() {
             *guard = None;
         }
 
@@ -281,11 +280,6 @@ mod tests {
     use super::*;
     use crate::tool::{Tool, ToolInvocation};
     use serde_json::json;
-    use std::sync::Mutex;
-
-    // Serialize tests that touch the global LAST_SNAPSHOT to prevent race
-    // conditions between parallel tests.
-    static SNAPSHOT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn make_tool(root: &std::path::Path) -> SandboxTool {
         SandboxTool::new(root.to_path_buf())
@@ -297,17 +291,6 @@ mod tests {
             tool_name: "sandbox".to_string(),
             input,
         }
-    }
-
-    /// Acquire the global lock and reset LAST_SNAPSHOT before each test.
-    /// The guard is held for the duration of the test.
-    fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
-        let guard = SNAPSHOT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // Reset the global snapshot.
-        if let Ok(mut g) = LAST_SNAPSHOT.lock() {
-            *g = None;
-        }
-        guard
     }
 
     // ── definition ────────────────────────────────────────────────────────
@@ -454,7 +437,6 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_with_existing_file_succeeds() {
-        let _guard = lock_and_reset();
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "content").unwrap();
         let tool = make_tool(temp.path());
@@ -474,7 +456,6 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_with_directory_succeeds() {
-        let _guard = lock_and_reset();
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(temp.path().join("src")).unwrap();
         std::fs::write(temp.path().join("src/lib.rs"), "fn main() {}").unwrap();
@@ -487,7 +468,6 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_with_absolute_path_succeeds() {
-        let _guard = lock_and_reset();
         let temp = tempfile::tempdir().unwrap();
         let abs = temp.path().join("abs.txt");
         std::fs::write(&abs, "content").unwrap();
@@ -507,8 +487,6 @@ mod tests {
     async fn rollback_without_snapshot_returns_error() {
         let temp = tempfile::tempdir().unwrap();
         let tool = make_tool(temp.path());
-        // First reset to ensure no snapshot from a previous test.
-        let _guard = lock_and_reset();
 
         let inv = make_invocation("r1", json!({"action": "rollback"}));
         let result = tool.invoke(inv).await.unwrap();
@@ -527,7 +505,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "original").unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         // Snapshot
         let inv = make_invocation("r2s", json!({"action": "snapshot", "paths": ["file.txt"]}));
@@ -552,7 +529,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "unchanged").unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         // Snapshot
         let inv = make_invocation("r3s", json!({"action": "snapshot", "paths": ["file.txt"]}));
@@ -572,7 +548,6 @@ mod tests {
     async fn status_without_snapshot_returns_error() {
         let temp = tempfile::tempdir().unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         let inv = make_invocation("st1", json!({"action": "status"}));
         let result = tool.invoke(inv).await.unwrap();
@@ -591,7 +566,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "content").unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         let inv = make_invocation("st2s", json!({"action": "snapshot", "paths": ["file.txt"]}));
         tool.invoke(inv).await.unwrap();
@@ -608,7 +582,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "original").unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         let inv = make_invocation("st3s", json!({"action": "snapshot", "paths": ["file.txt"]}));
         tool.invoke(inv).await.unwrap();
@@ -630,7 +603,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::write(temp.path().join("file.txt"), "content").unwrap();
         let tool = make_tool(temp.path());
-        let _guard = lock_and_reset();
 
         // Snapshot
         let inv = make_invocation("rs1s", json!({"action": "snapshot", "paths": ["file.txt"]}));
@@ -662,13 +634,14 @@ mod tests {
         let tool = make_tool(temp.path());
         let inv = make_invocation("u1", json!({"action": "unknown"}));
         let result = tool.invoke(inv).await.unwrap();
-        // Unknown action returns ok=false (not a tool error, but a logical error).
-        assert!(!result.ok);
-        assert_eq!(result.output["error_code"], "unknown_action");
+        // Unknown action uses the same error contract as other sandbox errors:
+        // ok=true with status=error inside the JSON payload.
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "error");
         assert!(
-            result.output["message"]
+            result.output["error"]
                 .as_str()
-                .is_some_and(|m| m.contains("unknown sandbox action")),
+                .is_some_and(|e| e.contains("unknown sandbox action")),
             "should mention unknown action: {result:?}"
         );
     }
@@ -682,6 +655,51 @@ mod tests {
         let inv = make_invocation("m1", json!({}));
         let result = tool.invoke(inv).await;
         assert!(result.is_err(), "missing action should return Err");
+    }
+
+    // ── instance isolation ────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn two_instances_do_not_interfere() {
+        let temp_a = tempfile::tempdir().unwrap();
+        let temp_b = tempfile::tempdir().unwrap();
+        std::fs::write(temp_a.path().join("a.txt"), "a-original").unwrap();
+        std::fs::write(temp_b.path().join("b.txt"), "b-original").unwrap();
+
+        let tool_a = make_tool(temp_a.path());
+        let tool_b = make_tool(temp_b.path());
+
+        // Tool A snapshots its file.
+        let inv = make_invocation(
+            "iso-a-snap",
+            json!({"action": "snapshot", "paths": ["a.txt"]}),
+        );
+        tool_a.invoke(inv).await.unwrap();
+
+        // Tool B snapshots its file.
+        let inv = make_invocation(
+            "iso-b-snap",
+            json!({"action": "snapshot", "paths": ["b.txt"]}),
+        );
+        tool_b.invoke(inv).await.unwrap();
+
+        // Tool B resets — should NOT affect tool A.
+        let inv = make_invocation("iso-b-reset", json!({"action": "reset"}));
+        tool_b.invoke(inv).await.unwrap();
+
+        // Tool A should still have its snapshot.
+        let inv = make_invocation("iso-a-status", json!({"action": "status"}));
+        let result = tool_a.invoke(inv).await.unwrap();
+        assert_eq!(result.output["status"], "ok");
+        assert!(
+            result.output["snapshot_id"].as_str().is_some(),
+            "tool A should still have its snapshot after tool B reset: {result:?}"
+        );
+
+        // Tool B should report no snapshot.
+        let inv = make_invocation("iso-b-status", json!({"action": "status"}));
+        let result = tool_b.invoke(inv).await.unwrap();
+        assert_eq!(result.output["status"], "error");
     }
 
     // ── change_set_summary ────────────────────────────────────────────────

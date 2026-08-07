@@ -171,35 +171,32 @@ impl Tool for HistoryOpsTool {
 /// - `reference` — links to dashboards, external docs
 pub(crate) struct MemoryTool {
     project_root: PathBuf,
-    /// Cached db_path — computed once on first use.
-    db_path_cache: std::sync::OnceLock<PathBuf>,
 }
 
 impl MemoryTool {
     pub(crate) fn new(project_root: PathBuf) -> Self {
-        Self {
-            project_root,
-            db_path_cache: std::sync::OnceLock::new(),
+        Self { project_root }
+    }
+
+    /// Compute the memories.db path from the current config.
+    ///
+    /// Recomputed on every call so that config changes (e.g. `data_dir`
+    /// edited mid-session) are picked up without restarting the tool.
+    fn db_path(&self) -> PathBuf {
+        let config = NaviConfig::load(&self.project_root).unwrap_or_default();
+        let manager = MemoryManager::new(
+            self.project_root.clone(),
+            config.data_dir.clone(),
+            &config.config.memory,
+        );
+        match manager {
+            Ok(m) => m.store.memory_root.join("memories.db"),
+            Err(_) => config.data_dir.join("memory").join("memories.db"),
         }
     }
 
-    fn db_path(&self) -> &PathBuf {
-        self.db_path_cache.get_or_init(|| {
-            let config = NaviConfig::load(&self.project_root).unwrap_or_default();
-            let manager = MemoryManager::new(
-                self.project_root.clone(),
-                config.data_dir.clone(),
-                &config.config.memory,
-            );
-            match manager {
-                Ok(m) => m.store.memory_root.join("memories.db"),
-                Err(_) => config.data_dir.join("memory").join("memories.db"),
-            }
-        })
-    }
-
     fn open_store(&self) -> Result<AutoMemoryStore> {
-        AutoMemoryStore::open(self.db_path())
+        AutoMemoryStore::open(&self.db_path())
     }
 
     fn resolve_model_paths(&self) -> (PathBuf, PathBuf) {
@@ -1238,6 +1235,24 @@ mod tests {
         assert!(
             path.to_string_lossy().contains("memories.db"),
             "db_path should contain memories.db: {path:?}"
+        );
+    }
+
+    #[test]
+    fn memory_tool_db_path_is_recomputed_not_cached() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+
+        // db_path() now returns an owned PathBuf (recomputed each call) instead
+        // of caching via OnceLock. Two calls should return equal paths but as
+        // independent values, proving the computation runs fresh each time.
+        let path1 = tool.db_path();
+        let path2 = tool.db_path();
+        assert_eq!(path1, path2, "same config should yield same path");
+        // The paths are equal but distinct allocations (not a shared reference).
+        assert!(
+            !std::ptr::eq(path1.as_path(), path2.as_path()),
+            "db_path should return a fresh value, not a cached reference"
         );
     }
 

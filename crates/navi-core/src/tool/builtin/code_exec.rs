@@ -77,7 +77,7 @@ impl Tool for CodeExecTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "code_exec",
-            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via bash), trace-note.",
+            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via bash), trace-note. The `verifier` field on verify-run only supports `command` (the dedicated verifier tool was removed).",
             ToolKind::Write,
             json!({
                 "type": "object",
@@ -121,6 +121,21 @@ impl Tool for CodeExecTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let request: CodeExecRequest = serde_json::from_value(invocation.input.clone())
             .context("invalid code_exec request")?;
+
+        // Validate `verifier` on VerifyRun ops — only "command" is supported
+        // since the dedicated verifier tool was removed. Reject silently
+        // ignored values so the model gets feedback instead of false success.
+        for (idx, op) in request.ops.iter().enumerate() {
+            if let CodeExecOp::VerifyRun { verifier, .. } = op {
+                if verifier != "command" {
+                    bail!(
+                        "code_exec op {idx}: unsupported verifier `{verifier}`. \
+                         Only `command` is supported (the dedicated verifier tool was removed)."
+                    );
+                }
+            }
+        }
+
         let max_ops = request.max_ops.unwrap_or(DEFAULT_MAX_OPS).clamp(1, MAX_OPS);
         if request.ops.len() > max_ops {
             bail!(
@@ -869,6 +884,53 @@ mod tests {
         let inv = make_invocation("e4", json!({"cell_id": "x"})); // missing ops
         let result = tool.invoke(inv).await;
         assert!(result.is_err(), "missing ops should return Err");
+    }
+
+    #[tokio::test]
+    async fn invoke_with_unsupported_verifier_returns_err() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let inv = make_invocation(
+            "e4b",
+            json!({
+                "ops": [
+                    {"op": "verify-run", "command": "echo test", "verifier": "strict"}
+                ]
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err(), "unsupported verifier should return Err");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("unsupported verifier"),
+            "error should mention unsupported verifier: {msg}"
+        );
+        assert!(
+            msg.contains("strict"),
+            "error should mention the bad verifier value: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn invoke_with_default_verifier_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        // Default verifier is "command" — should not error.
+        let inv = make_invocation(
+            "e4c",
+            json!({
+                "ops": [
+                    {"op": "verify-run", "command": "echo test"}
+                ]
+            }),
+        );
+        // This may fail at the bash level on some platforms, but it should
+        // NOT fail at the verifier validation level.
+        let result = tool.invoke(inv).await;
+        assert!(
+            result.is_ok(),
+            "default verifier should not trigger validation error: {result:?}"
+        );
     }
 
     #[tokio::test]
