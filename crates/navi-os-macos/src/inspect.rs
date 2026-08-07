@@ -47,7 +47,7 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
             let pid = find_pid_for_window(window_number)
                 .ok_or_else(|| anyhow!("no window found with number {window_number}"))?;
             // Create an application-level AXUIElement.
-            let app = accessibility_sys::AXUIElementCreateApplication(pid);
+            let app = accessibility_sys::AXUIElementCreateApplication(pid as i32);
             if app.is_null() {
                 bail!("AXUIElementCreateApplication failed for pid {pid}");
             }
@@ -65,7 +65,7 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
             } else {
                 // Fallback: use the frontmost application.
                 let pid = frontmost_pid().unwrap_or(0);
-                let app = accessibility_sys::AXUIElementCreateApplication(pid);
+                let app = accessibility_sys::AXUIElementCreateApplication(pid as i32);
                 if app.is_null() {
                     bail!("AXUIElementCreateApplication failed for pid {pid}");
                 }
@@ -209,7 +209,7 @@ unsafe fn get_raw_children(
         let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
 
-        if err != accessibility_sys::kAXErrorSuccess as _ || value.is_null() {
+        if err != accessibility_sys::kAXErrorSuccess as i32 || value.is_null() {
             return Vec::new();
         }
 
@@ -341,7 +341,7 @@ unsafe fn get_string_attribute(
         let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
 
-        if err != accessibility_sys::kAXErrorSuccess as _ || value.is_null() {
+        if err != accessibility_sys::kAXErrorSuccess as i32 || value.is_null() {
             return None;
         }
 
@@ -402,7 +402,7 @@ unsafe fn cf_string_to_string(cf_str: core_foundation_sys::string::CFStringRef) 
             max_size,
             &mut actual_length,
         );
-        if success {
+        if success != 0 {
             buffer.truncate(actual_length as usize);
             String::from_utf8_lossy(&buffer).into_owned()
         } else {
@@ -426,7 +426,7 @@ unsafe fn is_password_field(element: accessibility_sys::AXUIElementRef, role: &s
         let mut value: core_foundation_sys::base::CFTypeRef = std::ptr::null();
         let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
-        if err == accessibility_sys::kAXErrorSuccess as _ && !value.is_null() {
+        if err == accessibility_sys::kAXErrorSuccess as i32 && !value.is_null() {
             let type_id = core_foundation_sys::base::CFGetTypeID(value);
             let bool_type_id = core_foundation_sys::number::CFBooleanGetTypeID();
             core_foundation_sys::base::CFRelease(value);
@@ -469,7 +469,7 @@ unsafe fn get_ax_value_attribute(
         let mut value: core_foundation_sys::base::CFTypeRef = std::ptr::null();
         let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
-        if err == accessibility_sys::kAXErrorSuccess as _ && !value.is_null() {
+        if err == accessibility_sys::kAXErrorSuccess as i32 && !value.is_null() {
             Some(value)
         } else {
             None
@@ -556,7 +556,7 @@ unsafe fn get_children(
         let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
 
-        if err != accessibility_sys::kAXErrorSuccess as _ || value.is_null() {
+        if err != accessibility_sys::kAXErrorSuccess as i32 || value.is_null() {
             return (Vec::new(), false);
         }
 
@@ -594,7 +594,7 @@ unsafe fn get_focused_element(
         let mut value: core_foundation_sys::base::CFTypeRef = std::ptr::null();
         let err = accessibility_sys::AXUIElementCopyAttributeValue(system, attr_cf, &mut value);
         core_foundation_sys::base::CFRelease(attr_cf as _);
-        if err == accessibility_sys::kAXErrorSuccess as _ && !value.is_null() {
+        if err == accessibility_sys::kAXErrorSuccess as i32 && !value.is_null() {
             Some(value as accessibility_sys::AXUIElementRef)
         } else {
             None

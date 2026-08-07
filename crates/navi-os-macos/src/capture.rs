@@ -20,12 +20,12 @@ pub fn capture_screen(out_dir: &str) -> Result<MacScreenshot> {
         .image()
         .ok_or_else(|| anyhow!("CGDisplayCreateImage failed"))?;
 
-    let width = cg_image.width();
-    let height = cg_image.height();
+    let width = cg_image.width() as u32;
+    let height = cg_image.height() as u32;
 
     // Convert CGImage to RGBA pixel buffer.
-    let bytes_per_row = cg_image.bytes_per_row();
-    let bits_per_pixel = cg_image.bits_per_pixel();
+    let bytes_per_row = cg_image.bytes_per_row() as usize;
+    let bits_per_pixel = cg_image.bits_per_pixel() as usize;
     let raw_data = cg_image.data();
 
     // CGImage data may have padding at the end of each row. We need to

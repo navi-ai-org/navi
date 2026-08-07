@@ -26,7 +26,7 @@ pub fn enumerate_windows() -> Result<Vec<MacWindowInfo>> {
         None => return Ok(Vec::new()),
     };
 
-    let count = array.len();
+    let count = array.len() as usize;
     let mut result = Vec::with_capacity(count);
 
     for i in 0..count {
@@ -103,8 +103,7 @@ fn parse_window_dict(dict: &CFDictionary) -> Option<MacWindowInfo> {
 
 fn get_number(dict: &CFDictionary, key: &str) -> Option<i64> {
     let cf_key = CFString::new(key);
-    let val =
-        dict.find(cf_key.as_concrete_TypeRef() as *const core_foundation_sys::base::CFTypeRef)?;
+    let val = dict.find(cf_key.as_concrete_TypeRef() as core_foundation_sys::base::CFTypeRef)?;
     unsafe {
         let num = &*(*val as *const CFNumber);
         num.to_i64()
@@ -113,8 +112,7 @@ fn get_number(dict: &CFDictionary, key: &str) -> Option<i64> {
 
 fn get_string(dict: &CFDictionary, key: &str) -> Option<String> {
     let cf_key = CFString::new(key);
-    let val =
-        dict.find(cf_key.as_concrete_TypeRef() as *const core_foundation_sys::base::CFTypeRef)?;
+    let val = dict.find(cf_key.as_concrete_TypeRef() as core_foundation_sys::base::CFTypeRef)?;
     unsafe {
         let s = &*(*val as *const CFString);
         Some(s.to_string())
@@ -123,8 +121,7 @@ fn get_string(dict: &CFDictionary, key: &str) -> Option<String> {
 
 fn get_bounds(dict: &CFDictionary) -> Option<MacRect> {
     let cf_key = CFString::new("kCGWindowBounds");
-    let val =
-        dict.find(cf_key.as_concrete_TypeRef() as *const core_foundation_sys::base::CFTypeRef)?;
+    let val = dict.find(cf_key.as_concrete_TypeRef() as core_foundation_sys::base::CFTypeRef)?;
     let bounds_dict: CFDictionary = unsafe { CFDictionary::wrap_under_create_rule(*val as _) };
 
     let x = get_number(&bounds_dict, "X").unwrap_or(0) as i32;
