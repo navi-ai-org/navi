@@ -315,9 +315,21 @@ VS Code, Zen Browser). Default is ControlView (logical UI tree, cleaner but shal
             .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"))??;
 
         // Update the element cache with any new element_ids from this inspect.
-        if let Ok(mut cache) = self.element_cache.lock() {
-            collect_element_rects(&tree.root, &mut cache);
-        }
+        // If the cache lock is poisoned (a previous thread panicked while
+        // holding it), we log a warning and return the tree without caching.
+        // The model can still use the tree, but subsequent simulate_input
+        // calls with element_id will fail with "not found in cache".
+        let cache_warning = match self.element_cache.lock() {
+            Ok(mut cache) => {
+                collect_element_rects(&tree.root, &mut cache);
+                None
+            }
+            Err(e) => {
+                let msg = format!("element cache lock failed: {e}");
+                tracing::warn!(error = %msg, "inspect_element: cache poisoned, element_ids will not be available for simulate_input");
+                Some(msg)
+            }
+        };
 
         Ok(helpers::ok(
             invocation.id,
@@ -325,6 +337,7 @@ VS Code, Zen Browser). Default is ControlView (logical UI tree, cleaner but shal
                 "supported": tree.supported,
                 "platform": navi_computer_use::platform_backend().platform_name(),
                 "root": element_to_json(&tree.root),
+                "cache_warning": cache_warning,
             }),
         ))
     }
@@ -420,14 +433,24 @@ automation task: inspect_desktop → identify target → simulate_input or inspe
             .map_err(|e| anyhow::anyhow!("inspect_desktop worker panicked: {e}"))??;
 
         // Populate the element cache with all element_ids → rects.
-        if let Ok(mut cache) = cache.lock() {
-            cache.clear();
-            for window in &snapshot.windows {
-                for el in &window.elements {
-                    collect_element_rects(el, &mut cache);
+        // If the cache lock is poisoned, log a warning and include it in
+        // the result so the model knows element_id won't work.
+        let cache_warning = match cache.lock() {
+            Ok(mut cache) => {
+                cache.clear();
+                for window in &snapshot.windows {
+                    for el in &window.elements {
+                        collect_element_rects(el, &mut cache);
+                    }
                 }
+                None
             }
-        }
+            Err(e) => {
+                let msg = format!("element cache lock failed: {e}");
+                tracing::warn!(error = %msg, "inspect_desktop: cache poisoned, element_ids will not be available for simulate_input");
+                Some(msg)
+            }
+        };
 
         let windows_json: Vec<Value> = snapshot
             .windows
@@ -455,7 +478,9 @@ automation task: inspect_desktop → identify target → simulate_input or inspe
             json!({
                 "windows": windows_json,
                 "window_count": snapshot.windows.len(),
+                "skipped_windows": snapshot.skipped_windows,
                 "platform": snapshot.platform,
+                "cache_warning": cache_warning,
                 "message": format!(
                     "Found {} visible window(s). Each element has an element_id — \
                      use it with simulate_input (click by ID) or inspect_element \
@@ -622,7 +647,9 @@ control types by position.",
             &navi_computer_use::CaptureOptions::default(),
         )?;
 
-        // 2. Inspect the accessibility tree
+        // 2. Inspect the accessibility tree. If this fails, we still return
+        //    the screenshot — the model can use it with vision or try
+        //    coordinate-based automation without the tree.
         let inspect_opts = navi_computer_use::InspectOptions {
             window,
             element_id: None,
@@ -630,9 +657,57 @@ control types by position.",
             raw_view: false,
         };
         let backend2 = navi_computer_use::platform_backend();
-        let tree = tokio::task::spawn_blocking(move || backend2.inspect_element(&inspect_opts))
-            .await
-            .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"))??;
+        let inspect_result =
+            tokio::task::spawn_blocking(move || backend2.inspect_element(&inspect_opts))
+                .await
+                .map_err(|e| anyhow::anyhow!("inspect_element worker panicked: {e}"));
+
+        // Distinguish worker panic from backend error — both are recoverable
+        // (we still have the screenshot).
+        let (tree, inspect_error) = match inspect_result {
+            Ok(Ok(tree)) => (tree, None),
+            Ok(Err(e)) => {
+                let msg = format!("{e}");
+                tracing::warn!(error = %msg, "annotate_screenshot: inspect_element failed, returning screenshot without tree");
+                // Empty tree — the model gets the screenshot but no element info.
+                (
+                    navi_computer_use::ElementTree {
+                        root: navi_computer_use::ElementInfo {
+                            element_id: None,
+                            name: String::new(),
+                            control_type: String::new(),
+                            value: None,
+                            rect: None,
+                            is_password: false,
+                            children: Vec::new(),
+                            children_truncated: false,
+                        },
+                        supported: false,
+                    },
+                    Some(msg),
+                )
+            }
+            Err(e) => {
+                let msg = format!("inspect_element worker panicked: {e}");
+                tracing::warn!(error = %msg, "annotate_screenshot: inspect worker panicked, returning screenshot without tree");
+                (
+                    navi_computer_use::ElementTree {
+                        root: navi_computer_use::ElementInfo {
+                            element_id: None,
+                            name: String::new(),
+                            control_type: String::new(),
+                            value: None,
+                            rect: None,
+                            is_password: false,
+                            children: Vec::new(),
+                            children_truncated: false,
+                        },
+                        supported: false,
+                    },
+                    Some(msg),
+                )
+            }
+        };
 
         // 3. Count elements and serialize tree JSON (always needed).
         let element_count = count_elements(&tree.root);
@@ -675,7 +750,15 @@ control types by position.",
                     "supported": tree_supported,
                     "root": tree_json,
                 },
-                "message": "Annotated screenshot attached. Each UI element has a colored bounding box: red=password, green=interactive, blue=container, gray=other. The element_tree field contains names and control types for correlating with the visual boxes.",
+                "inspect_error": inspect_error,
+                "message": if inspect_error.is_some() {
+                    "Screenshot captured but element tree inspection failed. \
+                     The image is attached without bounding-box annotations. \
+                     Use vision to identify elements, or re-run inspect_desktop \
+                     to retry the tree inspection."
+                } else {
+                    "Annotated screenshot attached. Each UI element has a colored bounding box: red=password, green=interactive, blue=container, gray=other. The element_tree field contains names and control types for correlating with the visual boxes."
+                },
             });
             output[NAVI_CONTENT_PARTS_KEY] = json!([{
                 "type": "image",
@@ -701,10 +784,17 @@ control types by position.",
                         "supported": tree_supported,
                         "root": tree_json,
                     },
-                    "message": "Element tree captured (text-only mode — no image attached). \
-                                The element_tree field contains names, control types, and \
-                                coordinates for each UI element. Use these coordinates with \
-                                `simulate_input` for click/type actions.",
+                    "inspect_error": inspect_error,
+                    "message": if inspect_error.is_some() {
+                        "Screenshot captured but element tree inspection failed. \
+                         No element coordinates are available. Use capture_screen \
+                         to see the screen, or re-run inspect_desktop to retry."
+                    } else {
+                        "Element tree captured (text-only mode — no image attached). \
+                         The element_tree field contains names, control types, and \
+                         coordinates for each UI element. Use these coordinates with \
+                         `simulate_input` for click/type actions."
+                    },
                 }),
             ))
         }

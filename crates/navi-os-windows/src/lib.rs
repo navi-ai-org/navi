@@ -127,6 +127,12 @@ pub struct WinWindowSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WinDesktopSnapshot {
     pub windows: Vec<WinWindowSnapshot>,
+    /// Windows that were visible but could not be inspected (UIPI,
+    /// unresponsive app, etc.). Each entry is "title (hwnd=12345, reason)".
+    /// The model can use this to understand why a window it can see is
+    /// missing from the `windows` list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_windows: Vec<String>,
 }
 
 // ── Open application types ──────────────────────────────────────────────────

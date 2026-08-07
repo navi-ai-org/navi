@@ -15,7 +15,7 @@
 //!
 //! See ADR 0016 for the security model, tool exposure, and surface sync rules.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 // ── Data types ─────────────────────────────────────────────────────────────
@@ -133,6 +133,11 @@ pub struct InputResult {
 pub struct DesktopSnapshot {
     pub windows: Vec<WindowSnapshot>,
     pub platform: String,
+    /// Windows that were visible but could not be inspected (UIPI,
+    /// unresponsive app, etc.). Empty on macOS (AX API doesn't fail
+    /// per-window the way UIA does).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped_windows: Vec<String>,
 }
 
 /// One window in a [`DesktopSnapshot`], with its shallow element tree.
@@ -297,7 +302,12 @@ impl ComputerUseBackend for WindowsBackendAdapter {
             max_depth: opts.max_depth,
             raw_view: opts.raw_view,
         };
-        let tree = navi_os_windows::inspect_element(&win_opts)?;
+        let tree = navi_os_windows::inspect_element(&win_opts).with_context(|| {
+            format!(
+                "inspect_element failed (window={:?}, element_id={:?}, max_depth={}, raw_view={})",
+                opts.window, opts.element_id, opts.max_depth, opts.raw_view
+            )
+        })?;
         Ok(ElementTree {
             root: convert_element(tree.root),
             supported: tree.supported,
@@ -305,14 +315,15 @@ impl ComputerUseBackend for WindowsBackendAdapter {
     }
 
     fn simulate_input(&self, actions: &[serde_json::Value]) -> Result<InputResult> {
-        let res = navi_os_windows::simulate_input(actions)?;
+        let res = navi_os_windows::simulate_input(actions)
+            .with_context(|| format!("simulate_input failed ({} actions)", actions.len()))?;
         Ok(InputResult {
             actions_performed: res.actions_performed,
         })
     }
 
     fn inspect_desktop(&self) -> Result<DesktopSnapshot> {
-        let snap = navi_os_windows::inspect_desktop()?;
+        let snap = navi_os_windows::inspect_desktop().context("inspect_desktop failed")?;
         Ok(DesktopSnapshot {
             windows: snap
                 .windows
@@ -333,11 +344,13 @@ impl ComputerUseBackend for WindowsBackendAdapter {
                 })
                 .collect(),
             platform: "windows".to_string(),
+            skipped_windows: snap.skipped_windows,
         })
     }
 
     fn open_application(&self, name: &str) -> Result<OpenAppResult> {
-        let res = navi_os_windows::open_application(name)?;
+        let res = navi_os_windows::open_application(name)
+            .with_context(|| format!("open_application failed for '{name}'"))?;
         Ok(OpenAppResult {
             launched: res.launched,
             pid: res.pid,
@@ -453,6 +466,7 @@ impl ComputerUseBackend for MacosBackendAdapter {
                 })
                 .collect(),
             platform: "macos".to_string(),
+            skipped_windows: Vec::new(),
         })
     }
 

@@ -152,6 +152,11 @@ unsafe fn find_element_by_counter(
 }
 
 /// Recursive helper for `find_element_by_counter`.
+///
+/// Returns `Ok(None)` if the element was not found (either it doesn't exist,
+/// the depth limit was reached, or walker errors prevented traversal).
+/// Walker errors are logged at `debug` level so they don't spam the log but
+/// are still diagnosable.
 unsafe fn find_element_recursive(
     walker: &IUIAutomationTreeWalker,
     element: &IUIAutomationElement,
@@ -165,28 +170,61 @@ unsafe fn find_element_recursive(
         }
         *counter += 1;
 
-        // Don't search deeper than a reasonable limit.
+        // Don't search deeper than a reasonable limit. This is distinct from
+        // "not found" — the element may exist deeper in the tree, but we
+        // can't reach it without exceeding the depth budget.
         if depth >= 50 {
+            tracing::debug!(
+                target_counter = target,
+                depth,
+                "find_element_recursive: depth limit reached, element may be deeper in the tree"
+            );
             return Ok(None);
         }
 
-        if let Ok(first_child) = walker.GetFirstChildElement(element) {
-            let mut current = first_child;
-            let mut count = 0usize;
-            loop {
-                if count >= MAX_CHILDREN_PER_NODE {
-                    break;
+        match walker.GetFirstChildElement(element) {
+            Ok(first_child) => {
+                let mut current = first_child;
+                let mut count = 0usize;
+                loop {
+                    if count >= MAX_CHILDREN_PER_NODE {
+                        tracing::debug!(
+                            target_counter = target,
+                            depth,
+                            "find_element_recursive: child count limit reached, \
+                             element may be among truncated siblings"
+                        );
+                        break;
+                    }
+                    if let Some(found) =
+                        find_element_recursive(walker, &current, counter, target, depth + 1)?
+                    {
+                        return Ok(Some(found));
+                    }
+                    count += 1;
+                    match walker.GetNextSiblingElement(&current) {
+                        Ok(next) => current = next,
+                        Err(e) => {
+                            tracing::debug!(
+                                target_counter = target,
+                                depth,
+                                error = %e,
+                                "find_element_recursive: GetNextSiblingElement failed, \
+                                 stopping sibling traversal at this level"
+                            );
+                            break;
+                        }
+                    }
                 }
-                if let Some(found) =
-                    find_element_recursive(walker, &current, counter, target, depth + 1)?
-                {
-                    return Ok(Some(found));
-                }
-                count += 1;
-                match walker.GetNextSiblingElement(&current) {
-                    Ok(next) => current = next,
-                    _ => break,
-                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    target_counter = target,
+                    depth,
+                    error = %e,
+                    "find_element_recursive: GetFirstChildElement failed, \
+                     cannot traverse children at this level"
+                );
             }
         }
         Ok(None)
@@ -218,6 +256,7 @@ pub fn inspect_desktop() -> Result<WinDesktopSnapshot> {
             .context("IUIAutomation::ControlViewWalker failed")?;
 
         let mut snapshots = Vec::new();
+        let mut skipped = Vec::new();
         for (idx, win) in wins.iter().take(DESKTOP_MAX_WINDOWS).enumerate() {
             let hwnd = HWND(win.hwnd as *mut _);
             if hwnd.0.is_null() {
@@ -226,15 +265,27 @@ pub fn inspect_desktop() -> Result<WinDesktopSnapshot> {
 
             // Skip windows whose root element cannot be resolved (UIPI,
             // unresponsive app, etc.) — don't fail the whole snapshot.
+            // Record the skip so the model knows why the window is missing.
             let root = match automation.ElementFromHandle(hwnd) {
                 Ok(r) => r,
                 Err(e) => {
+                    let reason = format!(
+                        "{} (hwnd={}, error={})",
+                        if win.title.is_empty() {
+                            "(untitled)"
+                        } else {
+                            &win.title
+                        },
+                        win.hwnd,
+                        e
+                    );
                     tracing::debug!(
                         window = %win.title,
                         hwnd = win.hwnd,
                         error = %e,
                         "inspect_desktop: skipping window, ElementFromHandle failed"
                     );
+                    skipped.push(reason);
                     continue;
                 }
             };
@@ -261,7 +312,10 @@ pub fn inspect_desktop() -> Result<WinDesktopSnapshot> {
             });
         }
 
-        Ok(WinDesktopSnapshot { windows: snapshots })
+        Ok(WinDesktopSnapshot {
+            windows: snapshots,
+            skipped_windows: skipped,
+        })
     }
 }
 

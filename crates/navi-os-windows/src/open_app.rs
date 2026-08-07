@@ -43,7 +43,12 @@ pub fn open_application(name: &str) -> Result<WinOpenAppResult> {
     // value is <= 32 on error (it is actually the error code, not a handle).
     let code = hinst.0 as usize;
     if code <= 32 {
-        bail!("ShellExecuteW failed to open `{name}` (error code {code})");
+        let meaning = shellexecute_error_meaning(code);
+        bail!(
+            "ShellExecuteW failed to open `{name}`: {meaning} (error code {code}). \
+             {}",
+            recovery_hint(code, name)
+        );
     }
 
     Ok(WinOpenAppResult {
@@ -58,6 +63,47 @@ pub fn open_application(name: &str) -> Result<WinOpenAppResult> {
 /// `PCWSTR`.
 fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Maps a ShellExecuteW error code (≤ 32) to a human-readable description.
+///
+/// See: <https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutea#return-value>
+fn shellexecute_error_meaning(code: usize) -> &'static str {
+    match code {
+        0 => "The operating system is out of memory or resources",
+        1 => "Invalid function (should not occur with the 'open' verb)",
+        2 => "File not found — the specified application or file does not exist",
+        3 => "Path not found — the directory in the path does not exist",
+        5 => "Access denied — the user lacks permission, or the file is locked",
+        8 => "Not enough memory to complete the operation",
+        11 => "Invalid .exe file — the executable is corrupt or not a valid PE image",
+        26 => "Sharing violation — the file is in use by another process",
+        27 => "Association incomplete — the file extension has an incomplete association",
+        28 => "DDE timeout — the application could not complete a DDE transaction",
+        29 => "DDE busy — the DDE transaction could not be completed",
+        30 => "No DDE conversation — the DDE application is not responding",
+        31 => "No application associated with this file extension",
+        32 => "DLL not found — a required DLL could not be loaded",
+        _ => "Unknown ShellExecuteW error",
+    }
+}
+
+/// Returns a recovery hint for common ShellExecuteW error codes, tailored
+/// to help the model decide what to try next.
+fn recovery_hint(code: usize, name: &str) -> String {
+    match code {
+        2 | 3 => format!(
+            "Try the full path (e.g. 'C:/Windows/System32/{name}.exe'), \
+             or use 'inspect_desktop' to see what's currently open."
+        ),
+        5 => "Check if the application requires elevation, or if the file is in use.".to_string(),
+        31 => format!(
+            "No app is registered for '{name}'. Try the full executable name \
+             (e.g. '{name}.exe') or a different name."
+        ),
+        26 => "The application may already be running. Use 'inspect_desktop' to check.".to_string(),
+        _ => "Try a different name or the full path to the executable.".to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +150,13 @@ mod tests {
         assert!(
             msg.contains("ShellExecuteW") || msg.contains("failed"),
             "error should mention ShellExecuteW or failed, got: {msg}"
+        );
+        // Error should include a human-readable description, not just a code.
+        assert!(
+            msg.contains("not found")
+                || msg.contains("No application")
+                || msg.contains("association"),
+            "error should include a human-readable description, got: {msg}"
         );
     }
 
@@ -233,6 +286,61 @@ mod tests {
         assert!(
             result.is_err(),
             "nonexistent unicode app should return an error"
+        );
+    }
+
+    // ── Error code mapping tests ──────────────────────────────────────────
+
+    #[test]
+    fn shellexecute_error_meaning_known_codes() {
+        assert!(shellexecute_error_meaning(0).contains("out of memory"));
+        assert!(shellexecute_error_meaning(2).contains("File not found"));
+        assert!(shellexecute_error_meaning(3).contains("Path not found"));
+        assert!(shellexecute_error_meaning(5).contains("Access denied"));
+        assert!(shellexecute_error_meaning(26).contains("Sharing violation"));
+        assert!(shellexecute_error_meaning(31).contains("No application associated"));
+        assert!(shellexecute_error_meaning(32).contains("DLL not found"));
+    }
+
+    #[test]
+    fn shellexecute_error_meaning_unknown_code() {
+        assert!(shellexecute_error_meaning(99).contains("Unknown"));
+        assert!(shellexecute_error_meaning(usize::MAX).contains("Unknown"));
+    }
+
+    #[test]
+    fn recovery_hint_file_not_found_suggests_full_path() {
+        let hint = recovery_hint(2, "myapp");
+        assert!(
+            hint.contains("full path") || hint.contains("inspect_desktop"),
+            "recovery hint for code 2 should suggest full path or inspect_desktop, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_no_association_suggests_exe_extension() {
+        let hint = recovery_hint(31, "myapp");
+        assert!(
+            hint.contains(".exe"),
+            "recovery hint for code 31 should suggest .exe extension, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_sharing_violation_suggests_inspect_desktop() {
+        let hint = recovery_hint(26, "myapp");
+        assert!(
+            hint.contains("inspect_desktop") || hint.contains("already running"),
+            "recovery hint for code 26 should mention inspect_desktop or already running, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn recovery_hint_generic_for_unknown_code() {
+        let hint = recovery_hint(99, "myapp");
+        assert!(
+            !hint.is_empty(),
+            "recovery hint for unknown code should not be empty"
         );
     }
 }
