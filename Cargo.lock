@@ -3679,6 +3679,7 @@ dependencies = [
  "base64 0.22.1",
  "copland",
  "navi-acp",
+ "navi-computer-use",
  "navi-core",
  "navi-mcp",
  "navi-plugin-api",

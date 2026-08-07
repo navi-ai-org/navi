@@ -28,6 +28,7 @@ navi-providers.workspace = true
 navi-plugin-api = { workspace = true, features = ["tui"] }
 navi-voice.workspace = true
 copland.workspace = true
+navi-computer-use = { workspace = true, optional = true }
 
 [features]
 # WASM plugin runtime is on by default (marketplace + LocalDev packages).
@@ -37,7 +38,7 @@ wasm-plugins = ["dep:navi-plugin-orchestrator"]
 voice-onnx = ["navi-voice/onnx"]
 # OS automation (computer use — ADR 0016). Forwards to
 # `navi-core/computer-use` which registers the native tools.
-computer-use = ["navi-core/computer-use"]
+computer-use = ["navi-core/computer-use", "dep:navi-computer-use"]
 
 [dev-dependencies]
 tempfile.workspace = true
