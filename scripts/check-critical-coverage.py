@@ -27,10 +27,10 @@ from pathlib import Path
 # See AGENTS.md "Tool testing requirements" for the three-layer test policy.
 # Floors ratchet up as tests improve — never lower without justification.
 CRITICAL_FILES: dict[str, float] = {
-    "crates/navi-core/src/tool/builtin/workflow/backends.rs": 50.0,  # ~92% baseline
+    "crates/navi-core/src/tool/builtin/workflow/backends.rs": 90.0,  # ~98% baseline
     "crates/navi-core/src/tool/builtin/subagent.rs": 30.0,  # ~38% baseline (large runtime)
     "crates/navi-core/src/update.rs": 30.0,  # ~40% baseline (installer OS branches)
-    "crates/navi-core/src/tool/builtin/plan.rs": 50.0,  # ~87% baseline
+    "crates/navi-core/src/tool/builtin/plan.rs": 90.0,  # ~98% baseline
     # ── Tool files (computer-use) ──────────────────────────────────────────
     "crates/navi-core/src/tool/builtin/computer_use.rs": 90.0,  # ~95% baseline
     "crates/navi-os-windows/src/inspect.rs": 80.0,  # ~85% baseline

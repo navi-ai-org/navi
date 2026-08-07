@@ -1472,4 +1472,1065 @@ mod tests {
             "Added description after thought"
         );
     }
+
+    // ── Helper function unit tests ────────────────────────────────────────
+
+    #[test]
+    fn truncate_title_short_string_unchanged() {
+        assert_eq!(truncate_title("hello"), "hello");
+        assert_eq!(truncate_title("  trim me  "), "trim me");
+    }
+
+    #[test]
+    fn truncate_title_long_string_ellipsis() {
+        let long = "x".repeat(100);
+        let t = truncate_title(&long);
+        assert!(t.chars().count() <= 80);
+        assert!(t.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_title_exactly_80_chars_no_ellipsis() {
+        let exactly_80 = "x".repeat(80);
+        let t = truncate_title(&exactly_80);
+        assert_eq!(t.chars().count(), 80);
+        assert!(!t.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_title_81_chars_gets_ellipsis() {
+        let exactly_81 = "x".repeat(81);
+        let t = truncate_title(&exactly_81);
+        assert!(t.ends_with('…'));
+        assert_eq!(t.chars().count(), 80); // 79 chars + ellipsis
+    }
+
+    #[test]
+    fn truncate_title_empty_string() {
+        assert_eq!(truncate_title(""), "");
+    }
+
+    #[test]
+    fn truncate_title_whitespace_only() {
+        assert_eq!(truncate_title("   "), "");
+    }
+
+    #[test]
+    fn markdown_title_extracts_first_heading() {
+        let body = "# My Plan\n\n## Context\n...";
+        assert_eq!(markdown_title(body), Some("My Plan".into()));
+    }
+
+    #[test]
+    fn markdown_title_skips_empty_lines_before_heading() {
+        let body = "\n\n\n# Title\n...";
+        assert_eq!(markdown_title(body), Some("Title".into()));
+    }
+
+    #[test]
+    fn markdown_title_truncates_long_heading() {
+        let long = "x".repeat(100);
+        let body = format!("# {long}\n...");
+        let title = markdown_title(&body).unwrap();
+        assert!(title.chars().count() <= 80);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn markdown_title_returns_none_for_empty_body() {
+        assert_eq!(markdown_title(""), None);
+    }
+
+    #[test]
+    fn markdown_title_returns_none_for_whitespace_only() {
+        assert_eq!(markdown_title("   \n\n  "), None);
+    }
+
+    #[test]
+    fn markdown_title_fallback_for_non_heading_line() {
+        // First non-empty non-heading line is used as weak fallback.
+        assert_eq!(
+            markdown_title("just text\nno heading"),
+            Some("just text".into())
+        );
+    }
+
+    #[test]
+    fn markdown_title_skips_empty_heading() {
+        // "# " with nothing after — the fallback returns the line with
+        // hashes stripped, which is empty string.
+        let title = markdown_title("# \n\n## Real\n...");
+        // The first non-empty line "#" is not "# " (trimmed), so
+        // strip_prefix("# ") fails. The fallback strips '#' → "".
+        assert_eq!(title, Some("".into()));
+    }
+
+    #[test]
+    fn markdown_title_strips_leading_hashes_from_non_heading() {
+        let body = "## Not a real heading format\n...";
+        let title = markdown_title(body);
+        assert!(title.is_some());
+        // The fallback strips leading # and trims.
+        assert_eq!(title.unwrap(), "Not a real heading format");
+    }
+
+    #[test]
+    fn derive_plan_title_from_description() {
+        let steps = vec![];
+        let title = derive_plan_title("My great plan\nSecond line", &steps, "");
+        assert_eq!(title, "My great plan");
+    }
+
+    #[test]
+    fn derive_plan_title_from_markdown_heading_when_no_description() {
+        let steps = vec![];
+        let title = derive_plan_title("", &steps, "# Plan from Markdown\n...");
+        assert_eq!(title, "Plan from Markdown");
+    }
+
+    #[test]
+    fn derive_plan_title_from_first_step_when_no_description_or_heading() {
+        let steps = vec![PlanStep {
+            description: "First step".into(),
+            completed: false,
+            notes: String::new(),
+        }];
+        let title = derive_plan_title("", &steps, "");
+        assert_eq!(title, "First step");
+    }
+
+    #[test]
+    fn derive_plan_title_defaults_to_plan_when_all_empty() {
+        let title = derive_plan_title("", &[], "");
+        assert_eq!(title, "Plan");
+    }
+
+    #[test]
+    fn derive_plan_title_truncates_long_description() {
+        let long = "x".repeat(100);
+        let title = derive_plan_title(&long, &[], "");
+        assert!(title.chars().count() <= 80);
+        assert!(title.ends_with('…'));
+    }
+
+    #[test]
+    fn derive_plan_title_description_overrides_markdown_heading() {
+        let title = derive_plan_title("From description", &[], "# From markdown\n...");
+        assert_eq!(title, "From description");
+    }
+
+    // ── steps_from_markdown ───────────────────────────────────────────────
+
+    #[test]
+    fn steps_from_markdown_checkbox_items() {
+        let body = "# Plan\n\n- [ ] Step one\n- [ ] Step two\n- [x] Step three\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].description, "Step one");
+        assert_eq!(steps[1].description, "Step two");
+        assert_eq!(steps[2].description, "Step three");
+    }
+
+    #[test]
+    fn steps_from_markdown_bullet_items() {
+        let body = "# Plan\n\n- First\n- Second\n* Third\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].description, "First");
+        assert_eq!(steps[1].description, "Second");
+        assert_eq!(steps[2].description, "Third");
+    }
+
+    #[test]
+    fn steps_from_markdown_numbered_items() {
+        let body = "# Plan\n\n1. First\n2. Second\n3) Third\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].description, "First");
+        assert_eq!(steps[1].description, "Second");
+        assert_eq!(steps[2].description, "Third");
+    }
+
+    #[test]
+    fn steps_from_markdown_skips_headings_and_empty_lines() {
+        let body = "# Title\n\n## Subtitle\n\n- Real step\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].description, "Real step");
+    }
+
+    #[test]
+    fn steps_from_markdown_empty_body() {
+        assert_eq!(steps_from_markdown("").len(), 0);
+    }
+
+    #[test]
+    fn steps_from_markdown_no_list_falls_back_to_paragraphs() {
+        let body = "# Plan\n\nThis is a long enough paragraph for a step.\n\nAnother sufficient paragraph here.\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 2);
+        assert!(steps[0].description.contains("long enough paragraph"));
+        assert!(
+            steps[1]
+                .description
+                .contains("Another sufficient paragraph")
+        );
+    }
+
+    #[test]
+    fn steps_from_markdown_skips_short_paragraphs() {
+        let body = "# Plan\n\nshort\n\nThis is a long enough paragraph for a step.\n";
+        let steps = steps_from_markdown(body);
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].description.contains("long enough paragraph"));
+    }
+
+    #[test]
+    fn steps_from_markdown_caps_at_max_steps() {
+        let mut body = "# Plan\n\n".to_string();
+        for i in 0..MAX_STEPS + 10 {
+            body.push_str(&format!("- Step {i}\n"));
+        }
+        let steps = steps_from_markdown(&body);
+        assert_eq!(steps.len(), MAX_STEPS);
+    }
+
+    // ── parse_step_list ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_step_list_none_returns_empty() {
+        assert_eq!(parse_step_list(None).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn parse_step_list_single_string() {
+        let steps = parse_step_list(Some(&json!("Do something"))).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].description, "Do something");
+    }
+
+    #[test]
+    fn parse_step_list_empty_string_returns_empty() {
+        let steps = parse_step_list(Some(&json!("   "))).unwrap();
+        assert_eq!(steps.len(), 0);
+    }
+
+    #[test]
+    fn parse_step_list_array_of_strings() {
+        let steps = parse_step_list(Some(&json!(["a", "b", "c"]))).unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].description, "a");
+        assert_eq!(steps[1].description, "b");
+        assert_eq!(steps[2].description, "c");
+    }
+
+    #[test]
+    fn parse_step_list_array_of_objects() {
+        let steps = parse_step_list(Some(&json!([
+            {"description": "step1"},
+            {"content": "step2"},
+            {"title": "step3"}
+        ])))
+        .unwrap();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].description, "step1");
+        assert_eq!(steps[1].description, "step2");
+        assert_eq!(steps[2].description, "step3");
+    }
+
+    #[test]
+    fn parse_step_list_too_many_steps_errors() {
+        let arr: Vec<&str> = (0..MAX_STEPS + 1).map(|_| "step").collect();
+        let result = parse_step_list(Some(&json!(arr)));
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many steps"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_step_list_non_array_non_string_errors() {
+        let result = parse_step_list(Some(&json!(42)));
+        assert!(result.is_err());
+    }
+
+    // ── coerce_step ───────────────────────────────────────────────────────
+
+    #[test]
+    fn coerce_step_string() {
+        let step = coerce_step(&json!("do thing")).unwrap().unwrap();
+        assert_eq!(step.description, "do thing");
+        assert!(!step.completed);
+    }
+
+    #[test]
+    fn coerce_step_empty_string_returns_none() {
+        assert!(coerce_step(&json!("   ")).unwrap().is_none());
+    }
+
+    #[test]
+    fn coerce_step_object_with_description() {
+        let step = coerce_step(&json!({"description": "my step"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(step.description, "my step");
+    }
+
+    #[test]
+    fn coerce_step_object_with_content() {
+        let step = coerce_step(&json!({"content": "my content"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(step.description, "my content");
+    }
+
+    #[test]
+    fn coerce_step_object_with_id_only() {
+        let step = coerce_step(&json!({"id": "some-task-id"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(step.description, "some task id"); // hyphens replaced with spaces
+    }
+
+    #[test]
+    fn coerce_step_object_with_empty_id_returns_none() {
+        assert!(coerce_step(&json!({"id": "  "})).unwrap().is_none());
+    }
+
+    #[test]
+    fn coerce_step_object_with_completed_flag() {
+        let step = coerce_step(&json!({"description": "done", "completed": true}))
+            .unwrap()
+            .unwrap();
+        assert!(step.completed);
+    }
+
+    #[test]
+    fn coerce_step_object_with_status_completed() {
+        let step = coerce_step(&json!({"description": "done", "status": "completed"}))
+            .unwrap()
+            .unwrap();
+        assert!(step.completed);
+    }
+
+    #[test]
+    fn coerce_step_object_with_status_done() {
+        let step = coerce_step(&json!({"description": "done", "status": "done"}))
+            .unwrap()
+            .unwrap();
+        assert!(step.completed);
+    }
+
+    #[test]
+    fn coerce_step_object_with_notes() {
+        let step = coerce_step(&json!({"description": "step", "notes": "my notes"}))
+            .unwrap()
+            .unwrap();
+        assert_eq!(step.notes, "my notes");
+    }
+
+    #[test]
+    fn coerce_step_object_with_no_description_and_no_id_returns_none() {
+        assert!(coerce_step(&json!({"foo": "bar"})).unwrap().is_none());
+    }
+
+    #[test]
+    fn coerce_step_non_object_non_string_errors() {
+        assert!(coerce_step(&json!(42)).is_err());
+    }
+
+    // ── first_nonempty_string ─────────────────────────────────────────────
+
+    #[test]
+    fn first_nonempty_string_finds_first_match() {
+        let input = json!({"body": "content here"});
+        assert_eq!(
+            first_nonempty_string(&input, &["plan", "body", "content"]).unwrap(),
+            "content here"
+        );
+    }
+
+    #[test]
+    fn first_nonempty_string_skips_empty_values() {
+        let input = json!({"plan": "  ", "body": "real content"});
+        assert_eq!(
+            first_nonempty_string(&input, &["plan", "body"]).unwrap(),
+            "real content"
+        );
+    }
+
+    #[test]
+    fn first_nonempty_string_returns_none_when_all_empty() {
+        let input = json!({"plan": "", "body": "  "});
+        assert!(first_nonempty_string(&input, &["plan", "body"]).is_none());
+    }
+
+    #[test]
+    fn first_nonempty_string_returns_none_when_keys_missing() {
+        let input = json!({"other": "value"});
+        assert!(first_nonempty_string(&input, &["plan", "body"]).is_none());
+    }
+
+    // ── project_hash ──────────────────────────────────────────────────────
+
+    #[test]
+    fn project_hash_is_deterministic() {
+        let path = Path::new("/tmp/test-project");
+        let h1 = project_hash(path);
+        let h2 = project_hash(path);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn project_hash_different_paths_differ() {
+        let h1 = project_hash(Path::new("/tmp/project-a"));
+        let h2 = project_hash(Path::new("/tmp/project-b"));
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn project_hash_is_hex_string() {
+        let h = project_hash(Path::new("/tmp/test"));
+        assert!(
+            h.chars().all(|c| c.is_ascii_hexdigit()),
+            "hash should be hex: {h}"
+        );
+        assert_eq!(h.len(), 16, "hash should be 16 hex chars");
+    }
+
+    // ── plan_to_json ──────────────────────────────────────────────────────
+
+    #[test]
+    fn plan_to_json_serializes_all_fields() {
+        let plan = Plan {
+            id: "plan-123".into(),
+            title: "Test Plan".into(),
+            description: "A test".into(),
+            steps: vec![
+                PlanStep {
+                    description: "Step 1".into(),
+                    completed: true,
+                    notes: "done".into(),
+                },
+                PlanStep {
+                    description: "Step 2".into(),
+                    completed: false,
+                    notes: String::new(),
+                },
+            ],
+            status: PlanStatus::Active,
+            created_at: 1000,
+            updated_at: 2000,
+            body_markdown: "# Test Plan\n...".into(),
+            comments: Vec::new(),
+            project_id: "abc123".into(),
+            session_id: String::new(),
+        };
+        let json = plan_to_json(&plan);
+        assert_eq!(json["plan_id"], "plan-123");
+        assert_eq!(json["title"], "Test Plan");
+        assert_eq!(json["description"], "A test");
+        assert_eq!(json["status"], "active");
+        assert_eq!(json["steps_total"], 2);
+        assert_eq!(json["steps_completed"], 1);
+        assert_eq!(json["created_at"], 1000);
+        assert_eq!(json["updated_at"], 2000);
+        assert_eq!(json["body_markdown"], "# Test Plan\n...");
+        assert_eq!(json["needs_review"], false); // Active, not Proposed
+        assert!(json["steps"].is_array());
+        assert_eq!(json["steps"][0]["index"], 0);
+        assert_eq!(json["steps"][0]["completed"], true);
+        assert_eq!(json["steps"][0]["notes"], "done");
+        assert_eq!(json["steps"][1]["index"], 1);
+        assert_eq!(json["steps"][1]["completed"], false);
+    }
+
+    #[test]
+    fn plan_to_json_proposed_has_needs_review() {
+        let plan = Plan {
+            id: "plan-123".into(),
+            title: "Test".into(),
+            description: String::new(),
+            steps: vec![],
+            status: PlanStatus::Proposed,
+            created_at: 0,
+            updated_at: 0,
+            body_markdown: String::new(),
+            comments: Vec::new(),
+            project_id: String::new(),
+            session_id: String::new(),
+        };
+        let json = plan_to_json(&plan);
+        assert_eq!(json["needs_review"], true);
+    }
+
+    // ── Edge cases: invoke error paths ────────────────────────────────────
+
+    #[tokio::test]
+    async fn unknown_action_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("u1", json!({"action": "fly_to_moon"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(!result.ok);
+        assert_eq!(
+            result.output["error_code"].as_str(),
+            Some("unknown_plan_action")
+        );
+        assert!(
+            result.output["recoverable"].as_bool().unwrap_or(false),
+            "unknown action should be recoverable"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_action_field_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("m1", json!({"title": "no action"}));
+        let result = tool.invoke(inv).await;
+        // helpers::required_string returns an Err, which propagates as
+        // anyhow::Error, not a ToolResult. So invoke returns Err.
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_empty_body_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("w1", json!({"action": "write", "plan": "  "}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"].as_str(), Some("empty_plan"));
+    }
+
+    #[tokio::test]
+    async fn write_with_no_body_fields_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("w2", json!({"action": "write"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"].as_str(), Some("empty_plan"));
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_plan_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("g1", json!({"action": "get", "plan_id": "nonexistent"}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn complete_step_missing_step_index_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // First create a plan so we have a valid plan_id.
+        let inv = make_invocation(
+            "c1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let plan_id = result.output["plan_id"].as_str().unwrap().to_string();
+
+        // complete_step without step_index.
+        let inv = make_invocation("c2", json!({"action": "complete_step", "plan_id": plan_id}));
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_plan_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "u1",
+            json!({"action": "update", "plan_id": "nonexistent", "title": "New"}),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn active_plan_returns_null_when_no_plans() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("a1", json!({"action": "active"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["active_plan"], serde_json::Value::Null);
+        assert!(
+            result.output["message"]
+                .as_str()
+                .unwrap()
+                .contains("No active plan"),
+            "should mention no active plan: {:?}",
+            result.output["message"]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_with_filter_status() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Create a plan.
+        let inv = make_invocation(
+            "l1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}]
+            }),
+        );
+        let _ = tool.invoke(inv).await.unwrap();
+
+        // List with filter.
+        let inv = make_invocation("l2", json!({"action": "list", "filter_status": "proposed"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(result.output["total"].as_u64().unwrap_or(0) >= 1);
+    }
+
+    #[tokio::test]
+    async fn list_empty_when_no_plans() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation("l3", json!({"action": "list"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["total"], 0);
+        assert!(result.output["plans"].is_array());
+    }
+
+    #[tokio::test]
+    async fn submit_reads_from_disk_when_body_omitted() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // First write a plan to disk.
+        let inv = make_invocation(
+            "s1",
+            json!({
+                "action": "write",
+                "plan": "# Disk Plan\n\n## Context\nFrom disk\n"
+            }),
+        );
+        let _ = tool.invoke(inv).await.unwrap();
+
+        // Submit without body — should read from disk.
+        let inv = make_invocation("s2", json!({"action": "submit"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Disk Plan");
+        assert!(
+            result.output["body_markdown"]
+                .as_str()
+                .unwrap()
+                .contains("From disk"),
+            "submit should read body from disk"
+        );
+        assert_eq!(result.output["needs_review"], true);
+    }
+
+    #[tokio::test]
+    async fn submit_empty_plan_returns_error() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Submit with no body and nothing on disk.
+        let inv = make_invocation("se1", json!({"action": "submit"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"].as_str(), Some("empty_plan"));
+        // Error should mention writing first.
+        let hint = result.output["hint"].as_str().unwrap_or("");
+        assert!(
+            hint.contains("write") || hint.contains("plan"),
+            "recovery hint should suggest writing first: {hint}"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_plan_status() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Create a plan.
+        let inv = make_invocation(
+            "us1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let plan_id = result.output["plan_id"].as_str().unwrap().to_string();
+
+        // Update status to completed.
+        let inv = make_invocation(
+            "us2",
+            json!({"action": "update", "plan_id": plan_id, "status": "completed"}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn update_plan_with_body_and_steps() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Create a plan.
+        let inv = make_invocation(
+            "ub1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let plan_id = result.output["plan_id"].as_str().unwrap().to_string();
+
+        // Update with body and steps.
+        let inv = make_invocation(
+            "ub2",
+            json!({
+                "action": "update",
+                "plan_id": plan_id,
+                "plan": "# Updated\n\nNew body",
+                "steps": [{"description": "New step"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Test"); // title unchanged
+    }
+
+    #[tokio::test]
+    async fn complete_step_with_notes_alias() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Create a plan.
+        let inv = make_invocation(
+            "cn1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}, {"description": "Step 2"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let plan_id = result.output["plan_id"].as_str().unwrap().to_string();
+
+        // Complete step 0 with "notes" alias (not "step_notes").
+        let inv = make_invocation(
+            "cn2",
+            json!({
+                "action": "complete_step",
+                "plan_id": plan_id,
+                "step_index": 0,
+                "notes": "Done via notes alias"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["completed_steps"], 1);
+        assert_eq!(result.output["total_steps"], 2);
+
+        // Verify notes were saved.
+        let inv = make_invocation("cn3", json!({"action": "get", "plan_id": plan_id}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert_eq!(result.output["steps"][0]["notes"], "Done via notes alias");
+    }
+
+    #[tokio::test]
+    async fn complete_all_steps_auto_completes_plan() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Create a plan with 2 steps.
+        let inv = make_invocation(
+            "ac1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [{"description": "Step 1"}, {"description": "Step 2"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        let plan_id = result.output["plan_id"].as_str().unwrap().to_string();
+
+        // Complete both steps.
+        for i in 0..2 {
+            let inv = make_invocation(
+                &format!("ac{}", i + 2),
+                json!({"action": "complete_step", "plan_id": plan_id, "step_index": i}),
+            );
+            let result = tool.invoke(inv).await.unwrap();
+            assert!(result.ok);
+        }
+
+        // The last completion should auto-complete the plan.
+        let inv = make_invocation("ac4", json!({"action": "get", "plan_id": plan_id}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert_eq!(result.output["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_overview_field() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // "overview" is an alias for "description".
+        let inv = make_invocation(
+            "ov1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "overview": "This is an overview",
+                "steps": [{"description": "Step 1"}]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["description"], "This is an overview");
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_todos_shape() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // TodoWrite shape: todos:[{id, content}]
+        let inv = make_invocation(
+            "tw1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "todos": [
+                    {"id": "task-1", "content": "First task"},
+                    {"id": "task-2", "content": "Second task"}
+                ]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["steps_count"], 2);
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_title_only_soft_recovery() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Only title, no steps or body — should soft-recover with a single step.
+        let inv = make_invocation(
+            "to1",
+            json!({
+                "action": "create",
+                "title": "Just a title"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Just a title");
+        assert!(
+            result.output["steps_count"].as_u64().unwrap_or(0) >= 1,
+            "should have at least one soft-recovery step"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_description_only_soft_recovery() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Only description, no steps or body.
+        let inv = make_invocation(
+            "do1",
+            json!({
+                "action": "create",
+                "description": "A plan description"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert!(
+            result.output["steps_count"].as_u64().unwrap_or(0) >= 1,
+            "should have at least one soft-recovery step"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_plan_rejects_truly_empty_v2() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // No title, no description, no steps, no body.
+        let inv = make_invocation("te1", json!({"action": "create"}));
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(!result.ok);
+        assert_eq!(result.output["error_code"].as_str(), Some("empty_plan"));
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_string_steps() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "ss1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": ["First", "Second", "Third"]
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["steps_count"], 3);
+    }
+
+    #[tokio::test]
+    async fn create_plan_with_single_string_step() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Single string as steps (not array).
+        let inv = make_invocation(
+            "sss1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": "Just one step as string"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["steps_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn create_plan_too_many_steps_errors() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let steps: Vec<&str> = (0..MAX_STEPS + 1).map(|_| "step").collect();
+        let inv = make_invocation(
+            "tms1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": steps
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("too many steps"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn create_plan_steps_invalid_type_errors() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "it1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": 42
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn create_plan_step_with_invalid_type_errors() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let inv = make_invocation(
+            "si1",
+            json!({
+                "action": "create",
+                "title": "Test",
+                "steps": [42]
+            }),
+        );
+        let result = tool.invoke(inv).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn create_plan_markdown_only_no_list() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Markdown with no list items — steps extracted from paragraphs.
+        let inv = make_invocation(
+            "mo1",
+            json!({
+                "action": "create",
+                "plan": "# Plan\n\nThis is a sufficiently long paragraph for extraction.\n\nAnother long enough paragraph here too.\n"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Plan");
+        assert!(
+            result.output["steps_count"].as_u64().unwrap_or(0) >= 1,
+            "should extract steps from paragraphs"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_then_update_body_preserves_title() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        // Write a plan.
+        let inv = make_invocation(
+            "wu1",
+            json!({
+                "action": "write",
+                "plan": "# Original Title\n\n## Context\n..."
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "Original Title");
+
+        // Write again with different body — should update the existing draft.
+        let inv = make_invocation(
+            "wu2",
+            json!({
+                "action": "write",
+                "plan": "# New Title\n\n## Context\nUpdated"
+            }),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok);
+        assert_eq!(result.output["title"], "New Title");
+    }
+
+    #[tokio::test]
+    async fn plan_definition_is_read_kind() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let def = tool.definition();
+        assert_eq!(def.name, "plan");
+        assert_eq!(def.kind, ToolKind::Read);
+    }
+
+    #[tokio::test]
+    async fn plan_definition_has_action_enum() {
+        let (policy, _td) = temp_policy();
+        let tool = PlanTool::new(policy);
+        let def = tool.definition();
+        let schema = &def.input_schema;
+        let actions = schema["properties"]["action"]["enum"].as_array().unwrap();
+        let action_names: Vec<&str> = actions.iter().map(|v| v.as_str().unwrap()).collect();
+        assert!(action_names.contains(&"write"));
+        assert!(action_names.contains(&"submit"));
+        assert!(action_names.contains(&"create"));
+        assert!(action_names.contains(&"update"));
+        assert!(action_names.contains(&"complete_step"));
+        assert!(action_names.contains(&"get"));
+        assert!(action_names.contains(&"list"));
+        assert!(action_names.contains(&"active"));
+    }
 }

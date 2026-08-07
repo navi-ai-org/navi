@@ -460,6 +460,7 @@ pub(crate) fn build_subagent_bridge_input(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cancel::CancelToken;
     use crate::config::{HarnessConfig, NaviConfig};
     use crate::model::{ModelProvider, ModelRequest, ModelStream};
     use crate::runtime_components::RuntimeComponents;
@@ -535,5 +536,513 @@ mod tests {
             errors.is_empty(),
             "labeled bridge input invalid vs SubagentTool schema: {errors:?} input={input}"
         );
+    }
+
+    // ── build_subagent_bridge_input additional cases ──────────────────────
+
+    #[test]
+    fn bridge_input_includes_model_when_provided() {
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let input = build_subagent_bridge_input("p", None, &effective, Some("gpt-5"));
+        assert_eq!(input["options"]["model"], "gpt-5");
+    }
+
+    #[test]
+    fn bridge_input_omits_model_when_none() {
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let input = build_subagent_bridge_input("p", None, &effective, None);
+        assert!(
+            input["options"].get("model").is_none(),
+            "model should be absent when None"
+        );
+    }
+
+    #[test]
+    fn bridge_input_omits_description_when_label_is_whitespace() {
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let input = build_subagent_bridge_input("p", Some("   "), &effective, None);
+        assert!(
+            input.get("description").is_none(),
+            "whitespace-only label should not produce description, got {input}"
+        );
+    }
+
+    #[test]
+    fn bridge_input_includes_path_deny_from_effective() {
+        let run = default_run_policy();
+        let opts = crate::tool::builtin::workflow::policy::AgentPolicyOpts {
+            path_deny: Some(vec!["secret/".into()]),
+            ..Default::default()
+        };
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(&run, &opts);
+        let input = build_subagent_bridge_input("p", None, &effective, None);
+        assert!(input["options"]["path_deny"].is_array());
+        assert!(
+            input["options"]["path_deny"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v == "secret/"),
+            "path_deny should include 'secret/'"
+        );
+    }
+
+    // ── WorkerProbeBackend construction ───────────────────────────────────
+
+    fn temp_policy() -> (tempfile::TempDir, SecurityPolicy) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = dir.path().join("project");
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        let policy = SecurityPolicy::new(project, data, crate::config::SecurityConfig::default())
+            .expect("policy");
+        (dir, policy)
+    }
+
+    fn make_request(policy: &RunPolicy, effective: &EffectiveAgentPolicy) -> AgentRequest {
+        AgentRequest {
+            agent_index: 0,
+            prompt: "test prompt".into(),
+            label: Some("test".into()),
+            model: None,
+            run_policy: policy.clone(),
+            effective: effective.clone(),
+            cancel_token: CancelToken::new(),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_basic_run() {
+        let (_dir, policy) = temp_policy();
+        let backend = WorkerProbeBackend::new(policy);
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let req = make_request(&run, &effective);
+        let result = backend.run_agent(req).await;
+        assert!(result.ok);
+        assert_eq!(result.output["backend"], "worker_probe");
+        assert_eq!(result.output["prompt"], "test prompt");
+        assert_eq!(result.output["label"], "test");
+        assert_eq!(result.output["agent_index"], 0);
+        assert!(result.error.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_with_delay_succeeds() {
+        let (_dir, policy) = temp_policy();
+        let backend = WorkerProbeBackend::new(policy).with_delay(10);
+        assert_eq!(backend.delay_ms, 10);
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let req = make_request(&run, &effective);
+        let result = backend.run_agent(req).await;
+        assert!(result.ok);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_cancel_before_run() {
+        let (_dir, policy) = temp_policy();
+        let backend = WorkerProbeBackend::new(policy);
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let mut req = make_request(&run, &effective);
+        req.cancel_token.cancel();
+        let result = backend.run_agent(req).await;
+        assert!(!result.ok);
+        assert_eq!(result.output["error"], "cancelled");
+        assert_eq!(result.error.as_deref(), Some("cancelled"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_cancel_during_delay() {
+        let (_dir, policy) = temp_policy();
+        let backend = WorkerProbeBackend::new(policy).with_delay(5000);
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let mut req = make_request(&run, &effective);
+        // Cancel after a short delay so the sleep is interrupted.
+        let cancel_token = req.cancel_token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_token.cancel();
+        });
+        let result = backend.run_agent(req).await;
+        assert!(!result.ok);
+        assert_eq!(result.output["error"], "cancelled");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_tracks_inflight() {
+        let (_dir, policy) = temp_policy();
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let backend =
+            WorkerProbeBackend::new(policy).with_inflight(in_flight.clone(), peak.clone());
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let req = make_request(&run, &effective);
+        let result = backend.run_agent(req).await;
+        assert!(result.ok);
+        // After completion, in_flight should be back to 0.
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+        // Peak should have been recorded as at least 1.
+        assert!(peak.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn worker_probe_cancel_with_inflight_decrements() {
+        let (_dir, policy) = temp_policy();
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let backend =
+            WorkerProbeBackend::new(policy).with_inflight(in_flight.clone(), peak.clone());
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let mut req = make_request(&run, &effective);
+        req.cancel_token.cancel();
+        let result = backend.run_agent(req).await;
+        assert!(!result.ok);
+        // in_flight should be 0 after cancel path.
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    // ── probe_worker_capabilities ─────────────────────────────────────────
+
+    #[test]
+    fn probe_read_only_default_policy() {
+        let (_dir, policy) = temp_policy();
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        // Read-only: no writes, no bash.
+        assert!(!probe.can_write_file);
+        assert!(!probe.can_edit);
+        assert!(!probe.can_bash);
+        // Read tools should be registered.
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "read_file"),
+            "read_file should be registered, got: {:?}",
+            probe.registered_tools
+        );
+        // No subagent or workflow.
+        assert!(!probe.can_subagent);
+        assert!(!probe.can_workflow);
+        // Empty write_allow ⇒ no writes.
+        assert!(!probe.create_new_file_allowed);
+    }
+
+    #[test]
+    fn probe_implementer_with_writes() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.profile = "implementer".into();
+        run.tools = vec![
+            "read_file".into(),
+            "write_file".into(),
+            "edit".into(),
+            "bash".into(),
+        ];
+        run.write_allow = vec!["src/".into()];
+        run.create_files = true;
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(probe.can_write_file, "write_file should be registered");
+        assert!(probe.can_edit, "edit should be registered");
+        assert!(probe.can_bash, "bash should be registered");
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "write_file"),
+            "write_file in registered_tools: {:?}",
+            probe.registered_tools
+        );
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "edit"),
+            "edit in registered_tools: {:?}",
+            probe.registered_tools
+        );
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "bash"),
+            "bash in registered_tools: {:?}",
+            probe.registered_tools
+        );
+    }
+
+    #[test]
+    fn probe_strips_nested_workflow_tools() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["read_file".into(), "subagent".into(), "workflow".into()];
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(!probe.can_subagent, "subagent must be stripped");
+        assert!(!probe.can_workflow, "workflow must be stripped");
+        assert!(
+            !probe.registered_tools.iter().any(|t| t == "subagent"),
+            "subagent must not appear in registered_tools"
+        );
+        assert!(
+            !probe.registered_tools.iter().any(|t| t == "workflow"),
+            "workflow must not appear in registered_tools"
+        );
+    }
+
+    #[test]
+    fn probe_empty_write_allow_blocks_writes_even_with_write_tools() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into(), "edit".into()];
+        run.write_allow = vec![]; // empty
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(!probe.can_write_file, "empty write_allow ⇒ no writes");
+        assert!(!probe.can_edit, "empty write_allow ⇒ no edits");
+        assert!(!probe.create_new_file_allowed);
+    }
+
+    #[test]
+    fn probe_path_deny_blocks_writes_to_denied_paths() {
+        let (dir, policy) = temp_policy();
+        // Create files on disk so write_file validation doesn't deny for
+        // "file does not exist" (create_files=false by default).
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/a.rs"), "// a").unwrap();
+        std::fs::write(project.join("src/b.rs"), "// b").unwrap();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into()];
+        run.write_allow = vec!["src/a.rs".into(), "src/b.rs".into()];
+        run.path_deny = vec!["src/a.rs".into()];
+        let opts = crate::tool::builtin::workflow::policy::AgentPolicyOpts {
+            path_deny: Some(vec!["src/a.rs".into()]),
+            ..Default::default()
+        };
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(&run, &opts);
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(probe.can_write_file);
+        // src/a.rs should be denied.
+        assert!(
+            probe
+                .write_path_denied
+                .iter()
+                .any(|p| p.contains("src/a.rs")),
+            "src/a.rs should be denied: {:?}",
+            probe.write_path_denied
+        );
+        // src/b.rs should be allowed.
+        assert!(
+            probe
+                .write_path_allowed
+                .iter()
+                .any(|p| p.contains("src/b.rs")),
+            "src/b.rs should be allowed: {:?}",
+            probe.write_path_allowed
+        );
+    }
+
+    #[test]
+    fn probe_create_files_false_blocks_new_file_creation() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into()];
+        run.write_allow = vec!["src/a.rs".into()];
+        run.create_files = false;
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(
+            !probe.create_new_file_allowed,
+            "create_files=false ⇒ no new files"
+        );
+    }
+
+    #[test]
+    fn probe_create_files_true_allows_new_file_creation() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into()];
+        run.write_allow = vec!["src/new.rs".into()];
+        run.create_files = true;
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(probe.can_write_file);
+        // create_new_file_allowed depends on whether the probe path was
+        // denied or allowed. With create_files=true and write_allow set,
+        // it should be true.
+        assert!(
+            probe.create_new_file_allowed,
+            "create_files=true with write_allow ⇒ new files allowed"
+        );
+    }
+
+    #[test]
+    fn probe_outside_write_allow_is_denied() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into()];
+        run.write_allow = vec!["src/".into()];
+        run.create_files = true;
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        // __outside_write_allow__.rs should be in denied paths.
+        assert!(
+            probe
+                .write_path_denied
+                .iter()
+                .any(|p| p.contains("__outside_write_allow__")),
+            "outside write_allow should be denied: {:?}",
+            probe.write_path_denied
+        );
+    }
+
+    #[test]
+    fn probe_policy_denials_are_human_readable() {
+        let (dir, policy) = temp_policy();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/secret.rs"), "// secret").unwrap();
+        let mut run = default_run_policy();
+        run.tools = vec!["write_file".into()];
+        run.write_allow = vec!["src/".into()];
+        run.path_deny = vec!["src/secret.rs".into()];
+        let opts = crate::tool::builtin::workflow::policy::AgentPolicyOpts {
+            path_deny: Some(vec!["src/secret.rs".into()]),
+            ..Default::default()
+        };
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(&run, &opts);
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(
+            !probe.policy_denials.is_empty(),
+            "should have denials for denied paths"
+        );
+        // Each denial should mention either write_file or create_new
+        // (both are write-related probes).
+        for denial in &probe.policy_denials {
+            assert!(
+                denial.contains("write_file") || denial.contains("create_new"),
+                "denial should mention write_file or create_new: {denial}"
+            );
+        }
+    }
+
+    #[test]
+    fn probe_aliases_read_file_and_read_both_register() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["read".into()]; // alias, not "read_file"
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "read_file"),
+            "'read' alias should register read_file: {:?}",
+            probe.registered_tools
+        );
+    }
+
+    #[test]
+    fn probe_search_aliases_register() {
+        let (_dir, policy) = temp_policy();
+        let mut run = default_run_policy();
+        run.tools = vec!["grep".into(), "glob".into(), "list_dir".into()];
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let probe = probe_worker_capabilities(&policy, &run, &effective);
+        assert!(
+            probe.registered_tools.iter().any(|t| t == "search"),
+            "grep/glob/list_dir aliases should register search: {:?}",
+            probe.registered_tools
+        );
+    }
+
+    // ── SubagentBridgeBackend ─────────────────────────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bridge_backend_dropped_executor_returns_error() {
+        let backend = SubagentBridgeBackend::new(std::sync::Weak::new());
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let req = make_request(&run, &effective);
+        let result = backend.run_agent(req).await;
+        assert!(!result.ok);
+        assert_eq!(result.output["error"], "tool executor unavailable");
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bridge_backend_cancel_before_run() {
+        // Create a real ToolExecutor and then drop it so the Weak is stale.
+        let (_dir, policy) = temp_policy();
+        let exec = Arc::new(ToolExecutor::empty(policy));
+        let weak = Arc::downgrade(&exec);
+        let backend = SubagentBridgeBackend::new(weak);
+        let run = default_run_policy();
+        let effective = crate::tool::builtin::workflow::policy::intersect_agent_policy(
+            &run,
+            &Default::default(),
+        );
+        let mut req = make_request(&run, &effective);
+        req.cancel_token.cancel();
+        // Keep exec alive so the upgrade succeeds, but cancel is checked first.
+        let _ = &exec;
+        let result = backend.run_agent(req).await;
+        assert!(!result.ok);
+        assert_eq!(result.output["error"], "cancelled");
     }
 }
