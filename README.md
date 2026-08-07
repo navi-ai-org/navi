@@ -233,6 +233,20 @@ Project config cannot enable MCP servers or plugin paths — those require globa
 
 ---
 
+## macOS support — community feedback needed
+
+NAVI's computer-use backend (`navi-os-macos`) implements screen capture, window enumeration, AXUIElement inspection, and CGEvent input simulation. However, **the maintainer does not have access to macOS hardware for testing**. The macOS backend compiles and unit-tests pass in CI, but it has not been validated end-to-end on a real Mac.
+
+If you use macOS, please try it and report back:
+
+- **What works** — `capture_screen`, `enumerate_windows`, `inspect_element`, `simulate_input`, `annotate_screenshot`
+- **What to report** — crashes, permission prompts (Accessibility / Screen Recording), incorrect element coordinates, input failures
+- **Where** — [GitHub Issues](https://github.com/navi-ai-org/navi/issues) (use the `macos` label)
+
+Community feedback is essential to make macOS a first-class platform.
+
+---
+
 ## Architecture (short)
 
 ```
