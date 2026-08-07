@@ -28,8 +28,10 @@ const MAX_DESKTOP_WINDOWS: usize = 20;
 /// for direct `inspect_element` calls; `inspect_desktop` reassigns them with
 /// the correct window index). The `raw_view` option has no effect on macOS —
 /// AXUIElement always exposes the full tree (no ControlView/RawView split).
-/// The `element_id` option (drill-down) is accepted for API compatibility but
-/// not yet supported on macOS; the full window tree is returned instead.
+///
+/// When `opts.element_id` is set (e.g. "w0.e12"), the tree is re-walked from
+/// the root using the same pre-order counter scheme used by `inspect_desktop`
+/// to locate the element, then its sub-tree is expanded to `opts.max_depth`.
 pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
     unsafe {
         // Check Accessibility permission first.
@@ -71,6 +73,45 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
             }
         };
 
+        // If element_id is specified, locate the element by re-walking the
+        // tree with the same counter scheme and then expand from it.
+        if let Some(ref target_id) = opts.element_id {
+            // Parse the element_id to extract the expected counter value.
+            // Format: "w{idx}.e{counter}"
+            let target_counter = match parse_element_counter(target_id) {
+                Some(c) => c,
+                None => bail!(
+                    "invalid element_id format: '{target_id}' (expected 'w{{idx}}.e{{counter}}')"
+                ),
+            };
+
+            // Walk the tree to find the element at the target counter.
+            let found = find_element_by_counter(root_element, target_counter);
+            match found {
+                Some(element) => {
+                    // Continue numbering from the target so the found element
+                    // keeps its original element_id.
+                    let mut counter = target_counter;
+                    let root = walk_element(element, opts.max_depth, 0, 0, &mut counter);
+                    accessibility_sys::CFRelease(element as _);
+                    accessibility_sys::CFRelease(root_element as _);
+                    return Ok(MacElementTree {
+                        root,
+                        supported: true,
+                    });
+                }
+                None => {
+                    accessibility_sys::CFRelease(root_element as _);
+                    bail!(
+                        "element_id '{target_id}' not found in the accessibility tree. \
+                         The element may have been destroyed or the window may have changed. \
+                         Re-run inspect_desktop to refresh element IDs."
+                    );
+                }
+            }
+        }
+
+        // No element_id — walk from the root as usual.
         // Direct inspect_element calls use window index 0 for element IDs.
         // inspect_desktop reassigns IDs with the correct per-window index.
         let mut counter: usize = 0;
@@ -82,6 +123,105 @@ pub fn inspect_element(opts: &MacInspectOptions) -> Result<MacElementTree> {
             supported: true,
         })
     }
+}
+
+/// Parses an element_id string ("w{idx}.e{counter}") and returns the counter
+/// value. Returns None if the format doesn't match.
+fn parse_element_counter(id: &str) -> Option<usize> {
+    let after_e = id.split(".e").nth(1)?;
+    after_e.parse::<usize>().ok()
+}
+
+/// Walks the AXUIElement tree in pre-order (same as `walk_element`) until it
+/// finds the element at counter position `target_counter`. Returns a retained
+/// `AXUIElementRef` so the caller can expand its sub-tree (the caller must
+/// `CFRelease` it).
+///
+/// This re-walks the tree from the root, which is O(n) but avoids needing to
+/// cache raw element pointers. The walk is bounded by
+/// `MAX_CHILDREN_PER_NODE` per level to match the original walk.
+unsafe fn find_element_by_counter(
+    root: accessibility_sys::AXUIElementRef,
+    target_counter: usize,
+) -> Option<accessibility_sys::AXUIElementRef> {
+    let mut counter = 0usize;
+    find_element_recursive(root, &mut counter, target_counter, 0)
+}
+
+/// Recursive helper for `find_element_by_counter`.
+///
+/// `element` must be retained by the caller (we don't take ownership — we
+/// only retain when returning a match). Children fetched via
+/// [`get_raw_children`] are retained and released at the end of this call;
+/// a matched element gets an *additional* retain so it outlives this scope.
+unsafe fn find_element_recursive(
+    element: accessibility_sys::AXUIElementRef,
+    counter: &mut usize,
+    target: usize,
+    depth: u32,
+) -> Option<accessibility_sys::AXUIElementRef> {
+    if *counter == target {
+        // Retain so the caller owns the reference.
+        core_foundation_sys::base::CFRetain(element as _);
+        return Some(element);
+    }
+    *counter += 1;
+
+    // Don't search deeper than a reasonable limit.
+    if depth >= 50 {
+        return None;
+    }
+
+    // get_raw_children returns retained refs; we release them all before
+    // returning. A matched descendant gets its own extra retain above, so
+    // releasing the children here is safe.
+    let children = get_raw_children(element);
+    let limit = std::cmp::min(children.len(), MAX_CHILDREN_PER_NODE);
+    let mut found = None;
+    for i in 0..limit {
+        if found.is_none() {
+            if let Some(f) = find_element_recursive(children[i], counter, target, depth + 1) {
+                found = Some(f);
+            }
+        }
+        // Release this child — we only needed it for the search.
+        accessibility_sys::CFRelease(children[i] as _);
+    }
+    found
+}
+
+/// Returns the `AXUIElementRef` children of an element as **retained** refs
+/// (the caller must `CFRelease` each one). Used by `find_element_recursive`
+/// to traverse without building `MacElementInfo`.
+unsafe fn get_raw_children(
+    element: accessibility_sys::AXUIElementRef,
+) -> Vec<accessibility_sys::AXUIElementRef> {
+    let attr_cf = match cf_string_create("AXChildren") {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut value: accessibility_sys::CFTypeRef = std::ptr::null();
+    let err = accessibility_sys::AXUIElementCopyAttributeValue(element, attr_cf, &mut value);
+    accessibility_sys::CFRelease(attr_cf as _);
+
+    if err != accessibility_sys::kAXErrorSuccess as _ || value.is_null() {
+        return Vec::new();
+    }
+
+    // value is a CFArray of AXUIElementRefs. The array retains its elements,
+    // so we must retain each child before releasing the array.
+    let array = value as core_foundation_sys::array::CFArrayRef;
+    let count = core_foundation_sys::array::CFArrayGetCount(array);
+    let mut children = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let child = core_foundation_sys::array::CFArrayGetValueAtIndex(array, i);
+        if !child.is_null() {
+            core_foundation_sys::base::CFRetain(child);
+            children.push(child as accessibility_sys::AXUIElementRef);
+        }
+    }
+    accessibility_sys::CFRelease(value);
+    children
 }
 
 /// Returns a shallow snapshot of all visible windows and their top-level UI

@@ -33,15 +33,28 @@ const DESKTOP_MAX_WINDOWS: usize = 20;
 /// Inspects the accessibility tree of a window.
 ///
 /// `opts.window` selects the target window by HWND (as `u64`); `None` uses
-/// the foreground window. `opts.max_depth` bounds the recursion (0 = root
-/// only). `opts.raw_view` selects the RawView walker (all nodes) instead of
-/// the ControlView walker (logical tree); use it for Electron/Chromium apps
-/// where the ControlView tree is sparse.
+/// the foreground window. `opts.element_id` (e.g. "w0.e12") drills down from
+/// a specific element instead of the window root — the tree is walked with
+/// the same walker/counter scheme used by `inspect_desktop` to locate the
+/// element, then its sub-tree is expanded to `opts.max_depth`.
+/// `opts.max_depth` bounds the recursion (0 = root only). `opts.raw_view`
+/// selects the RawView walker (all nodes) instead of the ControlView walker
+/// (logical tree); use it for Electron/Chromium apps where the ControlView
+/// tree is sparse.
 ///
 /// Each visited element is assigned a stable `element_id` of the form
 /// `w0.e{counter}` (single-window inspection always uses window index 0).
 pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
     super::ensure_com_initialized()?;
+
+    // Validate element_id format early, before any UIA calls — this way
+    // invalid formats return a clear error even if the foreground window
+    // is unavailable.
+    if let Some(ref target_id) = opts.element_id {
+        if parse_element_counter(target_id).is_none() {
+            bail!("invalid element_id format: '{target_id}' (expected 'w{{idx}}.e{{counter}}')");
+        }
+    }
 
     unsafe {
         // 1. Create the IUIAutomation instance.
@@ -74,8 +87,32 @@ pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
                 .context("IUIAutomation::ControlViewWalker failed")?
         };
 
-        // 4. Walk recursively, building WinElementInfo nodes. Each visited
-        //    element gets a stable id "w0.e{counter}".
+        // 4. If element_id is specified, locate the element by re-walking
+        //    the tree with the same counter scheme and then expand from it.
+        if let Some(ref target_id) = opts.element_id {
+            let target_counter = parse_element_counter(target_id).unwrap();
+
+            // Walk the tree to find the element at the target counter.
+            let found = find_element_by_counter(&walker, &root, target_counter)?;
+            match found {
+                Some(element) => {
+                    let mut counter = target_counter; // Continue numbering from the target
+                    let root_info =
+                        walk_tree(&walker, &element, 0, opts.max_depth, 0, &mut counter);
+                    return Ok(WinElementTree {
+                        root: root_info,
+                        supported: true,
+                    });
+                }
+                None => bail!(
+                    "element_id '{target_id}' not found in the accessibility tree. \
+                     The element may have been destroyed or the window may have changed. \
+                     Re-run inspect_desktop to refresh element IDs."
+                ),
+            }
+        }
+
+        // 5. No element_id — walk from the window root as usual.
         let mut counter = 0usize;
         let root_info = walk_tree(&walker, &root, 0, opts.max_depth, 0, &mut counter);
 
@@ -83,6 +120,76 @@ pub fn inspect_element(opts: &WinInspectOptions) -> Result<WinElementTree> {
             root: root_info,
             supported: true,
         })
+    }
+}
+
+/// Parses an element_id string ("w{idx}.e{counter}") and returns the counter
+/// value. Returns None if the format doesn't match.
+fn parse_element_counter(id: &str) -> Option<usize> {
+    let after_e = id.split(".e").nth(1)?;
+    after_e.parse::<usize>().ok()
+}
+
+/// Walks the UIA tree in pre-order (same as `walk_tree`) until it finds the
+/// element at counter position `target_counter`. Returns the raw
+/// `IUIAutomationElement` so the caller can expand its sub-tree.
+///
+/// This re-walks the tree from the root, which is O(n) but avoids needing to
+/// cache raw COM element pointers (which are not `Send` and would require
+/// careful lifetime management). The walk is bounded by
+/// `MAX_CHILDREN_PER_NODE` per level to match the original walk.
+unsafe fn find_element_by_counter(
+    walker: &IUIAutomationTreeWalker,
+    root: &IUIAutomationElement,
+    target_counter: usize,
+) -> Result<Option<IUIAutomationElement>> {
+    unsafe {
+        let mut counter = 0usize;
+        // Use a generous max depth to reach any element visible in prior
+        // inspect_desktop (depth 2) or inspect_element calls.
+        find_element_recursive(walker, root, &mut counter, target_counter, 0)
+    }
+}
+
+/// Recursive helper for `find_element_by_counter`.
+unsafe fn find_element_recursive(
+    walker: &IUIAutomationTreeWalker,
+    element: &IUIAutomationElement,
+    counter: &mut usize,
+    target: usize,
+    depth: u32,
+) -> Result<Option<IUIAutomationElement>> {
+    unsafe {
+        if *counter == target {
+            return Ok(Some(element.clone()));
+        }
+        *counter += 1;
+
+        // Don't search deeper than a reasonable limit.
+        if depth >= 50 {
+            return Ok(None);
+        }
+
+        if let Ok(first_child) = walker.GetFirstChildElement(element) {
+            let mut current = first_child;
+            let mut count = 0usize;
+            loop {
+                if count >= MAX_CHILDREN_PER_NODE {
+                    break;
+                }
+                if let Some(found) =
+                    find_element_recursive(walker, &current, counter, target, depth + 1)?
+                {
+                    return Ok(Some(found));
+                }
+                count += 1;
+                match walker.GetNextSiblingElement(&current) {
+                    Ok(next) => current = next,
+                    _ => break,
+                }
+            }
+        }
+        Ok(None)
     }
 }
 
@@ -320,5 +427,248 @@ mod tests {
             tree.root.children.is_empty(),
             "max_depth=0 must not recurse"
         );
+    }
+
+    // ── Unit tests (no desktop interaction needed) ────────────────────────
+
+    #[test]
+    fn parse_element_counter_valid_ids() {
+        assert_eq!(parse_element_counter("w0.e0"), Some(0));
+        assert_eq!(parse_element_counter("w0.e12"), Some(12));
+        assert_eq!(parse_element_counter("w3.e199"), Some(199));
+    }
+
+    #[test]
+    fn parse_element_counter_invalid_ids() {
+        assert_eq!(parse_element_counter("w0.e"), None);
+        assert_eq!(parse_element_counter("w0"), None);
+        assert_eq!(parse_element_counter("abc"), None);
+        assert_eq!(parse_element_counter("w0.abc"), None);
+        assert_eq!(parse_element_counter(""), None);
+    }
+
+    // ── Integration tests (require a real Windows desktop) ────────────────
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_desktop_returns_windows_with_element_ids() {
+        let snap = match inspect_desktop() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping inspect_desktop_returns_windows_with_element_ids: {e}");
+                return;
+            }
+        };
+
+        // Should return at least 0 windows (desktop may be empty in CI).
+        // If there are windows, each should have a window_id and elements
+        // with element_ids.
+        for (i, win) in snap.windows.iter().enumerate() {
+            assert!(
+                win.window_id.starts_with('w'),
+                "window_id should start with 'w', got: {}",
+                win.window_id
+            );
+            assert_eq!(
+                win.window_id,
+                format!("w{i}"),
+                "window_id should be 'w{{index}}', got: {}",
+                win.window_id
+            );
+
+            // Check that elements have element_ids in the correct format.
+            check_element_ids(&win.elements, &win.window_id);
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_desktop_element_ids_are_unique() {
+        let snap = match inspect_desktop() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping inspect_desktop_element_ids_are_unique: {e}");
+                return;
+            }
+        };
+
+        let mut all_ids: Vec<String> = Vec::new();
+        for win in &snap.windows {
+            collect_all_ids(&win.elements, &mut all_ids);
+        }
+
+        // Check for duplicates.
+        let mut seen = std::collections::HashSet::new();
+        for id in &all_ids {
+            assert!(seen.insert(id.clone()), "duplicate element_id found: {id}");
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_with_raw_view_returns_tree() {
+        // RawView should work on the foreground window. This verifies
+        // that RawViewWalker is callable and returns a valid tree.
+        let tree = match inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: None,
+            max_depth: 2,
+            raw_view: true,
+            ..Default::default()
+        }) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("skipping inspect_element_with_raw_view_returns_tree: {e}");
+                return;
+            }
+        };
+        assert!(tree.supported, "raw_view inspect should be supported");
+        // RawView typically returns more children than ControlView.
+        // Just verify the root has an element_id.
+        assert!(
+            tree.root.element_id.is_some(),
+            "root should have an element_id"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_drill_down_by_element_id() {
+        // 1. inspect_desktop to get element_ids
+        let snap = match inspect_desktop() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("skipping inspect_element_drill_down_by_element_id: {e}");
+                return;
+            }
+        };
+
+        // 2. Find a window with at least one element
+        let target = snap.windows.iter().find(|w| !w.elements.is_empty());
+        let (target_hwnd, target_element_id) = match target {
+            Some(w) => {
+                let el = &w.elements[0];
+                let id = match &el.element_id {
+                    Some(id) => id.clone(),
+                    None => {
+                        eprintln!("skipping: first element has no element_id");
+                        return;
+                    }
+                };
+                (w.hwnd, id)
+            }
+            None => {
+                eprintln!("skipping: no window with elements found");
+                return;
+            }
+        };
+
+        // 3. Drill down from that element_id
+        let tree = match inspect_element(&WinInspectOptions {
+            window: Some(target_hwnd),
+            element_id: Some(target_element_id.clone()),
+            max_depth: 3,
+            raw_view: false,
+            ..Default::default()
+        }) {
+            Ok(t) => t,
+            Err(e) => {
+                // The element may have been destroyed between inspect_desktop
+                // and this call. Skip rather than fail.
+                eprintln!(
+                    "skipping inspect_element_drill_down_by_element_id: \
+                     drill-down on {target_element_id} failed: {e}"
+                );
+                return;
+            }
+        };
+
+        assert!(tree.supported, "drill-down should be supported");
+        // The drilled-down element should have an element_id (continuing
+        // the counter from the target).
+        assert!(
+            tree.root.element_id.is_some(),
+            "drilled-down root should have an element_id"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_drill_down_invalid_id_returns_error() {
+        // An element_id that doesn't exist should return an error, not panic.
+        let result = inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: Some("w0.e99999".to_string()),
+            max_depth: 2,
+            raw_view: false,
+            ..Default::default()
+        });
+
+        match result {
+            Ok(_) => {
+                // In the unlikely case there are 99999+ elements, the test
+                // still passes — we just wanted to verify no panic.
+            }
+            Err(e) => {
+                // Expected: error message should mention "not found",
+                // "foreground", or "ElementFromHandle" (if there's no
+                // foreground window in the test environment).
+                let msg = format!("{e}");
+                assert!(
+                    msg.contains("not found")
+                        || msg.contains("foreground")
+                        || msg.contains("ElementFromHandle")
+                        || msg.contains("no target window"),
+                    "error should mention 'not found', 'foreground', 'ElementFromHandle', or 'no target window', got: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn inspect_element_drill_down_invalid_format_returns_error() {
+        let result = inspect_element(&WinInspectOptions {
+            window: None,
+            element_id: Some("garbage".to_string()),
+            max_depth: 2,
+            ..Default::default()
+        });
+
+        assert!(
+            result.is_err(),
+            "invalid element_id format should return an error"
+        );
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("invalid element_id format"),
+            "error should mention 'invalid element_id format', got: {msg}"
+        );
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    /// Recursively checks that all elements have element_ids in the format
+    /// "w{window_id}.e{counter}".
+    fn check_element_ids(elements: &[WinElementInfo], window_id: &str) {
+        for el in elements {
+            if let Some(ref id) = el.element_id {
+                assert!(
+                    id.starts_with(&format!("{window_id}.e")),
+                    "element_id '{id}' should start with '{window_id}.e'"
+                );
+            }
+            check_element_ids(&el.children, window_id);
+        }
+    }
+
+    /// Recursively collects all element_ids from an element tree.
+    fn collect_all_ids(elements: &[WinElementInfo], ids: &mut Vec<String>) {
+        for el in elements {
+            if let Some(ref id) = el.element_id {
+                ids.push(id.clone());
+            }
+            collect_all_ids(&el.children, ids);
+        }
     }
 }

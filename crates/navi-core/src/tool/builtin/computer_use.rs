@@ -1157,6 +1157,160 @@ mod tests {
         assert!(result.unwrap_err().contains("not found in cache"));
     }
 
+    #[test]
+    fn simulate_input_mixed_element_id_and_coordinates() {
+        // Actions with a mix of element_id and explicit coordinates should
+        // resolve element_id ones and leave coordinate ones unchanged.
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e5".to_string(),
+                navi_computer_use::Rect {
+                    x: 0,
+                    y: 0,
+                    width: 100,
+                    height: 100,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![
+            json!({"action": "click", "element_id": "w0.e5", "button": "left"}),
+            json!({"action": "mouse_move", "x": 50, "y": 60}),
+            json!({"action": "key", "key": "Enter"}),
+        ];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+
+        // First action: element_id resolved to center (50, 50)
+        assert_eq!(resolved[0]["x"], 50);
+        assert_eq!(resolved[0]["y"], 50);
+        assert!(resolved[0].get("element_id").is_some()); // element_id preserved
+
+        // Second action: explicit coordinates unchanged
+        assert_eq!(resolved[1]["x"], 50);
+        assert_eq!(resolved[1]["y"], 60);
+        assert!(resolved[1].get("element_id").is_none());
+
+        // Third action: keyboard action unchanged
+        assert_eq!(resolved[2]["action"], "key");
+        assert_eq!(resolved[2]["key"], "Enter");
+    }
+
+    #[test]
+    fn simulate_input_element_id_with_zero_size_element() {
+        // An element with width=0 or height=0 should still resolve (center
+        // will be the x/y origin of the rect).
+        let cache = test_cache();
+        {
+            let mut c = cache.lock().unwrap();
+            c.insert(
+                "w0.e0".to_string(),
+                navi_computer_use::Rect {
+                    x: 200,
+                    y: 300,
+                    width: 0,
+                    height: 0,
+                },
+            );
+        }
+        let tool = SimulateInputTool::new(
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            PermissionMode::Yolo,
+            cache,
+        );
+        let actions = vec![json!({"action": "click", "element_id": "w0.e0"})];
+        let resolved = tool.resolve_element_ids(&actions).expect("should resolve");
+        assert_eq!(resolved[0]["x"], 200);
+        assert_eq!(resolved[0]["y"], 300);
+    }
+
+    #[tokio::test]
+    #[cfg(all(windows, feature = "computer-use"))]
+    async fn inspect_desktop_populates_element_cache() {
+        // Integration test: call inspect_desktop through the tool layer and
+        // verify the element cache is populated with real element_ids.
+        let cache: Arc<
+            std::sync::Mutex<std::collections::HashMap<String, navi_computer_use::Rect>>,
+        > = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+
+        let tool = InspectDesktopTool::new(cache.clone());
+        let invocation = ToolInvocation {
+            id: "test-desktop".to_string(),
+            tool_name: "inspect_desktop".to_string(),
+            input: json!({}),
+        };
+
+        let result = match tool.invoke(invocation).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("skipping inspect_desktop_populates_element_cache: {e}");
+                return;
+            }
+        };
+
+        assert!(result.ok, "inspect_desktop should return ok=true");
+
+        // The cache should have at least some entries (if there are windows).
+        let cache_len = cache.lock().unwrap().len();
+        if cache_len == 0 {
+            // Could be an empty desktop in CI — skip.
+            eprintln!("skipping: element cache is empty (no visible windows?)");
+            return;
+        }
+
+        // Every entry in the cache should have a key matching "w{idx}.e{counter}".
+        for key in cache.lock().unwrap().keys() {
+            assert!(
+                key.starts_with("w") && key.contains(".e"),
+                "cache key '{key}' should match 'w{{idx}}.e{{counter}}' format"
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(all(windows, feature = "computer-use"))]
+    async fn open_application_tool_launches_notepad() {
+        // Integration test: launch notepad through the tool layer.
+        let tool = OpenApplicationTool::new();
+        let invocation = ToolInvocation {
+            id: "test-open-app".to_string(),
+            tool_name: "open_application".to_string(),
+            input: json!({"name": "notepad"}),
+        };
+
+        let result = match tool.invoke(invocation).await {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("skipping open_application_tool_launches_notepad: {e}");
+                return;
+            }
+        };
+
+        assert!(result.ok, "open_application should return ok=true");
+
+        // Check the result content.
+        let launched = result
+            .output
+            .get("launched")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(launched, "notepad should be launched");
+
+        // Clean up.
+        let _ = std::process::Command::new("taskkill")
+            .args(["/IM", "notepad.exe", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
     #[tokio::test]
     #[cfg(windows)]
     async fn simulate_input_invoke_blocks_deny_listed_app_in_auto_mode() {
