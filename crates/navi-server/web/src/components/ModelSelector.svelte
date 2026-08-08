@@ -6,8 +6,8 @@
   let loaded = $state(false);
   let localError = $state("");
   let loadingModels = $state(false);
+  let changing = $state(false);
 
-  // Current selection: "provider/name"
   let currentSelection = $derived(
     $activeSession?.provider && $activeSession?.model
       ? `${$activeSession.provider}/${$activeSession.model}`
@@ -37,15 +37,17 @@
     const [provider, name] = value.split("/");
     if (!provider || !name) return;
 
+    changing = true;
     try {
       await setSessionModel($activeSession.id, provider, name);
       activeSession.update((s) => (s ? { ...s, provider, model: name } : s));
     } catch (err) {
       localError = err instanceof Error ? err.message : "Failed to set model";
+    } finally {
+      changing = false;
     }
   }
 
-  // Load models on mount
   $effect(() => {
     loadModels();
   });
@@ -56,27 +58,35 @@
 </script>
 
 <div class="model-selector">
-  <select
-    value={currentSelection}
-    onchange={handleChange}
-    disabled={loadingModels || !$activeSession}
-    aria-label="Select model"
-  >
-    {#if !loaded && !loadingModels}
-      <option value="">Loading models...</option>
-    {:else if $models.length === 0}
-      <option value="">No models available</option>
-    {:else}
-      <option value="" disabled>Select a model...</option>
-      {#each $models as m}
-        <option value={`${m.provider}/${m.name}`}>
-          {modelLabel(m)}
-        </option>
-      {/each}
+  <div class="select-wrapper">
+    {#if loadingModels || changing}
+      <span class="spinner spinner-tiny overlay-spinner"></span>
     {/if}
-  </select>
+    <select
+      value={currentSelection}
+      onchange={handleChange}
+      disabled={loadingModels || changing || !$activeSession}
+      aria-label="Select model"
+    >
+      {#if !loaded && !loadingModels}
+        <option value="">Loading...</option>
+      {:else if $models.length === 0}
+        <option value="">No models</option>
+      {:else}
+        <option value="" disabled>Model...</option>
+        {#each $models as m}
+          <option value={`${m.provider}/${m.name}`}>
+            {modelLabel(m)}
+          </option>
+        {/each}
+      {/if}
+    </select>
+    <svg class="chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  </div>
   {#if localError}
-    <span class="error text-sm">{localError}</span>
+    <span class="error text-xs">{localError}</span>
   {/if}
 </div>
 
@@ -84,19 +94,32 @@
   .model-selector {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 0.15rem;
+  }
+
+  .select-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
   }
 
   select {
-    background: var(--bg-secondary);
-    color: var(--text);
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 0.3rem 0.5rem;
-    font-size: 0.8rem;
+    padding: 0.3rem 1.8rem 0.3rem 0.6rem;
+    font-size: 0.78rem;
     cursor: pointer;
     outline: none;
-    max-width: 180px;
+    max-width: 160px;
+    transition: border-color var(--transition);
+  }
+
+  select:hover:not(:disabled) {
+    border-color: var(--text-muted);
   }
 
   select:focus {
@@ -106,6 +129,25 @@
   select:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .chevron {
+    position: absolute;
+    right: 0.4rem;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .overlay-spinner {
+    position: absolute;
+    right: 1.8rem;
+    color: var(--accent);
+  }
+
+  .spinner-tiny {
+    width: 11px;
+    height: 11px;
+    border-width: 1.5px;
   }
 
   .error {

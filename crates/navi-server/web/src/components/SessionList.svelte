@@ -24,7 +24,9 @@
   }: { onLogout: () => void; serverOnline: boolean } = $props();
 
   let loading = $state(false);
+  let initialLoaded = $state(false);
   let localError = $state("");
+  let confirmingDelete = $state<string | null>(null);
 
   async function refresh() {
     loading = true;
@@ -40,6 +42,7 @@
       localError = err instanceof Error ? err.message : "Failed to load sessions";
     } finally {
       loading = false;
+      initialLoaded = true;
     }
   }
 
@@ -61,7 +64,6 @@
     localError = "";
     try {
       const info = await loadSavedSession(id);
-      // loadSavedSession returns SessionInfo with snapshot embedded
       await selectSession(info, info.snapshot ?? null);
     } catch (err) {
       localError = err instanceof Error ? err.message : "Failed to load session";
@@ -71,14 +73,16 @@
   }
 
   async function handleSelectActive(sid: string) {
+    if ($activeSession?.id === sid) {
+      showSidebar.set(false);
+      return;
+    }
     loading = true;
     localError = "";
     try {
-      // Fetch snapshot for active session to restore history
       const snapshot = await getSessionSnapshot(sid);
       await selectSession({ id: sid }, snapshot);
     } catch (err) {
-      // If snapshot fails (e.g. session just created), start with empty chat
       await selectSession({ id: sid }, null);
     } finally {
       loading = false;
@@ -87,11 +91,17 @@
 
   async function handleDeleteSaved(id: string, e: Event) {
     e.stopPropagation();
-    try {
-      await deleteSavedSession(id);
-      await refresh();
-    } catch (err) {
-      localError = err instanceof Error ? err.message : "Failed to delete session";
+    if (confirmingDelete === id) {
+      // Second click confirms
+      try {
+        await deleteSavedSession(id);
+        confirmingDelete = null;
+        await refresh();
+      } catch (err) {
+        localError = err instanceof Error ? err.message : "Failed to delete session";
+      }
+    } else {
+      confirmingDelete = id;
     }
   }
 
@@ -99,17 +109,31 @@
     clearChat();
     activeSession.set(info);
     showSidebar.set(false);
-
-    // Populate chat from snapshot events if available
     if (snapshot && snapshot.events && snapshot.events.length > 0) {
       const chatMessages = eventsToMessages(snapshot.events);
       messages.set(chatMessages);
     }
-
     await refresh();
   }
 
-  // Load on mount.
+  function formatRelativeTime(isoDate: string): string {
+    try {
+      const date = new Date(isoDate);
+      const now = Date.now();
+      const diff = now - date.getTime();
+      const mins = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      if (hours < 24) return `${hours}h ago`;
+      if (days < 7) return `${days}d ago`;
+      return date.toLocaleDateString();
+    } catch {
+      return "";
+    }
+  }
+
   $effect(() => {
     refresh();
   });
@@ -117,8 +141,20 @@
 
 <div class="session-list">
   <div class="header">
-    <h2>NAVI</h2>
-    <button class="btn-secondary btn-sm" onclick={onLogout}>Logout</button>
+    <div class="brand">
+      <svg width="24" height="24" viewBox="0 0 32 32" class="brand-icon">
+        <rect width="32" height="32" rx="7" fill="var(--accent)" />
+        <text x="16" y="22" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#fff" text-anchor="middle">N</text>
+      </svg>
+      <h2>NAVI</h2>
+    </div>
+    <button class="btn-ghost btn-sm" onclick={onLogout} aria-label="Logout">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+    </button>
   </div>
 
   <div class="status-bar">
@@ -129,24 +165,47 @@
   </div>
 
   <button class="btn-primary new-session" onclick={handleNewSession} disabled={loading}>
-    + New Session
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <line x1="12" y1="5" x2="12" y2="19"/>
+      <line x1="5" y1="12" x2="19" y2="12"/>
+    </svg>
+    New Session
   </button>
 
   {#if localError}
-    <p class="error text-sm">{localError}</p>
+    <p class="error text-sm fade-in">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      {localError}
+    </p>
+  {/if}
+
+  <!-- Loading skeleton -->
+  {#if !initialLoaded && loading}
+    <div class="section">
+      <div class="skeleton skeleton-header"></div>
+      {#each Array(3) as _, i}
+        <div class="skeleton skeleton-item" style="animation-delay: {i * 0.1}s"></div>
+      {/each}
+    </div>
   {/if}
 
   <!-- Active sessions -->
   {#if $sessions.length > 0}
     <div class="section">
-      <h3>Active</h3>
+      <h3>Active <span class="count">{$sessions.length}</span></h3>
       {#each $sessions as sid}
         <button
           class="session-item"
           class:active={$activeSession?.id === sid}
           onclick={() => handleSelectActive(sid)}
+          disabled={loading}
         >
-          <span class="truncate">{sid}</span>
+          <div class="session-icon active-icon"></div>
+          <span class="truncate session-id">{sid}</span>
         </button>
       {/each}
     </div>
@@ -155,33 +214,55 @@
   <!-- Saved sessions -->
   {#if $savedSessions.length > 0}
     <div class="section">
-      <h3>Saved</h3>
+      <h3>Saved <span class="count">{$savedSessions.length}</span></h3>
       {#each $savedSessions as s}
         <div
           class="session-item saved"
           class:active={$activeSession?.id === s.id}
+          class:confirming={confirmingDelete === s.id}
           onclick={() => handleLoadSaved(s.id)}
           role="button"
           tabindex="0"
+          onkeydown={(e) => { if (e.key === "Enter") handleLoadSaved(s.id); }}
         >
           <div class="session-info">
             <span class="truncate session-title">{s.title || s.id}</span>
-            <span class="text-muted text-sm">{s.message_count} msgs</span>
+            <div class="session-meta">
+              <span class="text-xs text-faint">{s.message_count} msgs</span>
+              {#if s.updated_at}
+                <span class="text-xs text-faint">· {formatRelativeTime(s.updated_at)}</span>
+              {/if}
+            </div>
           </div>
           <button
             class="btn-delete"
+            class:confirming={confirmingDelete === s.id}
             onclick={(e) => handleDeleteSaved(s.id, e)}
-            aria-label="Delete session"
+            aria-label={confirmingDelete === s.id ? "Confirm delete" : "Delete session"}
           >
-            ×
+            {#if confirmingDelete === s.id}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            {:else}
+              ×
+            {/if}
           </button>
         </div>
       {/each}
     </div>
   {/if}
 
-  {#if !$sessions.length && !$savedSessions.length && !loading}
-    <p class="empty text-muted text-sm">No sessions yet.</p>
+  <!-- Empty state -->
+  {#if initialLoaded && !$sessions.length && !$savedSessions.length}
+    <div class="empty-state fade-in">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      <p class="text-muted text-sm">No sessions yet</p>
+      <p class="text-faint text-xs">Create one to start chatting</p>
+    </div>
   {/if}
 </div>
 
@@ -192,6 +273,7 @@
     padding: 0.75rem;
     gap: 0.75rem;
     height: 100%;
+    overflow-y: auto;
   }
 
   .header {
@@ -200,20 +282,32 @@
     justify-content: space-between;
   }
 
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .brand-icon {
+    border-radius: 6px;
+  }
+
   h2 {
     font-size: 1.1rem;
-    color: var(--accent);
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.01em;
   }
 
   .btn-sm {
-    padding: 0.25rem 0.6rem;
-    font-size: 0.8rem;
+    padding: 0.3rem;
   }
 
   .status-bar {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    padding-bottom: 0.25rem;
   }
 
   .dot {
@@ -224,52 +318,97 @@
 
   .dot.online {
     background: var(--success);
+    box-shadow: 0 0 6px var(--success);
   }
 
   .dot.offline {
-    background: var(--text-muted);
+    background: var(--text-faint);
   }
 
   .new-session {
     width: 100%;
-    padding: 0.6rem;
+    padding: 0.65rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    font-weight: 500;
   }
 
   .section {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.2rem;
   }
 
   h3 {
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     text-transform: uppercase;
-    color: var(--text-muted);
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
     margin-top: 0.5rem;
     padding: 0 0.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .count {
+    background: var(--bg-tertiary);
+    padding: 0.05rem 0.4rem;
+    border-radius: 10px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
   }
 
   .session-item {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.6rem 0.75rem;
+    gap: 0.5rem;
+    padding: 0.6rem 0.7rem;
     background: transparent;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
-    color: var(--text);
+    color: var(--text-secondary);
     text-align: left;
     width: 100%;
     cursor: pointer;
+    transition: background var(--transition), border-color var(--transition);
   }
 
-  .session-item:hover {
+  .session-item:hover:not(:disabled) {
     background: var(--bg-tertiary);
   }
 
   .session-item.active {
-    background: var(--bg-tertiary);
+    background: var(--accent-subtle);
     border-color: var(--accent);
+  }
+
+  .session-item.active .session-id {
+    color: var(--accent);
+  }
+
+  .session-item.confirming {
+    background: var(--danger-subtle);
+    border-color: var(--danger);
+  }
+
+  .session-icon {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .active-icon {
+    background: var(--success);
+    box-shadow: 0 0 4px var(--success);
+  }
+
+  .session-id {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
   }
 
   .session-item.saved {
@@ -279,37 +418,73 @@
   .session-info {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    gap: 0.15rem;
     flex: 1;
     min-width: 0;
   }
 
   .session-title {
     font-size: 0.9rem;
+    font-weight: 500;
+  }
+
+  .session-meta {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
   }
 
   .btn-delete {
     background: transparent;
     border: none;
-    color: var(--text-muted);
+    color: var(--text-faint);
     font-size: 1.2rem;
-    padding: 0 0.3rem;
+    padding: 0.2rem 0.4rem;
     line-height: 1;
+    border-radius: var(--radius-xs);
+    transition: color var(--transition), background var(--transition);
+    flex-shrink: 0;
   }
 
   .btn-delete:hover {
     color: var(--danger);
+    background: var(--danger-subtle);
+  }
+
+  .btn-delete.confirming {
+    color: var(--danger);
+    background: var(--danger);
+    color: #fff;
   }
 
   .error {
     color: var(--danger);
-    padding: 0.5rem;
-    background: rgba(248, 81, 73, 0.1);
+    padding: 0.5rem 0.7rem;
+    background: var(--danger-subtle);
     border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
   }
 
-  .empty {
+  .empty-state {
     text-align: center;
-    padding: 1rem;
+    padding: 2rem 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  /* Skeletons */
+  .skeleton-header {
+    height: 20px;
+    width: 80px;
+    margin: 0.5rem 0.25rem;
+  }
+
+  .skeleton-item {
+    height: 48px;
+    width: 100%;
   }
 </style>

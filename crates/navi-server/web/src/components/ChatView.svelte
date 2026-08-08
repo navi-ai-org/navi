@@ -8,7 +8,6 @@
     wsStatus,
     error,
     makeMessage,
-    clearChat,
   } from "../lib/stores";
   import { sendTurn, cancelTurn, approveTool, answerQuestion } from "../lib/api";
   import { EventStream } from "../lib/ws";
@@ -19,13 +18,10 @@
 
   let inputText = $state("");
   let scrollContainer: HTMLDivElement | null = $state(null);
+  let textareaEl: HTMLTextAreaElement | null = $state(null);
   let eventStream: EventStream | null = null;
 
   // ── Event handling ──────────────────────────────────────────────────────
-  //
-  // RuntimeEventKind is an externally-tagged Rust enum:
-  //   { "AssistantDelta": { "text": "..." } }
-  // The variant name is the single key of the `kind` object.
 
   function handleEvent(event: RuntimeEvent) {
     const kind = event.kind;
@@ -38,11 +34,6 @@
       case "AssistantDelta": {
         const text = (payload?.text as string) ?? "";
         appendToLastAssistant(text);
-        break;
-      }
-      case "AssistantThinkingDelta": {
-        // Could be shown in a collapsible "thinking" section.
-        // For now, ignored — not critical for MVP.
         break;
       }
       case "ToolStarted": {
@@ -120,15 +111,11 @@
     messages.update((msgs) => {
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.streaming) {
-        if (finalText) {
-          last.text = finalText;
-        }
+        if (finalText) last.text = finalText;
         last.streaming = false;
         return [...msgs];
       }
-      if (finalText) {
-        return [...msgs, makeMessage("assistant", finalText)];
-      }
+      if (finalText) return [...msgs, makeMessage("assistant", finalText)];
       return msgs;
     });
   }
@@ -139,11 +126,8 @@
       if (last && last.role === "assistant") {
         const calls = last.toolCalls ?? [];
         const existing = calls.find((c) => c.name === name);
-        if (existing) {
-          existing.status = status;
-        } else {
-          calls.push({ name, status });
-        }
+        if (existing) existing.status = status;
+        else calls.push({ name, status });
         last.toolCalls = [...calls];
         return [...msgs];
       }
@@ -154,9 +138,25 @@
   function scrollToBottom() {
     queueMicrotask(() => {
       if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: "smooth" });
       }
     });
+  }
+
+  function autoResize() {
+    if (textareaEl) {
+      textareaEl.style.height = "auto";
+      textareaEl.style.height = Math.min(textareaEl.scrollHeight, 140) + "px";
+    }
+  }
+
+  function formatTime(ts: number): string {
+    if (!ts) return "";
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return "";
+    }
   }
 
   // ── WebSocket lifecycle ─────────────────────────────────────────────────
@@ -192,6 +192,7 @@
 
     messages.update((m) => [...m, makeMessage("user", text)]);
     inputText = "";
+    if (textareaEl) textareaEl.style.height = "auto";
     isStreaming.set(true);
     error.set(null);
 
@@ -239,7 +240,6 @@
     }
   }
 
-  // Auto-scroll when messages change.
   $effect(() => {
     $messages;
     scrollToBottom();
@@ -250,40 +250,101 @@
   <!-- Messages -->
   <div class="messages" bind:this={scrollContainer}>
     {#each $messages as msg (msg.id)}
-      <div class="message" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"}>
-        <div class="bubble">
+      <div class="message-row fade-in-up" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"}>
+        {#if msg.role === "assistant"}
+          <div class="avatar assistant-avatar">
+            <svg width="16" height="16" viewBox="0 0 32 32">
+              <rect width="32" height="32" rx="7" fill="var(--accent)" />
+              <text x="16" y="22" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#fff" text-anchor="middle">N</text>
+            </svg>
+          </div>
+        {/if}
+
+        <div class="message-content">
           {#if msg.role === "assistant" && msg.toolName}
-            <!-- Tool result message -->
+            <!-- Tool result -->
             <div class="tool-result">
               <span class="tool-icon" class:ok={msg.toolResult?.ok} class:fail={!msg.toolResult?.ok}>
-                {msg.toolResult?.ok ? "✓" : "✗"}
+                {#if msg.toolResult?.ok}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                {:else}
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                {/if}
               </span>
               <span class="tool-label text-mono text-sm">{msg.toolName}</span>
             </div>
           {:else if msg.role === "assistant"}
-            <!-- Assistant message with markdown -->
-            <Markdown content={msg.text} />
-            {#if msg.streaming}<span class="cursor">▋</span>{/if}
+            <div class="bubble assistant-bubble">
+              {#if msg.text}
+                <Markdown content={msg.text} />
+              {/if}
+              {#if msg.streaming}
+                <span class="typing-cursor"></span>
+              {/if}
+            </div>
+          {:else if msg.role === "user"}
+            <div class="bubble user-bubble">
+              <p>{msg.text}</p>
+            </div>
           {:else}
-            <!-- User / system message -->
-            <p>{msg.text}</p>
+            <div class="bubble system-bubble">
+              <p>{msg.text}</p>
+            </div>
           {/if}
+
           {#if msg.toolCalls && msg.toolCalls.length > 0}
             <div class="tool-calls">
               {#each msg.toolCalls as tc}
-                <span class="tool-call" class:done={tc.status === "completed"} class:failed={tc.status === "failed"}>
-                  {tc.name}: {tc.status}
+                <span class="tool-call" class:done={tc.status === "completed"} class:failed={tc.status === "failed"} class:active={tc.status === "started" || tc.status === "requested"}>
+                  {#if tc.status === "started" || tc.status === "requested"}
+                    <span class="spinner spinner-tiny"></span>
+                  {/if}
+                  {tc.name}
                 </span>
               {/each}
             </div>
           {/if}
+
+          <span class="msg-time text-xs text-faint">{formatTime(msg.timestamp)}</span>
         </div>
+
+        {#if msg.role === "user"}
+          <div class="avatar user-avatar">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+          </div>
+        {/if}
       </div>
     {/each}
 
-    {#if $messages.length === 0}
+    <!-- Typing indicator when streaming but no message yet -->
+    {#if $isStreaming && $messages[$messages.length - 1]?.role !== "assistant"}
+      <div class="message-row assistant fade-in">
+        <div class="avatar assistant-avatar">
+          <svg width="16" height="16" viewBox="0 0 32 32">
+            <rect width="32" height="32" rx="7" fill="var(--accent)" />
+            <text x="16" y="22" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#fff" text-anchor="middle">N</text>
+          </svg>
+        </div>
+        <div class="message-content">
+          <div class="bubble assistant-bubble typing-bubble">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if $messages.length === 0 && !$isStreaming}
       <div class="empty-chat">
-        <p class="text-muted">Send a message to start the conversation.</p>
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <p class="text-muted">Start a conversation</p>
+        <p class="text-faint text-sm">Type a message below</p>
       </div>
     {/if}
   </div>
@@ -298,25 +359,29 @@
   {/if}
 
   {#if $pendingQuestion}
-    <QuestionCard
-      question={$pendingQuestion}
-      onAnswer={handleAnswer}
-    />
+    <QuestionCard question={$pendingQuestion} onAnswer={handleAnswer} />
   {/if}
 
   <!-- Error banner -->
   {#if $error}
-    <div class="error-banner">
+    <div class="error-banner fade-in-up">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
       <span>{$error}</span>
-      <button onclick={() => error.set(null)}>×</button>
+      <button onclick={() => error.set(null)} aria-label="Dismiss error">×</button>
     </div>
   {/if}
 
   <!-- Input -->
   <form class="input-bar" onsubmit={handleSend}>
     <textarea
+      bind:this={textareaEl}
       bind:value={inputText}
-      placeholder="Type a message..."
+      oninput={autoResize}
+      placeholder="Message NAVI..."
       rows="1"
       onkeydown={(e) => {
         if (e.key === "Enter" && !e.shiftKey) {
@@ -326,12 +391,17 @@
       }}
     ></textarea>
     {#if $isStreaming}
-      <button type="button" class="btn-danger" onclick={handleCancel}>
-        Cancel
+      <button type="button" class="btn-danger send-btn" onclick={handleCancel} aria-label="Cancel">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+        </svg>
       </button>
     {:else}
-      <button type="submit" class="btn-primary" disabled={!inputText.trim()}>
-        Send
+      <button type="submit" class="btn-primary send-btn" disabled={!inputText.trim()} aria-label="Send">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
       </button>
     {/if}
   </form>
@@ -351,84 +421,167 @@
     padding: 1rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.85rem;
   }
 
-  .message {
+  .message-row {
     display: flex;
+    gap: 0.6rem;
     max-width: 85%;
+    align-items: flex-start;
   }
 
-  .message.user {
+  .message-row.user {
     align-self: flex-end;
+    flex-direction: row-reverse;
   }
 
-  .message.assistant {
+  .message-row.assistant {
     align-self: flex-start;
   }
 
-  .message.system {
+  .message-row.system {
     align-self: center;
     max-width: 90%;
   }
 
+  .avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .assistant-avatar {
+    background: var(--bg-tertiary);
+  }
+
+  .user-avatar {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+  }
+
+  .message-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .message-row.user .message-content {
+    align-items: flex-end;
+  }
+
   .bubble {
-    padding: 0.6rem 0.9rem;
+    padding: 0.65rem 0.9rem;
     border-radius: var(--radius);
     word-wrap: break-word;
     overflow-wrap: break-word;
     word-break: break-word;
   }
 
-  .message.user .bubble {
+  .user-bubble {
     background: var(--accent);
     color: #fff;
-    border-bottom-right-radius: 2px;
+    border-bottom-right-radius: var(--radius-xs);
   }
 
-  .message.assistant .bubble {
+  .user-bubble p {
+    white-space: pre-wrap;
+  }
+
+  .assistant-bubble {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-bottom-left-radius: 2px;
+    border-bottom-left-radius: var(--radius-xs);
   }
 
-  .message.system .bubble {
-    background: rgba(248, 81, 73, 0.1);
+  .system-bubble {
+    background: var(--danger-subtle);
     border: 1px solid var(--danger);
     color: var(--danger);
     font-size: 0.85rem;
   }
 
-  .bubble p {
-    white-space: pre-wrap;
+  .msg-time {
+    padding: 0 0.2rem;
   }
 
-  .cursor {
+  /* Typing indicator */
+  .typing-bubble {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 0.7rem 0.9rem;
+  }
+
+  .typing-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: typingBounce 1.4s infinite ease-in-out;
+  }
+
+  .typing-dot:nth-child(1) {
+    animation-delay: -0.32s;
+  }
+  .typing-dot:nth-child(2) {
+    animation-delay: -0.16s;
+  }
+
+  @keyframes typingBounce {
+    0%, 80%, 100% {
+      transform: scale(0.6);
+      opacity: 0.4;
+    }
+    40% {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  .typing-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: text-bottom;
     animation: blink 1s infinite;
   }
 
-  @keyframes blink {
-    0%, 50% { opacity: 1; }
-    51%, 100% { opacity: 0; }
-  }
-
+  /* Tool results */
   .tool-result {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    padding: 0.4rem 0.7rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid;
+    border-left-color: var(--text-muted);
   }
 
-  .tool-icon {
-    font-size: 0.9rem;
-    font-weight: bold;
-  }
-
-  .tool-icon.ok {
+  .tool-result .tool-icon.ok {
     color: var(--success);
   }
 
-  .tool-icon.fail {
+  .tool-result .tool-icon.fail {
     color: var(--danger);
+  }
+
+  .tool-result:has(.tool-icon.ok) {
+    border-left-color: var(--success);
+  }
+
+  .tool-result:has(.tool-icon.fail) {
+    border-left-color: var(--danger);
   }
 
   .tool-label {
@@ -436,18 +589,21 @@
   }
 
   .tool-calls {
-    margin-top: 0.5rem;
     display: flex;
     flex-wrap: wrap;
     gap: 0.3rem;
+    margin-top: 0.3rem;
   }
 
   .tool-call {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
     font-family: var(--font-mono);
-    font-size: 0.75rem;
-    padding: 0.15rem 0.4rem;
+    font-size: 0.72rem;
+    padding: 0.15rem 0.5rem;
     background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
+    border-radius: 12px;
     color: var(--text-muted);
   }
 
@@ -459,31 +615,48 @@
     color: var(--danger);
   }
 
+  .tool-call.active {
+    color: var(--accent);
+  }
+
+  .spinner-tiny {
+    width: 10px;
+    height: 10px;
+    border-width: 1.5px;
+  }
+
   .empty-chat {
     flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
+    gap: 0.3rem;
   }
 
   .error-banner {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.5rem 0.75rem;
-    background: rgba(248, 81, 73, 0.15);
+    gap: 0.5rem;
+    padding: 0.6rem 0.8rem;
+    background: var(--danger-subtle);
     border-top: 1px solid var(--danger);
     color: var(--danger);
     font-size: 0.85rem;
+  }
+
+  .error-banner span {
+    flex: 1;
   }
 
   .error-banner button {
     background: transparent;
     border: none;
     color: var(--danger);
-    font-size: 1.2rem;
+    font-size: 1.3rem;
     padding: 0 0.3rem;
+    line-height: 1;
   }
 
   .input-bar {
@@ -492,16 +665,23 @@
     padding: 0.75rem;
     border-top: 1px solid var(--border);
     background: var(--bg-secondary);
+    align-items: flex-end;
   }
 
   .input-bar textarea {
     flex: 1;
-    max-height: 120px;
-    min-height: 40px;
+    max-height: 140px;
+    min-height: 42px;
+    line-height: 1.4;
   }
 
-  .input-bar button {
-    padding: 0.5rem 1.2rem;
-    align-self: flex-end;
+  .send-btn {
+    padding: 0.6rem;
+    width: 42px;
+    height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
   }
 </style>
