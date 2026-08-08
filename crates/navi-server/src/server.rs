@@ -715,6 +715,13 @@ impl NaviServer {
         // Domain modules (memory, voice, plugins, auth, session_ops, skills_mcp, registry)
         let domain = routes::all_routes(state.clone(), secret);
 
+        // ── Static web assets (catch-all, no auth) ──────────────────────
+        // Mounted after all API routes so API endpoints always take precedence.
+        // Serves embedded frontend assets (rust-embed) or from --web-dir override.
+        // Non-API paths fall through to the SPA (index.html) for client-side routing.
+        let asset_source = crate::web::AssetSource::from_web_dir(self.config.web_dir.as_deref());
+        let web_assets = crate::web::web_filter(asset_source);
+
         let routes = health
             .or(models)
             .or(get_config)
@@ -745,6 +752,7 @@ impl NaviServer {
             .or(usage)
             .or(ws_events)
             .or(domain)
+            .or(web_assets)
             .recover(handle_rejection);
 
         let addr: std::net::IpAddr = self.config.bind.parse().unwrap_or([0, 0, 0, 0].into());

@@ -32,6 +32,14 @@ build-fast:
 build-release:
     cargo build --workspace --release
 
+# Build the Svelte web frontend for navi-server (embeds into the binary via rust-embed).
+build-web:
+    cd crates/navi-server/web && bun install && bun run build
+
+# Build the web frontend then build navi-server (self-contained binary with embedded UI).
+build-server: build-web
+    cargo build -p navi-server
+
 # Install the latest prebuilt release binary (curl installer — preferred for users).
 install-bin:
     curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh

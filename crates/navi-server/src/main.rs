@@ -10,7 +10,7 @@ struct Args {
     #[arg(long, default_value = "9800")]
     port: u16,
 
-    /// Address to bind to (0.0.0.0 for Tailscale access)
+    /// Address to bind to (0.0.0.0 for Tailscale/LAN access)
     #[arg(long, default_value = "0.0.0.0")]
     bind: String,
 
@@ -21,6 +21,11 @@ struct Args {
     /// Project directory for the NaviEngine
     #[arg(long, default_value = ".")]
     project: String,
+
+    /// Directory to serve web assets from (overrides embedded assets).
+    /// When omitted, assets compiled into the binary via rust-embed are used.
+    #[arg(long)]
+    web_dir: Option<String>,
 }
 
 #[tokio::main]
@@ -43,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
         port: args.port,
         shared_secret: secret,
         project_dir: args.project,
+        web_dir: args.web_dir,
     };
 
     let server = NaviServer::new(config).await?;

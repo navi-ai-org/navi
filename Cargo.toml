@@ -114,6 +114,7 @@ tree-sitter-python = "0.25.0"
 tree-sitter-ruby = "0.23.1"
 tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
+rust-embed = "8.11"
 tempfile = "3"
 wiremock = "0.6"
 # `windows` (not `windows-sys`) is required for UI Automation COM interfaces

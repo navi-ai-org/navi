@@ -20,6 +20,9 @@ pub struct NaviServerConfig {
     pub port: u16,
     pub shared_secret: String,
     pub project_dir: String,
+    /// Optional directory to serve web assets from (overrides embedded assets).
+    /// When `None`, assets embedded at compile time via `rust-embed` are used.
+    pub web_dir: Option<String>,
 }
 
 // ── Shared state ─────────────────────────────────────────────────────────

@@ -835,3 +835,164 @@ async fn invalid_json_body_returns_400() {
     .await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
+
+// ── Web assets + API integration ─────────────────────────────────────────
+//
+// These tests verify that the static web filter (catch-all) coexists with
+// the API routes: API endpoints take precedence, non-API paths fall through
+// to the SPA, and auth is not required for static assets.
+
+use crate::web::{AssetSource, web_filter};
+
+fn combined_filter(
+    state: SharedState,
+    web_source: AssetSource,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = Infallible> + Clone {
+    let secret: &'static str = Box::leak(SECRET.to_string().into_boxed_str());
+    let api = routes::all_routes(state, secret);
+    let web = web_filter(web_source);
+    api.or(web).recover(handle_rejection)
+}
+
+#[tokio::test]
+async fn e2e_api_takes_precedence_over_web_assets() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"<h1>Web</h1>").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    // /memory (API) with auth → 200
+    let res = authed(warp::test::request().method("GET").path("/memory"))
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // / (static) without auth → 200 (no auth needed for static)
+    let res = warp::test::request().path("/").reply(&filter).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(res.body()).contains("Web"));
+}
+
+#[tokio::test]
+async fn e2e_spa_fallback_does_not_capture_api_paths() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"<h1>SPA</h1>").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    // /plugins (API) with auth → 200 (API response, not SPA)
+    let res = authed(warp::test::request().method("GET").path("/plugins"))
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    // API response is JSON, not HTML
+    let body = String::from_utf8_lossy(res.body());
+    assert!(
+        !body.contains("<h1>SPA</h1>"),
+        "API should not return SPA HTML"
+    );
+
+    // /plugins (API) without auth → SPA fallback (200 with HTML).
+    // This is standard SPA behavior: the HTML page is always served;
+    // the JavaScript handles auth when making API calls.
+    let res = warp::test::request()
+        .method("GET")
+        .path("/plugins")
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(res.body()).contains("SPA"));
+}
+
+#[tokio::test]
+async fn e2e_static_assets_no_auth_required() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"<h1>No Auth</h1>").expect("write");
+    std::fs::create_dir_all(web_tmp.path().join("assets")).expect("mkdir");
+    std::fs::write(web_tmp.path().join("assets/app.js"), b"console.log(1)").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    // index.html without auth
+    let res = warp::test::request().path("/").reply(&filter).await;
+    assert_eq!(res.status(), StatusCode::OK);
+
+    // JS asset without auth
+    let res = warp::test::request()
+        .path("/assets/app.js")
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        res.headers().get("content-type").unwrap(),
+        "application/javascript; charset=utf-8"
+    );
+}
+
+#[tokio::test]
+async fn e2e_spa_fallback_for_unknown_routes() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"<div id=app></div>").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    // Deep unknown route → SPA fallback
+    let res = warp::test::request()
+        .path("/chat/session/abc/messages")
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(String::from_utf8_lossy(res.body()).contains("app"));
+}
+
+#[tokio::test]
+async fn e2e_404_when_no_web_assets_and_not_api() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    // No index.html in web dir
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    let res = warp::test::request()
+        .path("/nonexistent")
+        .reply(&filter)
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn e2e_web_assets_served_with_correct_cache_headers() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"<html>").expect("write");
+    std::fs::write(web_tmp.path().join("app.js"), b"1").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    // HTML → no-cache
+    let res = warp::test::request().path("/").reply(&filter).await;
+    assert_eq!(res.headers().get("cache-control").unwrap(), "no-cache");
+
+    // JS → immutable
+    let res = warp::test::request().path("/app.js").reply(&filter).await;
+    assert_eq!(
+        res.headers().get("cache-control").unwrap(),
+        "public, max-age=31536000, immutable"
+    );
+}
+
+#[tokio::test]
+async fn e2e_traversal_blocked_in_combined_filter() {
+    let (state, _tmp) = test_state();
+    let web_tmp = tempfile::tempdir().expect("web tempdir");
+    std::fs::write(web_tmp.path().join("index.html"), b"safe").expect("write");
+    let parent = web_tmp.path().parent().expect("parent");
+    std::fs::write(parent.join("secret_e2e.txt"), b"SECRET").expect("write");
+    let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
+
+    let res = warp::test::request()
+        .path("/../secret_e2e.txt")
+        .reply(&filter)
+        .await;
+    // Should fall back to index.html, not serve the secret
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(!String::from_utf8_lossy(res.body()).contains("SECRET"));
+}
