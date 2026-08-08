@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-04
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.5.0...v0.6.0
+
+### Changed
+
+- **`bash` tool renamed to `run`** — the tool is now called `run` instead of
+  `bash`. The tool name, struct (`RunTool`), file (`run.rs`), and all 44 files
+  referencing the tool name have been updated across `navi-core`, `navi-tui`,
+  `navi-openai`, `navi-cli`, `navi-sdk`, `navi-lite`, `navi-plugin-broker`, and
+  `navi-plugin-manifest`. **Breaking:** any code or config referencing the tool
+  name `"bash"` must be updated to `"run"`.
+- **Dynamic shell detection** — the `run` tool now dynamically detects the
+  user's shell instead of hardcoding PowerShell on Windows / bash on Unix.
+  Resolution order: `[shell].program` in config.toml → `NAVI_SHELL` env →
+  `SHELL` env → `NAVI_BASH_SHELL` env (legacy) → platform default (bash on
+  Unix, pwsh→powershell on Windows).
+- **Dynamic tool descriptions per shell** — the tool description is generated
+  dynamically per shell so the model knows which syntax to write (`$VAR` vs
+  `$env:VAR` vs `%VAR%`, etc.), preventing the bug where the model wrote bash
+  syntax for PowerShell.
+- **`ShellKind` expanded** from 3 to 8 variants: Bash, Zsh, Pwsh, PowerShell5,
+  Nu, Cmd, Fish, Unknown — each with correct argv prefixes and syntax hints.
+
+### Added
+
+- **`[shell]` config section** — new `[shell]` section in `config.toml` with
+  `program` and `args` fields to pin a specific shell (e.g.
+  `program = "nu"`, `args = ["-c"]`).
+- **`ShellConfig` struct** in `config/types.rs` with serde defaults.
+- **`RunTool::with_shell_config()`** constructor for config injection.
+- **Comprehensive Layer 1/2/3 tests** — ShellKind::from_program_name (all
+  names + .exe), argv_prefix (all variants), shell_description (all 8
+  variants), detect_shell_kind_with, shell_argv_prefix with config override,
+  edge cases (empty/whitespace/unicode/long paths), and integration tests for
+  simple commands, shell identity, PowerShell env var syntax, bash syntax,
+  empty command error, and stderr handling.
+
+### Fixed
+
+- **Background task output race** — added 50ms drain delay after process exit
+  so the output reader finishes consuming the pipe before snapshotting.
+- **Cross-platform cancel test** — use `Start-Sleep -Seconds 5` on Windows
+  instead of `sleep 5` (which doesn't exist in PowerShell).
+- **SHELL env var on Windows** — now goes through `resolve_shell_path` so
+  `SHELL=bash` correctly finds Git Bash via well-known installation paths.
+- **Unknown shell description** — now conservative, advises simple commands
+  instead of defaulting to POSIX syntax that may not work.
+- **Sudo wrapper limitation documented** — `export -f` works with bash/zsh but
+  not fish; sudo is Unix-only.
+
+## [0.5.0] - 2026-08-03
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.9...v0.5.0
+
+### Added
+
+- **Glob pattern support** in the `search` tool — file-name patterns (e.g.
+  `**/*.rs`, `src/**/{mod,lib}.rs`) are now matched in addition to full-path
+  globs, with a new integration test harness covering edge cases.
+
+### Fixed
+
+- **Bash tool: argument quoting on Windows PowerShell** so commands with
+  embedded quotes no longer break.
+- **Config persistence:** `defaults.rs` no longer overwrites user-provided
+  `security` / `approvals` sections on save.
+- **`code_exec` tool:** sandbox snapshot roots are now canonicalized before
+  comparison, preventing false-positive rollback on Windows.
+- **`computer_use` tool:** password-field detection now skips value reads on
+  macOS (matching the Windows behavior).
+
+### Changed
+
+- `navi-os-macos` updated for `core-graphics` 0.24 API changes.
+- Rust 2024 edition: all `unsafe fn` bodies wrapped in `unsafe { }` blocks.
+- `navi-sdk` now depends on `navi-computer-use` behind the `computer-use`
+  feature so the macOS doctor check can call `is_accessibility_trusted_macos()`.
+
 ## [0.4.9] - 2026-08-03
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.4.8...v0.4.9
