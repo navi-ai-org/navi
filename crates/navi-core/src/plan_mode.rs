@@ -414,7 +414,7 @@ mod tests {
             ToolKind::Custom
         ));
         assert!(!is_tool_allowed_in_plan_mode_named(
-            "bash",
+            "run",
             ToolKind::Command
         ));
         assert!(!is_tool_allowed_in_plan_mode_named(

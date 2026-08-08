@@ -77,7 +77,7 @@ impl Tool for CodeExecTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "code_exec",
-            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via bash), trace-note. The `verifier` field on verify-run only supports `command` (the dedicated verifier tool was removed).",
+            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via run), trace-note. The `verifier` field on verify-run only supports `command` (the dedicated verifier tool was removed).",
             ToolKind::Write,
             json!({
                 "type": "object",
@@ -257,14 +257,14 @@ fn nested_invocation(index: usize, op: &CodeExecOp) -> Result<ToolInvocation> {
             verifier: _,
             timeout_ms,
         } => {
-            // `verifier` tool was removed; run verification commands via bash.
+            // `verifier` tool was removed; run verification commands via the run tool.
             let mut input = json!({ "command": command });
             if let Some(value) = timeout_ms
                 && let Value::Object(ref mut map) = input
             {
                 map.insert("timeout_ms".to_string(), json!(value));
             }
-            ("bash".to_string(), input)
+            ("run".to_string(), input)
         }
         CodeExecOp::TraceNote { .. } => bail!("trace-note is handled internally"),
     };
@@ -685,7 +685,7 @@ mod tests {
             timeout_ms: Some(1000),
         };
         let inv = nested_invocation(5, &op).unwrap();
-        assert_eq!(inv.tool_name, "bash");
+        assert_eq!(inv.tool_name, "run");
         assert_eq!(inv.input["command"], "echo test");
         assert_eq!(inv.input["timeout_ms"], 1000);
     }
@@ -698,7 +698,7 @@ mod tests {
             timeout_ms: None,
         };
         let inv = nested_invocation(1, &op).unwrap();
-        assert_eq!(inv.tool_name, "bash");
+        assert_eq!(inv.tool_name, "run");
         assert!(inv.input.get("timeout_ms").is_none());
     }
 
@@ -924,7 +924,7 @@ mod tests {
                 ]
             }),
         );
-        // This may fail at the bash level on some platforms, but it should
+        // This may fail at the shell level on some platforms, but it should
         // NOT fail at the verifier validation level.
         let result = tool.invoke(inv).await;
         assert!(

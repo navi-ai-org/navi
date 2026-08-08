@@ -203,7 +203,7 @@ async fn executor_emits_denied_capability_for_blocked_tool() {
         .invoke_with_event_tx(
             ToolInvocation {
                 id: "blocked-cap".to_string(),
-                tool_name: "bash".to_string(),
+                tool_name: "run".to_string(),
                 input: json!({"command": "sudo true"}),
             },
             Some(tx),
@@ -441,7 +441,7 @@ async fn code_exec_runs_typed_nested_plan_with_verifier() {
                 "ops": [
                     { "op": "repo-read", "path": "src/lib.rs" },
                     { "op": "ast-search", "query": "code_exec_marker", "kind": "function" },
-                    { "op": "verify-run", "command": "test -f src/lib.rs", "verifier": "command" },
+                    { "op": "verify-run", "command": "echo verify_ok", "verifier": "command" },
                     { "op": "trace-note", "note": "verified file exists" }
                 ]
             }),
@@ -587,7 +587,7 @@ async fn bash_runs_with_project_root_as_cwd() {
     let result = executor
         .invoke(ToolInvocation {
             id: "pwd".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "command": command }),
         })
         .await;
@@ -614,7 +614,7 @@ async fn bash_timeout_returns_structured_error() {
     let result = executor
         .invoke(ToolInvocation {
             id: "bash-timeout".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "command": "sleep 1", "timeout_ms": 1 }),
         })
         .await;
@@ -647,7 +647,7 @@ async fn bash_timeout_kills_child_process() {
     let result = executor
         .invoke(ToolInvocation {
             id: "bash-timeout-kill".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
                 "command": command,
                 "timeout_ms": 200
@@ -697,7 +697,7 @@ async fn bash_background_timeout_marks_result_not_ok() {
     let started = executor
         .invoke(ToolInvocation {
             id: "bash-bg-timeout-start".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
                 "command": "sleep 5",
                 "background": true,
@@ -717,7 +717,7 @@ async fn bash_background_timeout_marks_result_not_ok() {
     let polled = executor
         .invoke(ToolInvocation {
             id: "bash-bg-timeout-poll".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "task_id": task_id, "wait_ms": 1000 }),
         })
         .await;
@@ -748,7 +748,7 @@ async fn bash_background_task_can_be_polled() {
     let started = executor
         .invoke(ToolInvocation {
             id: "bash-bg-start".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
                 "command": command,
                 "background": true,
@@ -765,7 +765,7 @@ async fn bash_background_task_can_be_polled() {
     let polled = executor
         .invoke(ToolInvocation {
             id: "bash-bg-poll".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "task_id": task_id, "wait_ms": 1000 }),
         })
         .await;
@@ -794,7 +794,7 @@ async fn bash_background_supports_multiple_tasks_and_list() {
     let first = executor
         .invoke(ToolInvocation {
             id: "bash-bg-one".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
                 "command": cmd_one,
                 "background": true,
@@ -806,7 +806,7 @@ async fn bash_background_supports_multiple_tasks_and_list() {
     let second = executor
         .invoke(ToolInvocation {
             id: "bash-bg-two".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
                 "command": cmd_two,
                 "background": true,
@@ -823,7 +823,7 @@ async fn bash_background_supports_multiple_tasks_and_list() {
     let listed = executor
         .invoke(ToolInvocation {
             id: "bash-bg-list".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "action": "list" }),
         })
         .await;
@@ -847,15 +847,21 @@ async fn bash_background_task_can_be_cancelled() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
 
+    // Cross-platform: sleep long enough that cancel arrives before exit.
+    let command = if cfg!(windows) {
+        "Start-Sleep -Seconds 5"
+    } else {
+        "sleep 5"
+    };
     let started = executor
         .invoke(ToolInvocation {
             id: "bash-bg-cancel-start".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({
-                "command": "sleep 5",
+                "command": command,
                 "background": true,
                 "wait_ms": 1,
-                "timeout_ms": 1000
+                "timeout_ms": 10000
             }),
         })
         .await;
@@ -864,7 +870,7 @@ async fn bash_background_task_can_be_cancelled() {
     let cancelled = executor
         .invoke(ToolInvocation {
             id: "bash-bg-cancel".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "task_id": task_id, "action": "cancel" }),
         })
         .await;
@@ -1909,7 +1915,7 @@ async fn regression_bash_foreground_captures_stderr() {
     let result = executor
         .invoke(ToolInvocation {
             id: "test".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({"command": command, "timeout_ms": 5000}),
         })
         .await;
@@ -1931,7 +1937,7 @@ async fn regression_bash_timeout_capped_at_max() {
     let result = executor
         .invoke(ToolInvocation {
             id: "test".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({"command": "echo ok", "timeout_ms": 999_999}),
         })
         .await;
@@ -2023,13 +2029,13 @@ async fn write_file_allows_empty_content() {
 fn model_facing_bash_schema_does_not_require_command() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
-    let bash = executor
+    let run = executor
         .definitions()
         .into_iter()
-        .find(|definition| definition.name == "bash")
-        .expect("bash");
+        .find(|definition| definition.name == "run")
+        .expect("run");
 
-    let required = bash
+    let required = run
         .input_schema
         .get("required")
         .and_then(|v| v.as_array())
@@ -2039,8 +2045,8 @@ fn model_facing_bash_schema_does_not_require_command() {
         !required.iter().any(|v| v.as_str() == Some("command")),
         "bash model schema must allow poll/list without command; required={required:?}"
     );
-    assert!(bash.input_schema["properties"]["task_id"].is_object());
-    assert!(bash.input_schema["properties"]["action"].is_object());
+    assert!(run.input_schema["properties"]["task_id"].is_object());
+    assert!(run.input_schema["properties"]["action"].is_object());
 }
 
 #[test]
@@ -2095,7 +2101,7 @@ fn visible_definitions_hide_aliases_and_keep_core_edit_loop() {
         "search",
         "edit",
         "write_file",
-        "bash",
+        "run",
         "plan",
         "question",
         "tool_search",
@@ -2282,7 +2288,7 @@ fn is_session_core_tool_recognizes_infrastructure_tools() {
     assert!(crate::turn::is_session_core_tool("append_note"));
     assert!(crate::turn::is_session_core_tool("load_skill"));
     // Non-core tools are not exempt
-    assert!(!crate::turn::is_session_core_tool("bash"));
+    assert!(!crate::turn::is_session_core_tool("run"));
     assert!(!crate::turn::is_session_core_tool("edit"));
     assert!(!crate::turn::is_session_core_tool("write_file"));
     assert!(!crate::turn::is_session_core_tool("subagent"));
@@ -2484,7 +2490,7 @@ async fn tool_search_finds_all_direct_tools() {
         "write_file not found"
     );
     assert!(names.contains(&"edit".to_string()), "edit not found");
-    assert!(names.contains(&"bash".to_string()), "bash not found");
+    assert!(names.contains(&"run".to_string()), "run not found");
     assert!(names.contains(&"search".to_string()), "search not found");
 }
 
@@ -2546,7 +2552,7 @@ async fn restricted_mode_denies_bash_command_outside_project() {
     let result = executor
         .invoke(ToolInvocation {
             id: "restricted-bash".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({"command": "ls", "cwd": outside.display().to_string()}),
         })
         .await;
@@ -2669,7 +2675,7 @@ async fn accept_edits_mode_still_requires_approval_for_bash() {
     let result = executor
         .invoke(ToolInvocation {
             id: "accept-edits-bash".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({"command": "echo hello"}),
         })
         .await;
@@ -2821,7 +2827,7 @@ fn write_and_command_tools_use_exclusive_parallelism() {
         crate::tool::ToolParallelism::Exclusive
     );
     assert_eq!(
-        executor.parallelism_for("bash"),
+        executor.parallelism_for("run"),
         crate::tool::ToolParallelism::Exclusive
     );
 }
@@ -2900,10 +2906,10 @@ async fn unknown_tool_returns_available_tools_list() {
     let available = result.output["available_tools"].as_array().unwrap();
     assert!(!available.is_empty(), "should list available tools");
     // available_tools is capped at 20 and sorted alphabetically, so early
-    // tools (e.g. "bash") are present while later ones like "read_file" may
-    // fall beyond the cap. Assert at least one well-known builtin is listed.
+    // tools are present while later ones like "run" may fall beyond the cap.
+    // Assert at least one well-known builtin is listed.
     assert!(
-        available.contains(&json!("bash")),
+        available.contains(&json!("edit")),
         "should list a known builtin tool, got: {available:?}"
     );
 }
@@ -2941,9 +2947,9 @@ fn retain_tools_removes_matching_entries() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let mut executor = executor(tempdir.path());
     let before = executor.tool_names();
-    executor.retain_tools(|name| name != "bash");
+    executor.retain_tools(|name| name != "run");
     let after = executor.tool_names();
-    assert!(!after.contains(&"bash".to_string()));
+    assert!(!after.contains(&"run".to_string()));
     assert_eq!(after.len(), before.len() - 1);
 }
 
@@ -2985,12 +2991,12 @@ fn fork_with_policy_and_tools_preserves_security_and_strips_nested() {
         SecurityConfig::default(),
     )
     .expect("policy");
-    let allowed: Vec<String> = vec!["read_file".into(), "search".into(), "bash".into()];
+    let allowed: Vec<String> = vec!["read_file".into(), "search".into(), "run".into()];
     let forked = executor.fork_with_policy_and_tools(policy, &allowed);
     let names = forked.tool_names();
     assert!(names.contains(&"read_file".to_string()));
     assert!(names.contains(&"search".to_string()));
-    assert!(names.contains(&"bash".to_string()));
+    assert!(names.contains(&"run".to_string()));
     // Forked executor must not have subagent or workflow
     assert!(
         !names.contains(&"subagent".to_string()),

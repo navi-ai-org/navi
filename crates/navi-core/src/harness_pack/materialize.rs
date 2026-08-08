@@ -59,11 +59,11 @@ pub fn materialize_from_skill(
     };
 
     let mut verifiers = Vec::new();
-    if inventory.all_tools.iter().any(|t| t == "bash") {
+    if inventory.all_tools.iter().any(|t| t == "run") {
         verifiers.push(VerifierSpec {
             id: "default_verify".into(),
             kind: VerifierKind::Bash,
-            recipe: "echo 'run project tests via bash when appropriate'".into(),
+            recipe: "echo 'run project tests via run when appropriate'".into(),
         });
     }
     if inventory.browser_available {
@@ -184,7 +184,7 @@ fn default_capability_inventory() -> CapabilityInventory {
             "read_file",
             "edit",
             "write_file",
-            "bash",
+            "run",
             "plan",
             "question",
             "tool_search",
@@ -237,7 +237,7 @@ fn build_multi_skill_graph(
         } else if skill
             .allow_tools
             .iter()
-            .any(|t| t == "write_file" || t == "edit" || t == "bash")
+            .any(|t| t == "write_file" || t == "edit" || t == "run")
         {
             "write".into()
         } else {
@@ -288,7 +288,7 @@ fn build_single_skill_graph(skill: &SkillManifest, inventory: &CapabilityInvento
             "read_file".into(),
             "edit".into(),
             "write_file".into(),
-            "bash".into(),
+            "run".into(),
             "plan".into(),
             "tool_search".into(),
         ],
@@ -296,7 +296,7 @@ fn build_single_skill_graph(skill: &SkillManifest, inventory: &CapabilityInvento
     );
     let verify_tools = filter_tools_to_inventory(
         &[
-            "bash".into(),
+            "run".into(),
             "browser".into(),
             "read_file".into(),
             "search".into(),
@@ -373,7 +373,7 @@ fn default_core_tools(inventory: &CapabilityInventory) -> Vec<String> {
             "read_file".into(),
             "edit".into(),
             "write_file".into(),
-            "bash".into(),
+            "run".into(),
             "plan".into(),
             "question".into(),
             "tool_search".into(),
@@ -424,7 +424,7 @@ mod tests {
                 "read_file",
                 "edit",
                 "write_file",
-                "bash",
+                "run",
                 "plan",
                 "tool_search",
             ],
@@ -468,7 +468,7 @@ mod tests {
     fn materialize_multi_skill_graph_from_requires() {
         let dir = tempfile::tempdir().unwrap();
         let inv = inventory_from_tool_names(
-            ["search", "read_file", "write_file", "edit", "bash"],
+            ["search", "read_file", "write_file", "edit", "run"],
             ["browser"],
             true,
             true,

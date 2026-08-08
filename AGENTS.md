@@ -58,7 +58,7 @@ Providers: registry DB is [navi-ai-org/navi-registry](https://github.com/navi-ai
 
 **Exposure:** small **Direct** core in schema; power tools **Deferred** (`tool_search` then call by name); aliases may be **Hidden**.
 
-Core Direct (typical): `search`, `read_file`, `edit`, `write_file`, `bash`, `plan`, `question`, `tool_search`, `memory`, `set_session_title`. Prefer native tools over bash for read/edit/nav.
+Core Direct (typical): `search`, `read_file`, `edit`, `write_file`, `run`, `plan`, `question`, `tool_search`, `memory`, `set_session_title`. Prefer native tools over `run` for read/edit/nav.
 
 **Security defaults:** path jail to project; deny NAVI private storage and `.git` writes; writes/commands need approval by default; blocked destructive programs; file tools expose `path`/`file`, commands expose `program`/`command`. Modes: Restricted → AcceptEdits → Auto (guarded still) → Yolo. Session redaction on by default.
 
@@ -159,11 +159,11 @@ cargo test -p <crate> -- --test-threads=4
 
 The workspace compiles and tests on Windows (CI runs `windows-latest` for fmt/test/clippy). Notes:
 
-- **Bash tool shell:** on Windows the `bash` tool defaults to PowerShell (`pwsh.exe` if available, else `powershell.exe`) with `-NoProfile -Command`, so it works without WSL or Git Bash. Set `NAVI_BASH_SHELL=bash` (or a path to a bash executable) to opt into Git Bash / MSYS2. The justfile recipes still use Git Bash or MSYS2 — ensure `bash` is on `PATH` for those.
+- **Run tool shell:** the `run` tool (renamed from `bash`) dynamically detects and uses the user's preferred shell. Resolution order: `[shell].program` in config.toml → `NAVI_SHELL` env → `SHELL` env (Unix) → `NAVI_BASH_SHELL` env (legacy) → platform default (`bash` on Unix, `pwsh`→`powershell` on Windows). The tool description is generated dynamically to tell the model which shell syntax to use. Set `[shell]` in config.toml to pin a shell: `program = "nu"` with optional `args = ["-c"]`. Supported shells: bash, zsh, pwsh (PowerShell 7+), PowerShell 5.1, nu, cmd, fish. The justfile recipes still use Git Bash or MSYS2 — ensure `bash` is on `PATH` for those.
 - **Path separators:** tool outputs (search, fs_browser) normalize to forward slashes via `display_path`. Tests comparing paths should use `to_string_lossy().replace('\\', "/")` and strip the `\\?\` verbatim prefix from `canonicalize()` results.
 - **Sandbox snapshots:** `SandboxManager::create_snapshot` stores raw (non-canonicalized) paths so that `PathBuf` equality works cross-platform. Non-existent file paths are added as roots (not their parent dir) so rollback doesn't try to delete locked sibling files (e.g. SQLite DBs).
-- **Process termination:** background bash tasks are assigned to a Win32 Job Object (`win_job` module in `bash.rs`) so the entire process tree is killed on timeout. Unix uses `setsid` + process-group signals.
-- **Shell commands in tests:** when constructing bash command strings from `PathBuf`, use forward slashes (`replace('\\', "/")`) because the shell token parser treats `\` as an escape character.
+- **Process termination:** background `run` tasks are assigned to a Win32 Job Object (`win_job` module in `run.rs`) so the entire process tree is killed on timeout. Unix uses `setsid` + process-group signals.
+- **Shell commands in tests:** when constructing shell command strings from `PathBuf`, use forward slashes (`replace('\\', "/")`) because the shell token parser treats `\` as an escape character.
 - **PTY smoke** (`pty_smoke.rs`) is Linux-only; CI gates it with `if: runner.os == 'Linux'`.
 - **Coverage** (`cargo-llvm-cov`) stays Linux-only in CI.
 

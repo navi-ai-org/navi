@@ -205,7 +205,7 @@ impl Tool for SubagentTool {
         helpers::definition(
             "subagent",
             "Spawn an isolated subagent to autonomously perform a task. \
-             The subagent has full access to all tools (bash, read_file, write_file, grep, etc.) \
+             The subagent has full access to all tools (run, read_file, write_file, grep, etc.) \
              and makes its own decisions in a fresh conversation context. \
              Use `background: true` to run asynchronously — the tool returns immediately \
              with a task_id; poll with `{task_id}` or cancel with `{task_id, action: \"cancel\"}`.",
@@ -970,7 +970,7 @@ fn format_tool_activity(invocation: &ToolInvocation) -> String {
                 input_path(invocation).unwrap_or("filesystem")
             )
         }
-        "bash" => invocation
+        "run" => invocation
             .input
             .get("command")
             .or_else(|| invocation.input.get("program"))
@@ -1728,12 +1728,12 @@ mod tests {
         let event = AgentEvent::ToolCompleted(ToolResult {
             invocation_id: "call-1".to_string(),
             ok: false,
-            output: json!({ "tool": "bash", "error": "command failed" }),
+            output: json!({ "tool": "run", "error": "command failed" }),
         });
         let msg = subagent_activity_message(&event);
         assert_eq!(
             msg.as_deref(),
-            Some("bash failed"),
+            Some("run failed"),
             "failed ToolCompleted should produce 'X failed' message"
         );
     }
@@ -2156,7 +2156,7 @@ mod tests {
     fn input_path_returns_none_when_missing() {
         let inv = ToolInvocation {
             id: "1".into(),
-            tool_name: "bash".into(),
+            tool_name: "run".into(),
             input: json!({"command": "ls"}),
         };
         assert_eq!(input_path(&inv), None);
@@ -2253,7 +2253,7 @@ mod tests {
     fn format_tool_activity_bash_with_command() {
         let inv = ToolInvocation {
             id: "1".into(),
-            tool_name: "bash".into(),
+            tool_name: "run".into(),
             input: json!({"command": "ls -la"}),
         };
         assert_eq!(format_tool_activity(&inv), "Run ls -la");
@@ -2263,7 +2263,7 @@ mod tests {
     fn format_tool_activity_bash_with_program() {
         let inv = ToolInvocation {
             id: "1".into(),
-            tool_name: "bash".into(),
+            tool_name: "run".into(),
             input: json!({"program": "echo hello"}),
         };
         assert_eq!(format_tool_activity(&inv), "Run echo hello");
@@ -2273,7 +2273,7 @@ mod tests {
     fn format_tool_activity_bash_without_command() {
         let inv = ToolInvocation {
             id: "1".into(),
-            tool_name: "bash".into(),
+            tool_name: "run".into(),
             input: json!({}),
         };
         assert_eq!(format_tool_activity(&inv), "Run command");

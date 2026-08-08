@@ -29,11 +29,11 @@ use builtin::{
     InspectElementTool, OpenApplicationTool, SimulateInputTool,
 };
 use builtin::{
-    AppendNoteTool, BashTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool,
-    HistoryOpsTool, InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool,
-    NewContextWindowTool, PlanTool, QuestionTool, ReadTool, RepoIntelligenceAction,
-    RepoIntelligenceTool, RequestUserInputTool, RuntimeInfoTool, SandboxTool, SearchTool,
-    SleepTool, ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
+    AppendNoteTool, CodeExecTool, ContextRemainingTool, CurrentTimeTool, EditTool, HistoryOpsTool,
+    InitSessionTool, MarkFeatureDoneTool, MemoryTool, MultiEditTool, NewContextWindowTool,
+    PlanTool, QuestionTool, ReadTool, RepoIntelligenceAction, RepoIntelligenceTool,
+    RequestUserInputTool, RunTool, RuntimeInfoTool, SandboxTool, SearchTool, SleepTool,
+    ToolSearchTool, ViewImageTool, WriteTool, builtin_metadata, truncate_tool_result,
 };
 #[cfg(feature = "code-vfs")]
 use builtin::{CodeEditTool, CodeReadTool};
@@ -383,7 +383,7 @@ impl ToolExecutor {
         executor.register(SearchTool::grep(pr.clone()));
         executor.register(SearchTool::fs_browser(pr.clone()));
         executor.register(WriteTool::apply_patch(pr.clone()));
-        executor.register(BashTool::new(pr.clone()));
+        executor.register(RunTool::new(pr.clone()));
         executor.register(RepoIntelligenceTool::new(
             policy.clone(),
             RepoIntelligenceAction::AstSearch,
@@ -1077,7 +1077,7 @@ impl ToolExecutor {
         let r = self
             .invoke(ToolInvocation {
                 id: "bg-list".into(),
-                tool_name: "bash".into(),
+                tool_name: "run".into(),
                 input: json!({"action": "list"}),
             })
             .await;
@@ -1100,7 +1100,7 @@ impl ToolExecutor {
         let r = self
             .invoke(ToolInvocation {
                 id: "bg-poll".into(),
-                tool_name: "bash".into(),
+                tool_name: "run".into(),
                 input: json!({"task_id": task_id}),
             })
             .await;
@@ -1119,7 +1119,7 @@ impl ToolExecutor {
         let r = self
             .invoke(ToolInvocation {
                 id: "bg-cancel".into(),
-                tool_name: "bash".into(),
+                tool_name: "run".into(),
                 input: json!({"task_id": task_id, "action": "cancel"}),
             })
             .await;
@@ -1156,7 +1156,7 @@ impl ToolExecutor {
         self.register(WriteTool::new(pr.clone()));
         self.register(WriteTool::write_file(pr.clone()));
         self.register(WriteTool::apply_patch(pr.clone()));
-        self.register(BashTool::new(pr.clone()));
+        self.register(RunTool::new(pr.clone()));
         self.register(QuestionTool);
         self.register(PlanTool::new(self.policy.clone()));
         self.register(RuntimeInfoTool::new(
@@ -1398,7 +1398,7 @@ fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec
         "patch" | "str_replace" | "search_replace" | "searchreplace" | "multiedit"
         | "multi_edit" | "multi-edit" | "batched_edit" | "apply_patch" => &["edit", "write_file"],
         "request_user_input" | "ask_user" | "ask" => &["question"],
-        "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" | "process" => &["bash"],
+        "shell" | "run" | "terminal" | "exec" | "sh" | "cmd" | "process" => &["run"],
         "rg" | "ripgrep" | "search_code" => &["search", "code"],
         "symbols" | "symbol" | "symbols_overview" | "find_symbol" | "find_references"
         | "code_diagnostics" => &["code", "ast_search", "symbol_goto"],
@@ -1406,7 +1406,7 @@ fn suggest_tool_replacements(tool_name: &str, available_tools: &[String]) -> Vec
         | "insert_before_symbol"
         | "insert_after_symbol"
         | "rename_symbol" => &["code_edit"],
-        _ if looks_like_filesystem_path(tool_name) => &["read_file", "fs_browser", "grep", "bash"],
+        _ if looks_like_filesystem_path(tool_name) => &["read_file", "fs_browser", "grep", "run"],
         _ => &[],
     };
     candidates

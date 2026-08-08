@@ -30,7 +30,7 @@ fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
 /// can show `◆ Run cargo test · 3s` while the command is in flight.
 pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
     match invocation.tool_name.as_str() {
-        "bash" => {
+        "run" => {
             let action = invocation.input.get("action").and_then(|v| v.as_str());
             if action == Some("list") {
                 return "List background commands".into();
@@ -152,7 +152,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
         "write" if has_patch_input(invocation) => apply_patch_summary(invocation, result),
         // Direct write (path + content)
         "write" => write_file_summary(invocation, result),
-        "bash" => bash_summary(invocation, result),
+        "run" => bash_summary(invocation, result),
         "grep" => grep_summary(invocation, result),
         "fs_browser" => fs_browser_summary(invocation, result),
 
@@ -204,7 +204,7 @@ pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult
     if !result.ok {
         // Bash owns failure chrome in `bash_summary` (`Run … · exit N · bits`).
         // Never append a second `· exit N` / generic "Bash failed" here.
-        if invocation.tool_name == "bash" {
+        if invocation.tool_name == "run" {
             // nothing extra
         } else if let Some(error) = tool_error_message(&result.output) {
             // Prefer a short, high-signal failure reason over repeating "Bash failed".
@@ -331,7 +331,7 @@ fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Op
         } else {
             render_named_structured_output("Code output", result, &mut content);
         }
-    } else if invocation.tool_name == "bash" {
+    } else if invocation.tool_name == "run" {
         // Header may truncate long pipelines; always surface the full command
         // once in the body when it was compacted, then streams.
         if let Some(command) = invocation.input.get("command").and_then(|v| v.as_str()) {
@@ -558,7 +558,7 @@ fn render_tool_error_body(
         .and_then(|v| v.as_str())
         .is_some_and(|s| !s.trim().is_empty());
     let has_streams = has_stdout || has_stderr;
-    let is_shellish = invocation.tool_name == "bash"
+    let is_shellish = invocation.tool_name == "run"
         || has_streams
         || matches!(invocation.tool_name.as_str(), "process" | "verifier");
 
@@ -3219,7 +3219,7 @@ mod tests {
             "apply_patch" => {
                 json!({ "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" })
             }
-            "bash" | "process" => json!({ "command": "echo hi" }),
+            "run" | "process" => json!({ "command": "echo hi" }),
             "grep" => json!({ "pattern": "needle", "path": "src" }),
             "search" | "fs_browser" => json!({ "action": "list", "path": "src" }),
             "list_dir" => json!({ "directory": "src" }),
@@ -3317,7 +3317,7 @@ mod tests {
             "write",
             "write_file",
             "apply_patch",
-            "bash",
+            "run",
             "process",
             "question",
             "plan",
@@ -3421,7 +3421,7 @@ mod tests {
 
     #[test]
     fn tool_running_text_summarizes_bash_command() {
-        let inv = invocation("bash", json!({ "command": "npm test -- --watch" }));
+        let inv = invocation("run", json!({ "command": "npm test -- --watch" }));
         let label = tool_running_text(&inv);
         assert!(label.starts_with("Run "), "{label}");
         assert!(label.contains("npm test"), "{label}");
@@ -3464,7 +3464,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
 ";
         let content = tool_body_content(
             &invocation(
-                "bash",
+                "run",
                 json!({
                     "command": "cargo test -p copland --lib list -- --test-threads=4 && cargo test -p navi-tui --lib"
                 }),
@@ -3508,7 +3508,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn bash_compact_header_prefers_failure_signal_over_generic_error() {
         let text = tool_compact_text(
-            &invocation("bash", json!({ "command": "cargo test -p copland" })),
+            &invocation("run", json!({ "command": "cargo test -p copland" })),
             &err_result(json!({
                 "status": 101,
                 "stdout": "test foo::bar ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n",
@@ -3542,7 +3542,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn bash_failure_header_does_not_double_exit_chip() {
         let text = tool_compact_text(
-            &invocation("bash", json!({ "command": "false" })),
+            &invocation("run", json!({ "command": "false" })),
             &err_result(json!({
                 "status": 1,
                 "exit_code": 1,
@@ -3568,7 +3568,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     fn bash_failure_body_sanitizes_multiline_script_command() {
         let script = "cd /tmp && python3 <<'PY'\nfrom pathlib import Path\nPath('x').write_text('y' * 200)\nprint('done')\nPY";
         let content = tool_body_content(
-            &invocation("bash", json!({ "command": script })),
+            &invocation("run", json!({ "command": script })),
             &err_result(json!({
                 "status": 1,
                 "exit_code": 1,
@@ -3603,7 +3603,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     fn bash_failure_body_empty_streams_is_header_only() {
         let content = tool_body_content(
             &invocation(
-                "bash",
+                "run",
                 json!({
                     "command": "cd /home/enrell/projects/navi && python3 <<'PY'\nprint(1\nPY"
                 }),
@@ -3645,7 +3645,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         }
 
         let content = tool_body_content(
-            &invocation("bash", json!({ "command": "cargo test" })),
+            &invocation("run", json!({ "command": "cargo test" })),
             &err_result(json!({
                 "status": 101,
                 "stdout": noisy,
@@ -3700,7 +3700,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn bash_body_is_plain_streams_without_chrome() {
         let content = tool_full_content(
-            &invocation("bash", json!({ "command": "ls -la" })),
+            &invocation("run", json!({ "command": "ls -la" })),
             &ok_result(json!({
                 "exit_code": 0,
                 "stdout": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 1 12:00 .\n",
@@ -3727,7 +3727,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn bash_body_shows_exit_code_only_on_failure() {
         let content = tool_full_content(
-            &invocation("bash", json!({ "command": "false" })),
+            &invocation("run", json!({ "command": "false" })),
             &ok_result(json!({
                 "exit_code": 1,
                 "stdout": "",
@@ -3915,7 +3915,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
         // Compact header already includes `· error: …`. Body should stay empty
         // when there is no stream/detail/code/hint payload (avoids the double-error UI).
         let content = tool_body_content(
-            &invocation("bash", json!({ "command": "sleep 1" })),
+            &invocation("run", json!({ "command": "sleep 1" })),
             &err_result(json!({
                 "error": "command timed out: deadline has elapsed",
                 "stdout": "",

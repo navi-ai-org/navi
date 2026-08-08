@@ -669,7 +669,7 @@ mod tests {
             ModelMessage::tool_result("call-1", "read_file", "file content here".to_string()),
             ModelMessage::tool_result("call-2", "write_file", "written content".to_string()),
             ModelMessage::tool_result("call-3", "grep", "match results".to_string()),
-            ModelMessage::tool_result("call-5", "bash", "command output".to_string()),
+            ModelMessage::tool_result("call-5", "run", "command output".to_string()),
         ];
 
         let cleared = micro_compact(&mut messages, 60);
@@ -943,7 +943,7 @@ mod tests {
             ModelMessage::tool_result("c1", "write_file", "file written"),
             ModelMessage::tool_result("c2", "code_exec", "deps ok"),
             ModelMessage::tool_result("c3", "apply_patch", "patch applied"),
-            ModelMessage::tool_result("c4", "bash", "command ok"),
+            ModelMessage::tool_result("c4", "run", "command ok"),
         ];
 
         let cleared = micro_compact(&mut messages, 60);

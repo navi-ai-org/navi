@@ -642,7 +642,7 @@ fn tool_activity_label(tool_name: &str, phase: ToolActivityPhase) -> String {
         "edit" | "multiedit" => ("Preparing edit…", "Editing file"),
         "apply_patch" => ("Preparing patch…", "Applying patch"),
         "read" | "read_file" | "view_file" => ("Preparing read…", "Reading file"),
-        "bash" => ("Preparing command…", "Running command"),
+        "run" => ("Preparing command…", "Running command"),
         "grep" => ("Preparing grep…", "Searching"),
         "search" | "glob" | "ast_search" => ("Preparing search…", "Searching"),
         "list_dir" | "fs_browser" => ("Preparing browse…", "Browsing"),
@@ -1746,7 +1746,7 @@ mod tests {
     fn composer_activity_line_catalogs_edit_and_bash_streaming() {
         for (tool, needle) in [
             ("edit", "edit"),
-            ("bash", "command"),
+            ("run", "command"),
             ("grep", "grep"),
             ("read_file", "read"),
         ] {

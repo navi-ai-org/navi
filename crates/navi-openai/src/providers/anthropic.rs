@@ -769,7 +769,7 @@ mod tests {
         let messages = vec![
             ModelMessage::user("run"),
             ModelMessage::assistant("done"),
-            ModelMessage::tool_result("tu_1", "bash", "output"),
+            ModelMessage::tool_result("tu_1", "run", "output"),
         ];
         let cache_control = default_anthropic_cache_control();
         let (_, converted) = anthropic_messages_with_cache_control(&messages, Some(&cache_control));

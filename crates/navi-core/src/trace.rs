@@ -729,7 +729,7 @@ mod tests {
         let mut trace = TurnTrace::new("t1", "s1", "p", "m", "task");
         let inv = ToolInvocation {
             id: "c1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({"command": "false"}),
         };
         let result = ToolResult {
@@ -801,7 +801,7 @@ mod tests {
         trace.record_tool_call(
             &ToolInvocation {
                 id: "c1".to_string(),
-                tool_name: "bash".to_string(),
+                tool_name: "run".to_string(),
                 input: json!({"command": "echo sk-proj-1234567890abcdef"}),
             },
             &ToolResult {

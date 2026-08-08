@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn filter_host_tools_only_drops_builtins() {
         let registered = vec![
-            "bash".into(),
+            "run".into(),
             "edit".into(),
             "vault_read".into(),
             "read_file".into(),
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn filter_chat_only_keeps_nothing() {
-        let registered = vec!["bash".into(), "vault_read".into()];
+        let registered = vec!["run".into(), "vault_read".into()];
         let hosts = HashSet::new();
         let kept = filter_tool_names(&registered, NaviToolProfile::ChatOnly, &hosts, &[], &[]);
         assert!(kept.is_empty());
@@ -267,14 +267,14 @@ mod tests {
 
     #[test]
     fn filter_allow_deny_on_code_agent() {
-        let registered = vec!["bash".into(), "edit".into(), "read_file".into()];
+        let registered = vec!["run".into(), "edit".into(), "read_file".into()];
         let hosts = HashSet::new();
         let kept = filter_tool_names(
             &registered,
             NaviToolProfile::CodeAgent,
             &hosts,
-            &["read_file".into(), "bash".into()],
-            &["bash".into()],
+            &["read_file".into(), "run".into()],
+            &["run".into()],
         );
         assert_eq!(kept, vec!["read_file".to_string()]);
     }

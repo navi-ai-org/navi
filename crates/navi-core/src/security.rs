@@ -379,7 +379,7 @@ impl SecurityPolicy {
                         self.validate_path(Path::new(cwd), false)
                 {
                     SecurityDecision::Deny(format!("command cwd is denied: {reason}"))
-                } else if definition.name == "bash"
+                } else if definition.name == "run"
                     && (invocation.input.get("task_id").is_some()
                         || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
                 {
@@ -479,7 +479,7 @@ impl SecurityPolicy {
                 {
                     return SecurityDecision::Deny(format!("command cwd is denied: {reason}"));
                 }
-                if definition.name == "bash"
+                if definition.name == "run"
                     && (invocation.input.get("task_id").is_some()
                         || invocation.input.get("action").and_then(Value::as_str) == Some("list"))
                 {
@@ -1892,8 +1892,8 @@ mod tests {
             &tool_invocation("write_file", serde_json::json!({ "path": "src/lib.rs" })),
         );
         let command_decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "cargo test" })),
         );
 
         assert_eq!(write_decision, SecurityDecision::Allow);
@@ -1917,8 +1917,8 @@ mod tests {
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "cargo test" })),
         );
 
         assert_eq!(decision, SecurityDecision::Allow);
@@ -1938,8 +1938,8 @@ mod tests {
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "sudo true" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "sudo true" })),
         );
 
         assert!(matches!(decision, SecurityDecision::Deny(_)));
@@ -1959,8 +1959,8 @@ mod tests {
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "cargo test" })),
         );
 
         assert_eq!(decision, SecurityDecision::Allow);
@@ -1994,8 +1994,8 @@ mod tests {
             "git fetch origin",
         ] {
             let decision = policy.validate_tool_invocation(
-                &tool_def("bash", ToolKind::Command),
-                &tool_invocation("bash", serde_json::json!({ "command": command })),
+                &tool_def("run", ToolKind::Command),
+                &tool_invocation("run", serde_json::json!({ "command": command })),
             );
             assert_eq!(
                 decision,
@@ -2033,8 +2033,8 @@ mod tests {
             "git -C /tmp/repo push origin main",
         ] {
             let decision = policy.validate_tool_invocation(
-                &tool_def("bash", ToolKind::Command),
-                &tool_invocation("bash", serde_json::json!({ "command": command })),
+                &tool_def("run", ToolKind::Command),
+                &tool_invocation("run", serde_json::json!({ "command": command })),
             );
             assert_eq!(
                 decision,
@@ -2089,8 +2089,8 @@ mod tests {
             "git rebase origin/main",
         ] {
             let decision = policy.validate_tool_invocation(
-                &tool_def("bash", ToolKind::Command),
-                &tool_invocation("bash", serde_json::json!({ "command": command })),
+                &tool_def("run", ToolKind::Command),
+                &tool_invocation("run", serde_json::json!({ "command": command })),
             );
             assert_eq!(
                 decision,
@@ -2114,8 +2114,8 @@ mod tests {
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "sudo true" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "sudo true" })),
         );
 
         assert!(matches!(decision, SecurityDecision::Deny(_)));
@@ -2130,14 +2130,14 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let config = SecurityConfig {
             permission_mode: PermissionMode::Yolo,
-            deny_tools: vec!["bash".to_string()],
+            deny_tools: vec!["run".to_string()],
             ..SecurityConfig::default()
         };
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("bash", ToolKind::Command),
-            &tool_invocation("bash", serde_json::json!({ "command": "cargo test" })),
+            &tool_def("run", ToolKind::Command),
+            &tool_invocation("run", serde_json::json!({ "command": "cargo test" })),
         );
 
         assert!(matches!(decision, SecurityDecision::Deny(_)));

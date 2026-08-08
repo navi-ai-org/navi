@@ -1221,8 +1221,8 @@ fn rewrite_unsupported_images_store_attachment_id_for_text_only_models() {
 
 #[test]
 fn allowlist_deny_message_distinguishes_subagent_and_harness() {
-    let sub = super::tool_allowlist_deny_message(true, "bash");
-    let root = super::tool_allowlist_deny_message(false, "bash");
+    let sub = super::tool_allowlist_deny_message(true, "run");
+    let root = super::tool_allowlist_deny_message(false, "run");
     assert!(sub.contains("for this subagent"), "subagent deny: {sub}");
     assert!(
         !root.contains("subagent"),

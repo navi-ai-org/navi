@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn local_recap_we_framing_when_tools_used() {
-        let tools = vec!["bash".into(), "write".into()];
+        let tools = vec!["run".into(), "write".into()];
         let recap = local_recap_with_tools(
             "add a footer token meter",
             "Updated the footer meter and wired usage labels.",

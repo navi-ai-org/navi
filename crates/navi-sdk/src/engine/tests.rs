@@ -1319,7 +1319,7 @@ async fn host_tools_only_profile_hides_bash_and_edit() {
     assert!(
         !tools
             .iter()
-            .any(|t| t == "bash" || t == "edit" || t == "write_file"),
+            .any(|t| t == "run" || t == "edit" || t == "write_file"),
         "code-agent builtins must be hidden: {tools:?}"
     );
     assert_eq!(engine.tool_profile(), NaviToolProfile::HostToolsOnly);

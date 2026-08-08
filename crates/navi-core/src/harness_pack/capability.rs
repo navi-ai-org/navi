@@ -130,7 +130,7 @@ mod tests {
 
     fn sample() -> CapabilityInventory {
         inventory_from_tool_names(
-            ["search", "read_file", "edit", "bash"],
+            ["search", "read_file", "edit", "run"],
             ["browser", "subagent", "code"],
             true,
             true,

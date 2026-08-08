@@ -18,7 +18,7 @@ fn default_tool_meta() -> Vec<(String, ToolExposure)> {
         "read_file",
         "edit",
         "write_file",
-        "bash",
+        "run",
         "plan",
         "question",
         "tool_search",

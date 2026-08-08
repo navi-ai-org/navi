@@ -1,4 +1,3 @@
-mod bash;
 #[cfg(feature = "browser")]
 mod browser;
 #[cfg(feature = "code-vfs")]
@@ -19,6 +18,7 @@ mod question;
 mod read_tool;
 mod repo_explore;
 mod repo_intelligence;
+mod run;
 mod runtime_info;
 mod sandbox_tool;
 mod search_tool;
@@ -35,7 +35,6 @@ pub(super) use extra_tools::{
     ToolSearchTool, ViewImageTool,
 };
 
-pub(super) use bash::BashTool;
 #[cfg(feature = "browser")]
 pub(super) use browser::BrowserTool;
 #[cfg(feature = "code-vfs")]
@@ -57,6 +56,7 @@ pub(super) use question::QuestionTool;
 pub(super) use read_tool::ReadTool;
 pub use repo_explore::RepoExploreTool;
 pub(super) use repo_intelligence::{RepoIntelligenceAction, RepoIntelligenceTool};
+pub(super) use run::RunTool;
 pub(super) use runtime_info::RuntimeInfoTool;
 pub(super) use sandbox_tool::SandboxTool;
 pub(super) use search_tool::SearchTool;

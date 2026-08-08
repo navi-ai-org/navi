@@ -195,7 +195,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
         );
         insert(
             &mut map,
-            "bash",
+            "run",
             ToolMetadata {
                 namespace: "process".to_string(),
                 risk: crate::tool::ToolRisk::High,
@@ -203,7 +203,7 @@ static LOOKUP: LazyLock<std::collections::HashMap<&'static str, ToolMetadata>> =
                 is_concurrency_safe: false,
                 exposure: crate::tool::ToolExposure::Direct,
                 capabilities: vec!["shell.exec".to_string(), "shell.bash".to_string()],
-                tags: vec!["shell", "bash", "command"]
+                tags: vec!["shell", "run", "command"]
                     .into_iter()
                     .map(|s| s.to_string())
                     .collect(),
@@ -600,7 +600,7 @@ mod tests {
             "edit",
             "multiedit",
             "apply_patch",
-            "bash",
+            "run",
             "code",
             "code_edit",
             "code_exec",
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn bash_has_high_risk_and_max_output() {
-        let meta = builtin_metadata("bash", ToolKind::Command);
+        let meta = builtin_metadata("run", ToolKind::Command);
         assert_eq!(meta.risk, crate::tool::ToolRisk::High);
         assert_eq!(meta.max_output_bytes, Some(65536));
     }
@@ -684,7 +684,7 @@ mod tests {
             "search",
             "edit",
             "write_file",
-            "bash",
+            "run",
             "plan",
             "question",
             "tool_search",

@@ -48,6 +48,7 @@ mod tests {
             acp: AcpConfig::default(),
             acp_agents: Vec::new(),
             workflow: WorkflowConfig::default(),
+            shell: ShellConfig::default(),
         };
 
         let mut project = NaviConfig {
@@ -99,6 +100,7 @@ mod tests {
             acp: AcpConfig::default(),
             acp_agents: Vec::new(),
             workflow: WorkflowConfig::default(),
+            shell: ShellConfig::default(),
         };
         project.plugins.clear();
         project.mcp = McpConfig::default();
@@ -179,7 +181,7 @@ enabled = true
 permission_mode = "accept-edits"
 allow_tools = ["read_file"]
 allow_tool_regex = ["^repo_"]
-ask_tools = ["bash"]
+ask_tools = ["run"]
 ask_tool_regex = ["^plugin__"]
 deny_tools = ["write_file"]
 deny_tool_regex = ["^danger_"]
@@ -190,7 +192,7 @@ deny_tool_regex = ["^danger_"]
         assert_eq!(config.security.permission_mode, PermissionMode::AcceptEdits);
         assert_eq!(config.security.allow_tools, vec!["read_file"]);
         assert_eq!(config.security.allow_tool_regex, vec!["^repo_"]);
-        assert_eq!(config.security.ask_tools, vec!["bash"]);
+        assert_eq!(config.security.ask_tools, vec!["run"]);
         assert_eq!(config.security.ask_tool_regex, vec!["^plugin__"]);
         assert_eq!(config.security.deny_tools, vec!["write_file"]);
         assert_eq!(config.security.deny_tool_regex, vec!["^danger_"]);

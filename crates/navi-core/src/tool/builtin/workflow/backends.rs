@@ -111,7 +111,7 @@ impl AgentBackend for WorkerProbeBackend {
                 "path_deny": request.effective.path_deny,
                 "can_write_file": probe.can_write_file,
                 "can_edit": probe.can_edit,
-                "can_bash": probe.can_bash,
+                "can_run": probe.can_run,
                 "can_subagent": probe.can_subagent,
                 "can_workflow": probe.can_workflow,
                 "write_path_allowed": probe.write_path_allowed,
@@ -129,7 +129,7 @@ impl AgentBackend for WorkerProbeBackend {
 pub(crate) struct ProbeResult {
     pub(crate) can_write_file: bool,
     pub(crate) can_edit: bool,
-    pub(crate) can_bash: bool,
+    pub(crate) can_run: bool,
     pub(crate) can_subagent: bool,
     pub(crate) can_workflow: bool,
     pub(crate) write_path_allowed: Vec<String>,
@@ -190,7 +190,7 @@ pub(crate) fn probe_worker_capabilities(
         .tool_names()
         .iter()
         .any(|t| t == "edit" || t == "multiedit");
-    out.can_bash = exec.tool_names().iter().any(|t| t == "bash");
+    out.can_run = exec.tool_names().iter().any(|t| t == "run");
     out.can_subagent = out.registered_tools.iter().any(|t| t == "subagent");
     out.can_workflow = out.registered_tools.iter().any(|t| t == "workflow");
 
@@ -295,7 +295,7 @@ fn register_filtered_tools(
     run_tools: &[String],
 ) {
     use super::super::{
-        bash::BashTool, edit_tool::EditTool, read_tool::ReadTool, search_tool::SearchTool,
+        edit_tool::EditTool, read_tool::ReadTool, run::RunTool, search_tool::SearchTool,
         write_tool::WriteTool,
     };
 
@@ -320,8 +320,8 @@ fn register_filtered_tools(
     if writes_ok && (has("edit") || has("multiedit")) {
         exec.register_tool(Arc::new(EditTool::new(project.to_path_buf())));
     }
-    if has("bash") {
-        exec.register_tool(Arc::new(BashTool::new(project.to_path_buf())));
+    if has("run") {
+        exec.register_tool(Arc::new(RunTool::new(project.to_path_buf())));
     }
 }
 
@@ -748,10 +748,10 @@ mod tests {
             &Default::default(),
         );
         let probe = probe_worker_capabilities(&policy, &run, &effective);
-        // Read-only: no writes, no bash.
+        // Read-only: no writes, no run.
         assert!(!probe.can_write_file);
         assert!(!probe.can_edit);
-        assert!(!probe.can_bash);
+        assert!(!probe.can_run);
         // Read tools should be registered.
         assert!(
             probe.registered_tools.iter().any(|t| t == "read_file"),
@@ -774,7 +774,7 @@ mod tests {
             "read_file".into(),
             "write_file".into(),
             "edit".into(),
-            "bash".into(),
+            "run".into(),
         ];
         run.write_allow = vec!["src/".into()];
         run.create_files = true;
@@ -785,7 +785,7 @@ mod tests {
         let probe = probe_worker_capabilities(&policy, &run, &effective);
         assert!(probe.can_write_file, "write_file should be registered");
         assert!(probe.can_edit, "edit should be registered");
-        assert!(probe.can_bash, "bash should be registered");
+        assert!(probe.can_run, "run should be registered");
         assert!(
             probe.registered_tools.iter().any(|t| t == "write_file"),
             "write_file in registered_tools: {:?}",
@@ -797,8 +797,8 @@ mod tests {
             probe.registered_tools
         );
         assert!(
-            probe.registered_tools.iter().any(|t| t == "bash"),
-            "bash in registered_tools: {:?}",
+            probe.registered_tools.iter().any(|t| t == "run"),
+            "run in registered_tools: {:?}",
             probe.registered_tools
         );
     }

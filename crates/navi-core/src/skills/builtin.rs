@@ -66,7 +66,7 @@ fn create_skill_manifest() -> SkillManifest {
             "read_file",
             "write_file",
             "edit",
-            "bash",
+            "run",
         ],
         CREATE_SKILL_INSTRUCTIONS,
     )
@@ -87,7 +87,7 @@ fn harness_author_manifest() -> SkillManifest {
             "read_file",
             "write_file",
             "edit",
-            "bash",
+            "run",
         ],
         HARNESS_AUTHOR_INSTRUCTIONS,
     )
@@ -154,7 +154,7 @@ A **harness** is a multi-step, multi-skill workflow that NAVI materializes into 
    - Set `harness = true` and `requires: [sub-skill-ids…]` in the main skill frontmatter.
    - Write each sub-skill's `SKILL.md` first.
    - Write the main harness `SKILL.md` to `{data_dir}/skills/<id>/SKILL.md`.
-   - Run `navi harness materialize <id>` (via `bash`) to generate `loop.toml`, `graph.toml`, etc.
+   - Run `navi harness materialize <id>` (via `run`) to generate `loop.toml`, `graph.toml`, etc.
    - Verify with `navi harness show <id>` or by reading `{data_dir}/harnesses/<id>/graph.toml`.
    - Soft graph `allow_tools` and loop caps apply only when that harness skill is session-active (CLI `--skill` / host activate / config), not merely because it is installed.
 3. Hard graph edge execution is still MVP-soft — do not promise automatic routing between nodes.
@@ -169,7 +169,7 @@ Also load `navi-harness-author` (pool `navi`) for pack layout details.
 4. Draft a **template** (below) with the user.
 5. Choose a **minimal** `allow_tools` list from real tool names.
 6. Write the skill file with `write_file`. For pools, include `pool: "<pool>"` in the frontmatter.
-7. If the skill is a harness, run `navi harness materialize <id>` via `bash`.
+7. If the skill is a harness, run `navi harness materialize <id>` via `run`.
 8. Call `skill_get` to verify; offer to refine.
 
 ## Skill template (copy into `instructions`)
@@ -221,7 +221,7 @@ harness: false
 - User-scope pool skills go to `{data_dir}/skills/<pool>/<id>/SKILL.md`.
 - Project-scoped skills go to `{project}/.navi/skills/<id>/SKILL.md`.
 
-You can also run `navi skill install path/to/SKILL.md` via `bash` when the user provides a local skill file.
+You can also run `navi skill install path/to/SKILL.md` via `run` when the user provides a local skill file.
 
 Use **`skill_list`** / **`skill_get`** / **`load_skill`** to inspect existing skills.
 Use **`skill_delete`** only if the user confirms removing a skill.
@@ -264,7 +264,7 @@ Teach the user (and yourself) how harness packs work on this engine version.
 
 1. Create leaf skills by writing their `SKILL.md` files (focused instructions + recommended tools).
 2. Create the main skill file with `harness: true` and `requires: [leaf ids…]`.
-3. Run `navi harness materialize <id>` (via `bash`) and confirm the pack path with `navi harness show <id>`.
+3. Run `navi harness materialize <id>` (via `run`) and confirm the pack path with `navi harness show <id>`.
 4. Activate with CLI `--skill <id>` / host session skills / chat intent — not by inventing files under project `.navi/`.
 
 Engine essentials (`navi-create-skill`, this skill, `navi-skill-pools`) ship **builtin** so marketplace version skew cannot teach stale harness APIs.

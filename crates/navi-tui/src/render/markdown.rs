@@ -867,7 +867,7 @@ fn tool_color(tool_name: &str) -> Color {
     match tool_name {
         "read_file" | "view_file" | "grep" | "fs_browser" => code_type(),
         "write_file" | "apply_patch" | "edit" | "multiedit" | "write" => code_const(),
-        "bash" => code_operator(),
+        "run" => code_operator(),
         _ => accent(),
     }
 }
@@ -2634,7 +2634,7 @@ mod tests {
             "call-1".into(),
             ToolInvocation {
                 id: "call-1".into(),
-                tool_name: "bash".into(),
+                tool_name: "run".into(),
                 input: json!({ "command": "cargo test -p navi-core" }),
             },
         );
@@ -2678,7 +2678,7 @@ mod tests {
     fn background_running_result_uses_running_diamond() {
         let inv = ToolInvocation {
             id: "bg-1".into(),
-            tool_name: "bash".into(),
+            tool_name: "run".into(),
             input: json!({ "command": "sleep 30", "background": true }),
         };
         let result = ToolResult {

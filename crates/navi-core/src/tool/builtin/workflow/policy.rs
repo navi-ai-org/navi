@@ -175,7 +175,7 @@ mod policy_tests {
         // Default run is read-only; per-agent tools are no longer accepted.
         let run = default_run_policy();
         assert!(run.tools.iter().any(|t| t == "read_file"));
-        assert!(!run.tools.iter().any(|t| t == "bash"));
+        assert!(!run.tools.iter().any(|t| t == "run"));
         assert!(!run.tools.iter().any(|t| t == "write_file"));
     }
 

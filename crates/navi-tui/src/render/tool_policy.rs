@@ -91,7 +91,7 @@ pub(crate) fn tool_auto_expand(invocation: &ToolInvocation, result: &ToolResult)
         // Small structured confirmations can stay compact unless error.
         // Noisy exploration — collapsed by default.
         "read" | "read_file" | "view_file" | "grep" | "fs_browser" | "search" | "list_dir"
-        | "glob" | "bash" | "ast_search" | "symbol_goto" | "symbol_references" | "repo_explore"
+        | "glob" | "run" | "ast_search" | "symbol_goto" | "symbol_references" | "repo_explore"
         | "history_ops" | "code" | "code_exec" => false,
 
         // Subagent header is enough; drill in on click.
@@ -277,7 +277,7 @@ mod tests {
 
     #[test]
     fn failures_auto_expand() {
-        let bash = inv("bash", "b1");
+        let bash = inv("run", "b1");
         let fail = res("b1", false, json!({"error": "boom"}));
         assert!(tool_auto_expand(&bash, &fail));
     }

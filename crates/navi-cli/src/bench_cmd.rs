@@ -928,7 +928,7 @@ mod tests {
             }),
             RuntimeEvent::new(RuntimeEventKind::ToolRequested(navi_core::ToolInvocation {
                 id: "one".to_string(),
-                tool_name: "bash".to_string(),
+                tool_name: "run".to_string(),
                 input: serde_json::json!({"command": "cargo test"}),
             })),
             RuntimeEvent::new(RuntimeEventKind::ToolCompleted(navi_core::ToolResult {

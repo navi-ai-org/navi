@@ -305,7 +305,7 @@ fn ui_review_tool_policy_auto_vs_collapsed() {
         status: Some("tool result".to_string()),
         tool_invocation: Some(navi_sdk::ToolInvocation {
             id: "b1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: serde_json::json!({ "command": "cargo test -p navi-tui" }),
         }),
         tool_result: Some(navi_sdk::ToolResult {
@@ -429,7 +429,7 @@ fn ui_review_ctrl_o_keeps_opened_bash() {
         status: Some("tool result".to_string()),
         tool_invocation: Some(navi_sdk::ToolInvocation {
             id: "bash-open".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: serde_json::json!({ "command": "echo keep-me-open" }),
         }),
         tool_result: Some(navi_sdk::ToolResult {

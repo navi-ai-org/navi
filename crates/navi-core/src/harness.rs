@@ -288,7 +288,7 @@ fn build_system_prompt_inner(
             "  plan(action='submit') for user review. After approval, implement in normal mode.\n",
             "\n",
             "Core tools (always available in the schema):\n",
-            "- search, read_file, edit, write_file, bash, plan, question, tool_search, memory,\n",
+            "- search, read_file, edit, write_file, run, plan, question, tool_search, memory,\n",
             "  set_session_title, load_skill, skill_list, skill_get\n",
             "\n",
             "Inspection decision tree (pick the cheapest tool that answers the question):\n",
@@ -303,17 +303,17 @@ fn build_system_prompt_inner(
             "- subagent: nested agent\n",
             "- apply_patch / sandbox / history_ops / create_goal: advanced workflows\n",
             "- If a capability is missing from the visible schema, call tool_search(query=...) to discover\n",
-            "  deferred tools before approximating with bash. Then invoke the returned tool name with its input_schema.\n",
+            "  deferred tools before approximating with run. Then invoke the returned tool name with its input_schema.\n",
             "\n",
             "Tool rules:\n",
             "- Batch independent read-only calls in the same assistant response when native tools allow it.\n",
             "- Edits: prefer `edit` (old_string→new_string; use `edits`[] for multiple replaces in one\n",
             "  file). Use `write_file` for whole-file create/overwrite. Prefer `search` for repo nav.\n",
-            "  Do not use bash/python to edit files. Do not dump files with sed/cat/head/rg via bash —\n",
+            "  Do not use run/python to edit files. Do not dump files with sed/cat/head/rg via run —\n",
             "  use read_file/search. Power tools (apply_patch, code, …) are available when needed.\n",
             "- Symbol-level edits: use code_edit for symbol-level changes.\n",
-            "- Use bash for dependency management (install/add/update) in the project root.\n",
-            "- bash for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
+            "- Use run for dependency management (install/add/update) in the project root.\n",
+            "- run for ad-hoc commands; long-running: background=true, wait_ms, timeout_ms, then poll task_id.\n",
             "- Prefer project-relative paths. Writes and commands may require approval.\n",
             "{tool_calling_rule}\n",
             "\n",
@@ -335,7 +335,7 @@ fn build_system_prompt_inner(
             "Discovery:\
              - Use `tool_search` to load schemas for deferred tools (ast_search, symbol_*, repo_explore, …).\
              - After tool_search, call the returned tool by name with matching arguments.\
-             - Unknown-tool errors include suggestions; prefer those over inventing bash workarounds.\n",
+             - Unknown-tool errors include suggestions; prefer those over inventing run workarounds.\n",
         );
     }
     if policy.profile == HarnessProfile::LongRunning {
@@ -426,7 +426,7 @@ pub fn record_tool_call(
 ) -> ToolLoopDecision {
     let signature = tool_signature_hash(invocation);
 
-    // Background task polling (e.g. `bash({"task_id": "bg_1"})`) is a
+    // Background task polling (e.g. `run({"task_id": "bg_1"})`) is a
     // legitimate repeated call pattern — the model polls a long-running
     // command until it finishes. Exempt these from the repetition guard so
     // that a command taking more than ~20 poll cycles doesn't get killed.
@@ -519,7 +519,7 @@ pub fn record_tool_result(
         return ToolLoopDecision::Stop(stop_for_failure(
             HarnessStopReason::ConsecutiveUnknownTools,
             invocation,
-            "unknown tools (use registered names like read_file, search, edit, bash — not file paths as tool names)",
+            "unknown tools (use registered names like read_file, search, edit, run — not file paths as tool names)",
             state.consecutive_unknown_tools,
         ));
     }
@@ -637,7 +637,7 @@ pub fn trace_request_summary(request: &ModelRequest, policy: HarnessPolicy) -> V
 /// Returns true when this invocation is a background task poll call.
 ///
 /// Covers:
-/// - `bash` with a `task_id` field and **no** `command` field
+/// - `run` with a `task_id` field and **no** `command` field
 /// - `process` with `action: wait` (and no fresh `command`)
 ///
 /// These calls are intentionally identical across poll cycles and should
@@ -648,7 +648,7 @@ fn is_background_poll_call(invocation: &ToolInvocation) -> bool {
     };
 
     match invocation.tool_name.as_str() {
-        "bash" => obj.contains_key("task_id") && !obj.contains_key("command"),
+        "run" => obj.contains_key("task_id") && !obj.contains_key("command"),
         _ => false,
     }
 }
@@ -897,7 +897,7 @@ mod tests {
         let policy = test_policy(100);
         let poll = ToolInvocation {
             id: "poll-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "task_id": "bg_1" }),
         };
         let mut state = AgentRunState::default();
@@ -921,7 +921,7 @@ mod tests {
         let policy = test_policy(100);
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "command": "sleep 1", "background": true }),
         };
         let mut state = AgentRunState::default();
@@ -1037,7 +1037,7 @@ mod tests {
         );
         let invocation = ToolInvocation {
             id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "command": "grep -A8 \"needle\" missing" }),
         };
         let result = ToolResult {
@@ -1145,7 +1145,7 @@ mod tests {
         assert!(prompt.contains("`edit`"));
         assert!(prompt.contains("`search`"));
         assert!(prompt.contains("old_string") || prompt.contains("edits"));
-        assert!(prompt.contains("bash/python"));
+        assert!(prompt.contains("run/python"));
         assert!(prompt.contains("tool_search"));
     }
 

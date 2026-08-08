@@ -54,10 +54,10 @@ pub(super) fn json_schema(properties: &[(&str, &str)], required: &[&str]) -> Val
     })
 }
 
-pub(super) fn bash_json_schema() -> Value {
+pub(super) fn run_json_schema() -> Value {
     // Keep the schema free of oneOf/anyOf/allOf so model-facing simplification
     // does not force `command` when the model only needs to poll/cancel/list.
-    // Runtime validation in BashTool::invoke still requires a usable mode.
+    // Runtime validation in RunTool::invoke still requires a usable mode.
     json!({
         "type": "object",
         "properties": {
@@ -83,7 +83,7 @@ pub(super) fn bash_json_schema() -> Value {
             },
             "task_id": {
                 "type": "string",
-                "description": "Background task id returned by an earlier bash call. Use with action=poll/cancel (poll is default)."
+                "description": "Background task id returned by an earlier run call. Use with action=poll/cancel (poll is default)."
             },
             "action": {
                 "type": "string",

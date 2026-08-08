@@ -315,7 +315,7 @@ mod tests {
     fn visible_definitions_are_sorted_by_name() {
         let mut reg = ToolRegistry::new();
         // Insert out of order — HashMap would otherwise yield unstable order.
-        for name in ["write_file", "bash", "read_file", "apply_patch"] {
+        for name in ["write_file", "run", "read_file", "apply_patch"] {
             reg.register(make_def(name, ToolKind::Read, &[], &[]));
         }
         let names: Vec<String> = reg
@@ -323,10 +323,7 @@ mod tests {
             .into_iter()
             .map(|d| d.name)
             .collect();
-        assert_eq!(
-            names,
-            vec!["apply_patch", "bash", "read_file", "write_file"]
-        );
+        assert_eq!(names, vec!["apply_patch", "read_file", "run", "write_file"]);
     }
 
     #[test]
@@ -367,7 +364,7 @@ mod tests {
     #[test]
     fn registry_never_auto_promotes_deferred_tools() {
         let mut reg = ToolRegistry::new();
-        for name in ["bash", "edit", "read_file"] {
+        for name in ["run", "edit", "read_file"] {
             reg.register(make_def(name, ToolKind::Read, &["core"], &[]));
         }
         for name in ["repo_explore", "ast_search", "symbol_goto"] {
@@ -409,7 +406,7 @@ mod tests {
             &["repo.write"],
         ));
         reg.register(make_def(
-            "bash",
+            "run",
             ToolKind::Command,
             &["shell"],
             &["shell.exec"],
@@ -417,7 +414,7 @@ mod tests {
 
         let results = reg.search("file", 10);
         assert!(results.len() >= 2);
-        // read_file and write_file should rank higher than bash for "file" query
+        // read_file and write_file should rank higher than run for "file" query
         let names: Vec<&str> = results.iter().map(|d| d.name.as_str()).collect();
         // Both file tools should be present
         assert!(names.contains(&"read_file"));
@@ -444,7 +441,7 @@ mod tests {
     #[test]
     fn registry_phase_empty_means_all_phases() {
         let mut reg = ToolRegistry::new();
-        let def = make_def("bash", ToolKind::Command, &[], &[]);
+        let def = make_def("run", ToolKind::Command, &[], &[]);
         reg.register_with(def, ToolExposure::Direct, vec![]); // empty = all phases
 
         assert_eq!(reg.for_phase("planning").len(), 1);

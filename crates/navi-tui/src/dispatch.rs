@@ -455,8 +455,8 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
             if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
                 // Check if this is a background bash command that's still running
                 let is_background_running =
-                    invocation.tool_name == "bash" && still_running_background;
-                if invocation.tool_name == "bash"
+                    invocation.tool_name == "run" && still_running_background;
+                if invocation.tool_name == "run"
                     && result.output.get("background").and_then(|v| v.as_bool()) == Some(true)
                     && let Some(snapshot) = BackgroundCommandSnapshot::from_json(&result.output)
                 {

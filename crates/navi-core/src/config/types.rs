@@ -66,6 +66,36 @@ pub struct NaviConfig {
     /// Multi-agent Lua workflow tool settings.
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    /// Shell configuration for the `run` tool.
+    #[serde(default)]
+    pub shell: ShellConfig,
+}
+
+/// Shell configuration for the `run` tool.
+///
+/// The user can pin a specific shell program and optional argv prefix. When
+/// unset, the tool auto-detects: `$SHELL` / `NAVI_SHELL` env, then platform
+/// defaults (bash on Unix, pwsh → powershell → cmd on Windows).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShellConfig {
+    /// Explicit shell program path or name (e.g. "pwsh", "nu", "bash",
+    /// "C:\\tools\\nu.exe"). When `None`, auto-detect from env/OS.
+    pub program: Option<String>,
+    /// Explicit argv prefix inserted before the command string
+    /// (e.g. `["-NoProfile", "-Command"]` for PowerShell, `["-lc"]` for
+    /// bash, `["-c"]` for nu/fish). When `None`, inferred from the program
+    /// name via a known-shell mapping.
+    pub args: Option<Vec<String>>,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            program: None,
+            args: None,
+        }
+    }
 }
 
 /// Built-in `workflow` tool (sandboxed Lua multi-agent orchestration).

@@ -917,7 +917,7 @@ fn ctrl_n_starts_clean_session_without_old_events_or_context() {
         "call-1".to_string(),
         ToolInvocation {
             id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: serde_json::json!({"command": "echo old"}),
         },
     );
@@ -973,7 +973,7 @@ fn command_palette_new_session_uses_full_session_reset() {
         "call-1".to_string(),
         ToolInvocation {
             id: "call-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: serde_json::json!({"command": "echo old"}),
         },
     );
@@ -2127,7 +2127,7 @@ fn background_bash_result_is_listed_immediately() {
     let mut app = test_app("");
     let invocation = ToolInvocation {
         id: "call-bg".to_string(),
-        tool_name: "bash".to_string(),
+        tool_name: "run".to_string(),
         input: serde_json::json!({
             "command": "cargo test",
             "background": true,
@@ -4588,7 +4588,7 @@ fn ctrl_o_leaving_expand_all_keeps_selected_tool_open() {
         status: Some("tool result".to_string()),
         tool_invocation: Some(ToolInvocation {
             id: "bash-1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: serde_json::json!({ "command": "echo hi" }),
         }),
         tool_result: Some(ToolResult {
@@ -4648,7 +4648,7 @@ fn compact_tool_render_hides_bash_output_until_expanded() {
     let mut app = test_app("");
     let invocation = ToolInvocation {
         id: "call-1".to_string(),
-        tool_name: "bash".to_string(),
+        tool_name: "run".to_string(),
         input: serde_json::json!({ "command": "just test-crate navi-tui" }),
     };
     let result = ToolResult {

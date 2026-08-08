@@ -886,7 +886,7 @@ mod tests {
                 author: Some("NAVI".into()),
                 tags: vec!["code".into(), "review".into()],
                 requires: vec!["socratic".into()],
-                allow_tools: vec!["read_file".into(), "bash".into()],
+                allow_tools: vec!["read_file".into(), "run".into()],
                 deny_tools: vec![],
                 harness: false,
                 pool: None,
@@ -900,7 +900,7 @@ mod tests {
         let loaded =
             load_skill_by_id(&cfg(), tempdir.path(), tempdir.path(), "reviewer").expect("load");
         assert_eq!(loaded.name, "Code Reviewer");
-        assert_eq!(loaded.allow_tools, vec!["read_file", "bash"]);
+        assert_eq!(loaded.allow_tools, vec!["read_file", "run"]);
         assert_eq!(loaded.requires, vec!["socratic"]);
     }
 
@@ -914,7 +914,7 @@ mod tests {
             author: None,
             tags: vec![],
             requires: vec![],
-            allow_tools: vec!["read_file".into(), "bash".into()],
+            allow_tools: vec!["read_file".into(), "run".into()],
             deny_tools: vec![],
             harness: false,
             pool: None,
@@ -1079,7 +1079,7 @@ version: "1.0.0"
 id: reviewer
 author: NAVI
 tags: [code, review]
-allow_tools: [read_file, bash]
+allow_tools: [read_file, run]
 deny_tools: write_file
 ---
 Review thoroughly.
@@ -1092,7 +1092,7 @@ Use checklists.
         assert_eq!(parsed.version.as_deref(), Some("1.0.0"));
         assert_eq!(parsed.author.as_deref(), Some("NAVI"));
         assert_eq!(parsed.tags, vec!["code", "review"]);
-        assert_eq!(parsed.allow_tools, vec!["read_file", "bash"]);
+        assert_eq!(parsed.allow_tools, vec!["read_file", "run"]);
         assert_eq!(parsed.deny_tools, vec!["write_file"]);
         assert!(parsed.instructions.contains("Review thoroughly."));
         assert!(parsed.instructions.contains("Use checklists."));

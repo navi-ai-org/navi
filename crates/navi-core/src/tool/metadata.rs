@@ -105,7 +105,7 @@ impl ToolMetadata {
         }
     }
 
-    /// Creates a command/execution tool (bash, process).
+    /// Creates a command/execution tool (run, process).
     pub fn command(namespace: &str, tags: &[&str]) -> Self {
         Self {
             namespace: namespace.to_string(),
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn metadata_command_preset() {
-        let m = ToolMetadata::command("process", &["shell", "bash"]);
+        let m = ToolMetadata::command("process", &["shell", "run"]);
         assert_eq!(m.risk, ToolRisk::High);
         assert!(!m.is_concurrency_safe);
         assert!(m.capabilities.contains(&"shell.exec".to_string()));

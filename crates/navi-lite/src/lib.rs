@@ -521,14 +521,14 @@ mod tests {
         .unwrap();
         let security = LiteSecurityPolicy::new(vec![HEALTH_CHECK_TOOL.to_string()]);
         let def = ToolDefinition::new(
-            "bash",
+            "run",
             "shell",
             ToolKind::Command,
             json!({ "type": "object" }),
         );
         let inv = ToolInvocation {
             id: "1".to_string(),
-            tool_name: "bash".to_string(),
+            tool_name: "run".to_string(),
             input: json!({ "command": "echo hi" }),
         };
         assert!(matches!(

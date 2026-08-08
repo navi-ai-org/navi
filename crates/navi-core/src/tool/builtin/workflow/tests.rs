@@ -511,7 +511,7 @@ async fn p1_default_worker_no_write_tools() {
     assert_eq!(res["backend"], "worker_probe");
     assert_eq!(res["can_write_file"], false, "{res:?}");
     assert_eq!(res["can_edit"], false, "{res:?}");
-    assert_eq!(res["can_bash"], false, "{res:?}");
+    assert_eq!(res["can_run"], false, "{res:?}");
     assert_eq!(res["create_files"], false);
     // Registered tools must not include writers.
     let reg = res["registered_tools"].as_array().unwrap();
@@ -525,7 +525,7 @@ async fn p1_default_worker_no_write_tools() {
     assert!(
         !names
             .iter()
-            .any(|t| *t == "write_file" || *t == "edit" || *t == "bash")
+            .any(|t| *t == "write_file" || *t == "edit" || *t == "run")
     );
 }
 
@@ -677,12 +677,12 @@ async fn p5_worker_no_nested_orchestration() {
 fn p6_intersection_unit() {
     let run = default_run_policy();
     let eff = intersect_agent_policy(&run, &AgentPolicyOpts::default());
-    // Real probe path: bash must not be registered under default run.
+    // Real probe path: run must not be registered under default run.
     let (_dir, policy) = temp_policy();
     let probe = super::backends::probe_worker_capabilities(&policy, &run, &eff);
-    assert!(!probe.can_bash, "{probe:?}");
+    assert!(!probe.can_run, "{probe:?}");
     assert!(
-        !probe.registered_tools.iter().any(|t| t == "bash"),
+        !probe.registered_tools.iter().any(|t| t == "run"),
         "{probe:?}"
     );
 }

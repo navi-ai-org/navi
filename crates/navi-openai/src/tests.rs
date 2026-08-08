@@ -439,14 +439,14 @@ fn parses_chat_completions_inline_tool_call_xml_in_text() {
 #[test]
 fn parses_chat_completions_tool_call_xml_with_minimal_prefix() {
     let events = parse_chat_completions_sse(
-        r#"{"choices":[{"delta":{"content":"<|minimal|>[<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call>done"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"<|minimal|>[<tool_call>{\"name\":\"run\",\"args\":{\"command\":\"ls\"}}</tool_call>done"},"finish_reason":null}]}"#,
     );
 
     let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
     assert!(results.iter().any(|e| matches!(
         e,
         ModelStreamEvent::ToolCall(inv)
-        if inv.tool_name == "bash" && inv.input["command"] == "ls"
+        if inv.tool_name == "run" && inv.input["command"] == "ls"
     )));
     assert!(results.iter().any(|e| matches!(
         e,
@@ -480,7 +480,7 @@ fn parses_chat_completions_tool_call_xml_split_across_chunks() {
     let mut events = Vec::new();
     for data in [
         r#"{"choices":[{"delta":{"content":"text <tool_ca"},"finish_reason":null}]}"#,
-        r#"{"choices":[{"delta":{"content":"ll>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call> more"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"ll>{\"name\":\"run\",\"args\":{\"command\":\"ls\"}}</tool_call> more"},"finish_reason":null}]}"#,
     ] {
         events.extend(
             parse_chat_completions_sse_with_state(data, &mut state)
@@ -497,7 +497,7 @@ fn parses_chat_completions_tool_call_xml_split_across_chunks() {
         })
         .collect();
     assert_eq!(tool_calls.len(), 1);
-    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].tool_name, "run");
     assert_eq!(tool_calls[0].input["command"], "ls");
     assert!(events.iter().any(|e| matches!(
         e,
@@ -546,7 +546,7 @@ fn parses_chat_completions_tool_call_inside_think_tags() {
 fn parses_chat_completions_unclosed_tool_call_drained_on_done() {
     let mut state = ChatToolCallAccumulator::default();
     let mut events = parse_chat_completions_sse_with_state(
-        r#"{"choices":[{"delta":{"content":"<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"pwd\"}}"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"<tool_call>{\"name\":\"run\",\"args\":{\"command\":\"pwd\"}}"},"finish_reason":null}]}"#,
         &mut state,
     )
     .into_iter()
@@ -566,13 +566,13 @@ fn parses_chat_completions_unclosed_tool_call_drained_on_done() {
         })
         .collect();
     assert_eq!(tool_calls.len(), 1, "unclosed tool_call drained on [DONE]");
-    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].tool_name, "run");
 }
 
 #[test]
 fn parses_chat_completions_tool_call_xml_with_minimax_bracket_prefix() {
     let events = parse_chat_completions_sse(
-        r#"{"choices":[{"delta":{"content":"before ]<]minimax[>[<tool_call>{\"name\":\"bash\",\"args\":{\"command\":\"ls\"}}</tool_call> after"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"before ]<]minimax[>[<tool_call>{\"name\":\"run\",\"args\":{\"command\":\"ls\"}}</tool_call> after"},"finish_reason":null}]}"#,
     );
 
     let results: Vec<_> = events.into_iter().map(Result::unwrap).collect();
@@ -584,7 +584,7 @@ fn parses_chat_completions_tool_call_xml_with_minimax_bracket_prefix() {
         })
         .collect();
     assert_eq!(tool_calls.len(), 1, "tool call with minimax bracket prefix");
-    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].tool_name, "run");
     assert_eq!(tool_calls[0].input["command"], "ls");
     let text_deltas: Vec<&str> = results
         .iter()
@@ -713,7 +713,7 @@ fn parses_tencent_hy_v3_tool_call_split_across_chunks() {
     let mut events = Vec::new();
     for data in [
         r#"{"choices":[{"delta":{"content":"go <tool_call:opensou"},"finish_reason":null}]}"#,
-        r#"{"choices":[{"delta":{"content":"rce>bash<tool_sep:opensource>\n<arg_key:opensource>command</arg_key:opensource>\n<arg_value:opensource>ls</arg_value:opensource>\n</tool_call:opensource> ok"},"finish_reason":null}]}"#,
+        r#"{"choices":[{"delta":{"content":"rce>run<tool_sep:opensource>\n<arg_key:opensource>command</arg_key:opensource>\n<arg_value:opensource>ls</arg_value:opensource>\n</tool_call:opensource> ok"},"finish_reason":null}]}"#,
     ] {
         events.extend(
             parse_chat_completions_sse_with_state(data, &mut state)
@@ -729,7 +729,7 @@ fn parses_tencent_hy_v3_tool_call_split_across_chunks() {
         })
         .collect();
     assert_eq!(tool_calls.len(), 1);
-    assert_eq!(tool_calls[0].tool_name, "bash");
+    assert_eq!(tool_calls[0].tool_name, "run");
     assert_eq!(tool_calls[0].input["command"], "ls");
 }
 
@@ -2395,7 +2395,7 @@ fn anthropic_sse_tool_use_empty_json() {
         crate::providers::anthropic::parse_anthropic_sse_with_state(data, state)
     };
 
-    let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-456","name":"bash","input":{}}}"#;
+    let start = r#"{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call-456","name":"run","input":{}}}"#;
     parse(start, &mut state);
 
     let stop = r#"{"type":"content_block_stop","index":1}"#;
@@ -2404,7 +2404,7 @@ fn anthropic_sse_tool_use_empty_json() {
     match events[0].as_ref().unwrap() {
         ModelStreamEvent::ToolCall(inv) => {
             assert_eq!(inv.id, "call-456");
-            assert_eq!(inv.tool_name, "bash");
+            assert_eq!(inv.tool_name, "run");
             assert_eq!(inv.input, json!({}));
         }
         _ => panic!("expected ToolCall"),
@@ -2518,7 +2518,7 @@ fn gemini_contents_tool_role_produces_function_response() {
 fn gemini_contents_assistant_with_tool_calls() {
     let inv = navi_core::ToolInvocation {
         id: "call-xyz".to_string(),
-        tool_name: "bash".to_string(),
+        tool_name: "run".to_string(),
         input: json!({"command": "ls"}),
     };
     let msg = ModelMessage::assistant_tool_call(inv);
@@ -2527,7 +2527,7 @@ fn gemini_contents_assistant_with_tool_calls() {
     assert_eq!(contents[0]["role"], "model");
     let parts = contents[0]["parts"].as_array().unwrap();
     assert_eq!(parts.len(), 1);
-    assert_eq!(parts[0]["functionCall"]["name"], "bash");
+    assert_eq!(parts[0]["functionCall"]["name"], "run");
     assert_eq!(parts[0]["functionCall"]["args"]["command"], "ls");
 }
 

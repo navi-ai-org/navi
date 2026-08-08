@@ -295,7 +295,7 @@ mod tests {
         let mut s = HashSet::new();
         s.insert("read_file".into());
         s.insert("write_file".into());
-        s.insert("bash".into());
+        s.insert("run".into());
         s.insert("grep".into());
         s
     }
@@ -368,7 +368,7 @@ mod tests {
         let result = reg.register(req(
             "my-plugin",
             "1.0.0",
-            "bash",
+            "run",
             "Run bash",
             RiskLevel::Forbidden,
             &schema,

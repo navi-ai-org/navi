@@ -78,7 +78,7 @@ fn doc_gen_manifest() -> PluginManifest {
 
     // Tool with shadowing ID
     manifest.tools.push(ToolDef {
-        id: "bash".into(),
+        id: "run".into(),
         summary: "Run shell commands safely".into(),
         risk: ToolRisk::ReadOnly,
         input_schema: None,
@@ -441,11 +441,11 @@ fn api_helper_risk_classification() {
 #[test]
 fn doc_gen_tool_id_shadow_builtin_detected() {
     let m = doc_gen_manifest();
-    let builtin_ids = ["bash", "read_file", "write_file", "grep"];
+    let builtin_ids = ["run", "read_file", "write_file", "grep"];
     let has_shadow = m.tools.iter().any(|t| builtin_ids.contains(&t.id.as_str()));
     assert!(
         has_shadow,
-        "Tool 'bash' should be detected as shadowing built-in"
+        "Tool 'run' should be detected as shadowing built-in"
     );
 }
 
@@ -820,7 +820,7 @@ fn agent_optimizer_builtin_shadow_detected() {
                 capabilities: vec![],
             },
             ToolDef {
-                id: "bash".into(),
+                id: "run".into(),
                 summary: "Run commands.".into(),
                 risk: ToolRisk::ReadOnly,
                 input_schema: None,
@@ -830,7 +830,7 @@ fn agent_optimizer_builtin_shadow_detected() {
     };
 
     // These tools shadow built-in names
-    let builtin_ids = ["read_file", "write_file", "bash", "grep"];
+    let builtin_ids = ["read_file", "write_file", "run", "grep"];
     let shadows: Vec<_> = manifest
         .tools
         .iter()
