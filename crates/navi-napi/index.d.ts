@@ -340,6 +340,20 @@ export class NaviNapiEngine {
     tokenBudget?: number | null,
     shortDescription?: string | null,
   ): Promise<JsonValue>;
+  /**
+   * Set/replace the thread goal and return a start-prompt for the first
+   * model turn. Returns `{ goal, startPrompt }`.
+   * @param tokenBudget Optional positive token budget (omit/null = unbounded).
+   * @param shortDescription Optional compact UI label (max 40 chars).
+   */
+  setGoalForHostTurn(
+    sessionId: string,
+    objective: string,
+    tokenBudget?: number | null,
+    shortDescription?: string | null,
+  ): Promise<JsonValue>;
+  /** Model-facing first-turn text after a host `setGoal` (no side effects). */
+  buildHostSetGoalUserPrompt(objective: string): string;
   /** Clear the goal and stop auto-continue. */
   clearGoal(sessionId: string): Promise<void>;
   /**
@@ -351,6 +365,13 @@ export class NaviNapiEngine {
   updateGoalChecklist(sessionId: string, tasks: JsonValue): Promise<JsonValue>;
   /** Host-only single checklist task status. */
   updateGoalTaskStatus(sessionId: string, taskId: number, status: string): Promise<JsonValue>;
+  // Plan mode
+  /** Current agent mode: `normal` | `plan`. */
+  agentMode(sessionId: string): string;
+  /** Enter plan mode (read-only exploration, no writes until approved). */
+  enterPlanMode(sessionId: string): Promise<void>;
+  /** Exit plan mode and resume normal execution. */
+  exitPlanMode(sessionId: string): Promise<void>;
   // Background tasks
   listBackgroundCommands(sessionId: string): Promise<JsonValue>;
   pollBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;
@@ -485,6 +506,23 @@ export class NaviNapiEngine {
   applyUpdate(info: UpdateInfo): Promise<void>;
   autoUpdateEnabled(): boolean;
   setAutoUpdate(enabled: boolean): void;
+  // Computer use (OS automation — ADR 0016)
+  /** Whether the `computer-use` feature is compiled into this build. */
+  computerUseAvailable(): boolean;
+  /** Platform backend name (`"windows"`, `"macos"`, `"linux"`, or `"unsupported"`). */
+  computerUsePlatform(): string;
+  /** Snapshot of the computer-use configuration (feature flag, platform, deny-list). */
+  computerUseConfig(): JsonValue;
+  /** Replaces the computer-use deny-list in the in-memory config. For persistence, use config save APIs. */
+  setComputerUseDenyApps(apps: string[]): void;
+  /** Create an ACP server backed by this engine (speaks Agent Client Protocol over stdio). */
+  acpServer(): NaviNapiAcpServer;
+}
+
+/** ACP server backed by the engine. Speaks Agent Client Protocol over stdio. */
+export class NaviNapiAcpServer {
+  /** Serve ACP over the current process stdio until the peer disconnects. */
+  serveStdio(): Promise<void>;
 }
 
 export class NaviNapiEventStream {

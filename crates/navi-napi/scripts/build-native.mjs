@@ -79,7 +79,9 @@ if (targetTriple) {
 //   - macOS x64: ort-sys only ships prebuilts for arm64; x86_64 cross-compile
 //     from an arm64 runner has no matching xcframework.
 if (platform === 'win32' || (platform === 'darwin' && arch === 'x64')) {
-  cargoArgs.push('--no-default-features');
+  // Disable voice-onnx (ort-sys link issues on win32 / no prebuilts on macOS x64)
+  // but keep computer-use (needed on all platforms, especially Windows UIA).
+  cargoArgs.push('--no-default-features', '--features', 'computer-use');
 }
 
 console.log(`Building navi-napi (${profile}${targetTriple ? `, target=${targetTriple}` : ''})...`);
