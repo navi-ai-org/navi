@@ -8,6 +8,8 @@
   import SessionList from "./SessionList.svelte";
   import ChatView from "./ChatView.svelte";
   import ModelSelector from "./ModelSelector.svelte";
+  import PermissionMode from "./PermissionMode.svelte";
+  import TokenUsage from "./TokenUsage.svelte";
 
   let {
     onLogout,
@@ -76,7 +78,11 @@
       <span class="topbar-title truncate">
         {$activeSession.title ?? $activeSession.id}
       </span>
-      <ModelSelector />
+      <div class="topbar-controls">
+        <TokenUsage />
+        <PermissionMode />
+        <ModelSelector />
+      </div>
       <div class="ws-indicator" data-status={$wsStatus} title={wsStatusLabel[$wsStatus] ?? ""}>
         <span class="ws-dot"></span>
         <span class="ws-label text-xs">{wsStatusLabel[$wsStatus] ?? ""}</span>
@@ -175,6 +181,14 @@
     font-size: 0.9rem;
     font-weight: 500;
     color: var(--text);
+    min-width: 0;
+  }
+
+  .topbar-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
   }
 
   .ws-indicator {

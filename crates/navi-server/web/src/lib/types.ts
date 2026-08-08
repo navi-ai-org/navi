@@ -18,7 +18,14 @@ export type RuntimeEventKind =
   | { ApprovalResolved: ApprovalDecision }
   | { QuestionRequired: QuestionRequest }
   | { QuestionResolved: QuestionResponse }
-  | { TokensUpdated: TokensUpdatedPayload }
+  | {
+      TokensUpdated: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_tokens?: number;
+        cache_read_tokens?: number;
+      };
+    }
   | { TurnCompleted: { turn_id: string; text: string } }
   | { SessionFinished: { session_id: string } }
   | { Error: { message: string } }
@@ -34,7 +41,32 @@ export type RuntimeEventKind =
     }
   | { AutoCompactFailed: { reason: string } }
   | { PlanProposed: { session_id: string; title: string; steps: string[] } }
-  | { AgentModeChanged: { session_id: string; mode: string } };
+  | { AgentModeChanged: { session_id: string; mode: string } }
+  | {
+      PlanReviewRequired: {
+        id: string;
+        plan_id: string;
+        title: string;
+        description: string;
+        steps: string[];
+        body_markdown?: string;
+        plan_file_path?: string;
+      };
+    }
+  | {
+      PlanReviewResolved: {
+        id: string;
+        plan_id: string;
+        decision: "approve" | "request_changes" | "quit";
+        freeform?: string;
+      };
+    }
+  | {
+      SudoPasswordRequired: {
+        id: string;
+        command_summary: string;
+      };
+    };
 
 export interface RuntimeEvent {
   version: number;
@@ -102,13 +134,6 @@ export interface QuestionResponse {
   question_id: string;
   answer?: string;
   custom?: string;
-}
-
-export interface TokensUpdatedPayload {
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_tokens: number;
-  cache_read_tokens: number;
 }
 
 export interface ContentPart {
@@ -203,4 +228,92 @@ export interface PendingQuestion {
   questionId: string;
   question: string;
   options?: string[];
+}
+
+// ── Permission mode ──────────────────────────────────────────────────────
+
+export type PermissionMode = "restricted" | "accept_edits" | "auto" | "yolo";
+
+// ── Agent mode ───────────────────────────────────────────────────────────
+
+export type AgentMode = "default" | "plan";
+
+// ── Token usage ──────────────────────────────────────────────────────────
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+// ── Plan review ──────────────────────────────────────────────────────────
+
+export interface PlanReviewRequestPayload {
+  id: string;
+  planId: string;
+  title: string;
+  description: string;
+  steps: string[];
+  bodyMarkdown?: string;
+  planFilePath?: string;
+}
+
+export type PlanReviewDecision = "approve" | "request_changes" | "quit";
+
+export interface PendingPlanReview {
+  id: string;
+  planId: string;
+  title: string;
+  description: string;
+  steps: string[];
+  bodyMarkdown?: string;
+}
+
+// ── Sudo password ────────────────────────────────────────────────────────
+
+export interface PendingSudoPrompt {
+  id: string;
+  commandSummary: string;
+}
+
+// ── Auto-compact notification ────────────────────────────────────────────
+
+export interface CompactNotification {
+  type: "started" | "completed" | "failed";
+  tokensSaved?: number;
+  summary?: string;
+  reason?: string;
+}
+
+// ── Goal ─────────────────────────────────────────────────────────────────
+
+export type GoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usage_limited"
+  | "budget_limited"
+  | "complete";
+
+export interface SessionGoal {
+  sessionId: string;
+  goalId: string;
+  objective: string;
+  shortDescription?: string;
+  status: GoalStatus;
+  tokenBudget?: number;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  consecutiveBlockedTurns: number;
+  blockReason?: string;
+  checklist: GoalTask[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface GoalTask {
+  id: number;
+  description: string;
+  status: "pending" | "in_progress" | "done" | "verified" | "skipped";
+  verification?: string;
+  verified: boolean;
 }

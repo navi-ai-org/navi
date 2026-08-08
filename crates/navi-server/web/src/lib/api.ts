@@ -4,6 +4,10 @@ import type {
   ModelInfo,
   TurnResponse,
   SessionSnapshot,
+  PermissionMode,
+  AgentMode,
+  PlanReviewDecision,
+  SessionGoal,
 } from "./types";
 
 // ── API client ───────────────────────────────────────────────────────────
@@ -195,6 +199,125 @@ export interface ConfigSnapshot {
 
 export async function getConfig(): Promise<ConfigSnapshot> {
   return apiFetch<ConfigSnapshot>("/config");
+}
+
+// ── Permission mode ──────────────────────────────────────────────────────
+
+export async function getPermissionMode(): Promise<PermissionMode> {
+  const res = await apiFetch<{ mode: PermissionMode }>("/permission-mode");
+  return res.mode;
+}
+
+export async function setPermissionMode(
+  mode: PermissionMode,
+): Promise<PermissionMode> {
+  const res = await apiFetch<{ mode: PermissionMode }>("/permission-mode", {
+    method: "POST",
+    body: JSON.stringify({ mode }),
+  });
+  return res.mode;
+}
+
+// ── Agent mode / Plan ────────────────────────────────────────────────────
+
+export async function getAgentMode(sessionId: string): Promise<AgentMode> {
+  const res = await apiFetch<{ mode: AgentMode }>(
+    `/sessions/${sessionId}/mode`,
+  );
+  return res.mode;
+}
+
+export async function enterPlanMode(sessionId: string): Promise<void> {
+  await apiFetch(`/sessions/${sessionId}/plan/enter`, { method: "POST" });
+}
+
+export async function exitPlanMode(sessionId: string): Promise<void> {
+  await apiFetch(`/sessions/${sessionId}/plan/exit`, { method: "POST" });
+}
+
+export async function submitPlanReview(
+  sessionId: string,
+  id: string,
+  planId: string,
+  decision: PlanReviewDecision,
+  freeform?: string,
+): Promise<{ consumed: boolean }> {
+  return apiFetch(`/sessions/${sessionId}/plan/review`, {
+    method: "POST",
+    body: JSON.stringify({ id, planId, decision, freeform: freeform ?? "" }),
+  });
+}
+
+// ── Sudo password ────────────────────────────────────────────────────────
+
+export async function submitSudoPassword(
+  sessionId: string,
+  id: string,
+  password: string,
+): Promise<{ consumed: boolean }> {
+  return apiFetch(`/sessions/${sessionId}/sudo`, {
+    method: "POST",
+    body: JSON.stringify({ id, password }),
+  });
+}
+
+export async function cancelSudoPrompt(
+  sessionId: string,
+  id: string,
+): Promise<{ consumed: boolean }> {
+  return apiFetch(`/sessions/${sessionId}/sudo`, {
+    method: "POST",
+    body: JSON.stringify({ id, password: "" }),
+  });
+}
+
+// ── Session rename ───────────────────────────────────────────────────────
+
+export async function renameSession(
+  sessionId: string,
+  title: string,
+): Promise<{ renamed: boolean }> {
+  return apiFetch(`/sessions/${sessionId}/rename`, {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+// ── Goal ─────────────────────────────────────────────────────────────────
+
+export async function setGoal(
+  sessionId: string,
+  objective: string,
+  tokenBudget?: number,
+): Promise<SessionGoal> {
+  return apiFetch(`/sessions/${sessionId}/goal`, {
+    method: "POST",
+    body: JSON.stringify({ objective, tokenBudget }),
+  });
+}
+
+export async function getGoal(sessionId: string): Promise<SessionGoal | null> {
+  try {
+    return await apiFetch<SessionGoal>(`/sessions/${sessionId}/goal`);
+  } catch {
+    return null;
+  }
+}
+
+export async function clearGoal(sessionId: string): Promise<void> {
+  await apiFetch(`/sessions/${sessionId}/goal`, { method: "DELETE" });
+}
+
+// ── Skills ───────────────────────────────────────────────────────────────
+
+export async function setSessionSkills(
+  sessionId: string,
+  skills: string[],
+): Promise<void> {
+  await apiFetch(`/sessions/${sessionId}/skills`, {
+    method: "POST",
+    body: JSON.stringify({ skills }),
+  });
 }
 
 export { ApiError };

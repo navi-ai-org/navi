@@ -5,15 +5,31 @@
     isStreaming,
     pendingApproval,
     pendingQuestion,
+    pendingPlanReview,
+    pendingSudo,
     wsStatus,
     error,
+    tokenUsage,
+    compactNotification,
+    agentMode,
     makeMessage,
   } from "../lib/stores";
-  import { sendTurn, cancelTurn, approveTool, answerQuestion } from "../lib/api";
+  import {
+    sendTurn,
+    cancelTurn,
+    approveTool,
+    answerQuestion,
+    submitPlanReview,
+    submitSudoPassword,
+    cancelSudoPrompt,
+  } from "../lib/api";
   import { EventStream } from "../lib/ws";
   import type { RuntimeEvent, ToolCallInfo } from "../lib/types";
   import ApprovalCard from "./ApprovalCard.svelte";
   import QuestionCard from "./QuestionCard.svelte";
+  import PlanReviewCard from "./PlanReviewCard.svelte";
+  import SudoPromptCard from "./SudoPromptCard.svelte";
+  import CompactNotification from "./CompactNotification.svelte";
   import Markdown from "./Markdown.svelte";
 
   let inputText = $state("");
@@ -34,6 +50,11 @@
       case "AssistantDelta": {
         const text = (payload?.text as string) ?? "";
         appendToLastAssistant(text);
+        break;
+      }
+      case "AssistantThinkingDelta": {
+        const text = (payload?.text as string) ?? "";
+        appendToLastAssistantThinking(text);
         break;
       }
       case "ToolStarted": {
@@ -60,6 +81,10 @@
         });
         break;
       }
+      case "ApprovalResolved": {
+        pendingApproval.set(null);
+        break;
+      }
       case "QuestionRequired": {
         const q = payload as {
           question_id: string;
@@ -70,6 +95,55 @@
           questionId: q.question_id,
           question: q.question,
           options: q.options,
+        });
+        break;
+      }
+      case "QuestionResolved": {
+        pendingQuestion.set(null);
+        break;
+      }
+      case "PlanReviewRequired": {
+        const req = payload as {
+          id: string;
+          plan_id: string;
+          title: string;
+          description: string;
+          steps: string[];
+          body_markdown?: string;
+        };
+        pendingPlanReview.set({
+          id: req.id,
+          planId: req.plan_id,
+          title: req.title,
+          description: req.description,
+          steps: req.steps,
+          bodyMarkdown: req.body_markdown,
+        });
+        break;
+      }
+      case "PlanReviewResolved": {
+        pendingPlanReview.set(null);
+        break;
+      }
+      case "SudoPasswordRequired": {
+        const req = payload as {
+          id: string;
+          command_summary: string;
+        };
+        pendingSudo.set({
+          id: req.id,
+          commandSummary: req.command_summary,
+        });
+        break;
+      }
+      case "TokensUpdated": {
+        const t = payload as {
+          input_tokens: number;
+          output_tokens: number;
+        };
+        tokenUsage.set({
+          inputTokens: t.input_tokens,
+          outputTokens: t.output_tokens,
         });
         break;
       }
@@ -92,7 +166,62 @@
         }
         break;
       }
+      case "SessionFinished": {
+        isStreaming.set(false);
+        break;
+      }
+      case "AutoCompactStarted": {
+        compactNotification.set({ type: "started" });
+        break;
+      }
+      case "AutoCompactCompleted": {
+        const c = payload as {
+          tokens_saved: number;
+          summary: string;
+        };
+        compactNotification.set({
+          type: "completed",
+          tokensSaved: c.tokens_saved,
+          summary: c.summary,
+        });
+        break;
+      }
+      case "AutoCompactFailed": {
+        const r = payload as { reason: string };
+        compactNotification.set({ type: "failed", reason: r.reason });
+        break;
+      }
+      case "PlanProposed": {
+        // Plan proposed in plan mode — show as system message
+        const title = (payload as { title: string })?.title ?? "Plan";
+        const steps = (payload as { steps: string[] })?.steps ?? [];
+        const planText = `**Plan: ${title}**\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`;
+        messages.update((m) => [
+          ...m,
+          makeMessage("assistant", planText),
+        ]);
+        break;
+      }
+      case "AgentModeChanged": {
+        const mode = (payload as { mode: string })?.mode ?? "default";
+        agentMode.set(mode as "default" | "plan");
+        break;
+      }
     }
+  }
+
+  function appendToLastAssistantThinking(text: string) {
+    messages.update((msgs) => {
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant" && last.streaming) {
+        last.thinking = (last.thinking ?? "") + text;
+        return [...msgs];
+      }
+      // Create a new streaming assistant message with thinking
+      const msg = makeMessage("assistant", "", true);
+      msg.thinking = text;
+      return [...msgs, msg];
+    });
   }
 
   function appendToLastAssistant(text: string) {
@@ -240,6 +369,52 @@
     }
   }
 
+  // ── Plan review ─────────────────────────────────────────────────────────
+
+  async function handlePlanReview(
+    decision: "approve" | "request_changes" | "quit",
+    freeform?: string,
+  ) {
+    if (!$activeSession || !$pendingPlanReview) return;
+    const p = $pendingPlanReview;
+    pendingPlanReview.set(null);
+    try {
+      await submitPlanReview(
+        $activeSession.id,
+        p.id,
+        p.planId,
+        decision,
+        freeform,
+      );
+    } catch (err) {
+      error.set(err instanceof Error ? err.message : "Plan review failed");
+    }
+  }
+
+  // ── Sudo password ───────────────────────────────────────────────────────
+
+  async function handleSudoSubmit(password: string) {
+    if (!$activeSession || !$pendingSudo) return;
+    const s = $pendingSudo;
+    pendingSudo.set(null);
+    try {
+      await submitSudoPassword($activeSession.id, s.id, password);
+    } catch (err) {
+      error.set(err instanceof Error ? err.message : "Sudo submit failed");
+    }
+  }
+
+  async function handleSudoCancel() {
+    if (!$activeSession || !$pendingSudo) return;
+    const s = $pendingSudo;
+    pendingSudo.set(null);
+    try {
+      await cancelSudoPrompt($activeSession.id, s.id);
+    } catch (err) {
+      error.set(err instanceof Error ? err.message : "Sudo cancel failed");
+    }
+  }
+
   $effect(() => {
     $messages;
     scrollToBottom();
@@ -274,11 +449,20 @@
               <span class="tool-label text-mono text-sm">{msg.toolName}</span>
             </div>
           {:else if msg.role === "assistant"}
+            {#if msg.thinking}
+              <details class="thinking-block">
+                <summary class="thinking-summary">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.5.8a.6.6 0 01-.997.057L12 12.5l-1.06 1.743a.6.6 0 01-.998-.057l-.5-.8z"/></svg>
+                  <span>Thinking</span>
+                </summary>
+                <div class="thinking-content text-sm text-muted">{msg.thinking}</div>
+              </details>
+            {/if}
             <div class="bubble assistant-bubble">
               {#if msg.text}
                 <Markdown content={msg.text} />
               {/if}
-              {#if msg.streaming}
+              {#if msg.streaming && !msg.text}
                 <span class="typing-cursor"></span>
               {/if}
             </div>
@@ -360,6 +544,30 @@
 
   {#if $pendingQuestion}
     <QuestionCard question={$pendingQuestion} onAnswer={handleAnswer} />
+  {/if}
+
+  {#if $pendingPlanReview}
+    <PlanReviewCard
+      review={$pendingPlanReview}
+      onApprove={() => handlePlanReview("approve")}
+      onRequestChanges={(freeform) => handlePlanReview("request_changes", freeform)}
+      onQuit={() => handlePlanReview("quit")}
+    />
+  {/if}
+
+  {#if $pendingSudo}
+    <SudoPromptCard
+      prompt={$pendingSudo}
+      onSubmit={handleSudoSubmit}
+      onCancel={handleSudoCancel}
+    />
+  {/if}
+
+  {#if $compactNotification}
+    <CompactNotification
+      notification={$compactNotification}
+      onDismiss={() => compactNotification.set(null)}
+    />
   {/if}
 
   <!-- Error banner -->
@@ -498,6 +706,52 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-bottom-left-radius: var(--radius-xs);
+  }
+
+  /* Thinking block */
+  .thinking-block {
+    margin-bottom: 0.3rem;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    overflow: hidden;
+  }
+
+  .thinking-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    user-select: none;
+    list-style: none;
+  }
+
+  .thinking-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .thinking-summary::before {
+    content: "▸";
+    font-size: 0.7rem;
+    transition: transform var(--transition);
+  }
+
+  .thinking-block[open] .thinking-summary::before {
+    transform: rotate(90deg);
+  }
+
+  .thinking-content {
+    padding: 0.5rem 0.7rem;
+    border-top: 1px solid var(--border-subtle);
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.5;
+    max-height: 200px;
+    overflow-y: auto;
   }
 
   .system-bubble {

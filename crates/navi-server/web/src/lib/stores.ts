@@ -4,6 +4,12 @@ import type {
   ChatMessage,
   PendingApproval,
   PendingQuestion,
+  PendingPlanReview,
+  PendingSudoPrompt,
+  PermissionMode,
+  AgentMode,
+  TokenUsage,
+  CompactNotification,
   SessionInfo,
   SavedSessionInfo,
   ModelInfo,
@@ -34,9 +40,29 @@ export const pendingApproval: Writable<PendingApproval | null> = writable(null);
 
 export const pendingQuestion: Writable<PendingQuestion | null> = writable(null);
 
+export const pendingPlanReview: Writable<PendingPlanReview | null> =
+  writable(null);
+
+export const pendingSudo: Writable<PendingSudoPrompt | null> = writable(null);
+
 export const isStreaming: Writable<boolean> = writable(false);
 
 export const wsStatus: Writable<ConnectionStatus> = writable("disconnected");
+
+// ── Permission / Agent mode ──────────────────────────────────────────────
+
+export const permissionMode: Writable<PermissionMode> = writable("restricted");
+
+export const agentMode: Writable<AgentMode> = writable("default");
+
+// ── Token usage ──────────────────────────────────────────────────────────
+
+export const tokenUsage: Writable<TokenUsage | null> = writable(null);
+
+// ── Compact notification ─────────────────────────────────────────────────
+
+export const compactNotification: Writable<CompactNotification | null> =
+  writable(null);
 
 // ── Models ───────────────────────────────────────────────────────────────
 
@@ -70,7 +96,11 @@ export function clearChat(): void {
   messages.set([]);
   pendingApproval.set(null);
   pendingQuestion.set(null);
+  pendingPlanReview.set(null);
+  pendingSudo.set(null);
   isStreaming.set(false);
+  tokenUsage.set(null);
+  compactNotification.set(null);
 }
 
 // ── Snapshot → ChatMessage conversion ────────────────────────────────────
@@ -166,4 +196,6 @@ export function clearAllOnLogout(): void {
   savedSessions.set([]);
   models.set([]);
   error.set(null);
+  permissionMode.set("restricted");
+  agentMode.set("default");
 }

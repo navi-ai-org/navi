@@ -15,6 +15,8 @@
     loadSavedSession,
     deleteSavedSession,
     getSessionSnapshot,
+    closeSession,
+    renameSession,
   } from "../lib/api";
   import type { SessionInfo } from "../lib/types";
 
@@ -27,6 +29,9 @@
   let initialLoaded = $state(false);
   let localError = $state("");
   let confirmingDelete = $state<string | null>(null);
+  let menuOpen = $state<string | null>(null);
+  let renaming = $state<string | null>(null);
+  let renameValue = $state("");
 
   async function refresh() {
     loading = true;
@@ -96,6 +101,10 @@
       try {
         await deleteSavedSession(id);
         confirmingDelete = null;
+        if ($activeSession?.id === id) {
+          activeSession.set(null);
+          clearChat();
+        }
         await refresh();
       } catch (err) {
         localError = err instanceof Error ? err.message : "Failed to delete session";
@@ -103,6 +112,53 @@
     } else {
       confirmingDelete = id;
     }
+  }
+
+  async function handleCloseActive(id: string, e: Event) {
+    e.stopPropagation();
+    menuOpen = null;
+    try {
+      await closeSession(id);
+      if ($activeSession?.id === id) {
+        activeSession.set(null);
+        clearChat();
+      }
+      await refresh();
+    } catch (err) {
+      localError = err instanceof Error ? err.message : "Failed to close session";
+    }
+  }
+
+  function startRename(id: string, currentTitle: string, e: Event) {
+    e.stopPropagation();
+    menuOpen = null;
+    renaming = id;
+    renameValue = currentTitle;
+  }
+
+  async function confirmRename(id: string, e: Event) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!renameValue.trim()) {
+      renaming = null;
+      return;
+    }
+    try {
+      await renameSession(id, renameValue.trim());
+      if ($activeSession?.id === id) {
+        activeSession.update((s) => (s ? { ...s, title: renameValue.trim() } : s));
+      }
+      renaming = null;
+      await refresh();
+    } catch (err) {
+      localError = err instanceof Error ? err.message : "Failed to rename session";
+      renaming = null;
+    }
+  }
+
+  function toggleMenu(id: string, e: Event) {
+    e.stopPropagation();
+    menuOpen = menuOpen === id ? null : id;
   }
 
   async function selectSession(info: SessionInfo, snapshot: { events: import("../lib/types").AgentEvent[] } | null) {
@@ -198,15 +254,32 @@
     <div class="section">
       <h3>Active <span class="count">{$sessions.length}</span></h3>
       {#each $sessions as sid}
-        <button
-          class="session-item"
+        <div
+          class="session-item active-row"
           class:active={$activeSession?.id === sid}
+          role="button"
+          tabindex="0"
           onclick={() => handleSelectActive(sid)}
-          disabled={loading}
+          onkeydown={(e) => { if (e.key === "Enter") handleSelectActive(sid); }}
         >
           <div class="session-icon active-icon"></div>
           <span class="truncate session-id">{sid}</span>
-        </button>
+          <button class="menu-toggle" onclick={(e) => toggleMenu(sid, e)} aria-label="Session options">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+          {#if menuOpen === sid}
+            <div class="ctx-menu fade-in-up" role="menu" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+              <button class="ctx-item" role="menuitem" onclick={(e) => startRename(sid, sid, e)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                Rename
+              </button>
+              <button class="ctx-item danger" role="menuitem" onclick={(e) => handleCloseActive(sid, e)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                Close
+              </button>
+            </div>
+          {/if}
+        </div>
       {/each}
     </div>
   {/if}
@@ -216,40 +289,60 @@
     <div class="section">
       <h3>Saved <span class="count">{$savedSessions.length}</span></h3>
       {#each $savedSessions as s}
-        <div
-          class="session-item saved"
-          class:active={$activeSession?.id === s.id}
-          class:confirming={confirmingDelete === s.id}
-          onclick={() => handleLoadSaved(s.id)}
-          role="button"
-          tabindex="0"
-          onkeydown={(e) => { if (e.key === "Enter") handleLoadSaved(s.id); }}
-        >
-          <div class="session-info">
-            <span class="truncate session-title">{s.title || s.id}</span>
-            <div class="session-meta">
-              <span class="text-xs text-faint">{s.message_count} msgs</span>
-              {#if s.updated_at}
-                <span class="text-xs text-faint">· {formatRelativeTime(s.updated_at)}</span>
-              {/if}
-            </div>
-          </div>
-          <button
-            class="btn-delete"
+        {#if renaming === s.id}
+          <form class="rename-form" onsubmit={(e) => confirmRename(s.id, e)}>
+            <input bind:value={renameValue} placeholder="New title" />
+            <button type="submit" class="btn-primary btn-sm">Save</button>
+            <button type="button" class="btn-secondary btn-sm" onclick={(e) => { e.stopPropagation(); renaming = null; }}>Cancel</button>
+          </form>
+        {:else}
+          <div
+            class="session-item saved"
+            class:active={$activeSession?.id === s.id}
             class:confirming={confirmingDelete === s.id}
-            onclick={(e) => handleDeleteSaved(s.id, e)}
-            aria-label={confirmingDelete === s.id ? "Confirm delete" : "Delete session"}
+            onclick={() => handleLoadSaved(s.id)}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => { if (e.key === "Enter") handleLoadSaved(s.id); }}
           >
-            {#if confirmingDelete === s.id}
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-            {:else}
-              ×
+            <div class="session-info">
+              <span class="truncate session-title">{s.title || s.id}</span>
+              <div class="session-meta">
+                <span class="text-xs text-faint">{s.message_count} msgs</span>
+                {#if s.updated_at}
+                  <span class="text-xs text-faint">· {formatRelativeTime(s.updated_at)}</span>
+                {/if}
+              </div>
+            </div>
+            <button class="menu-toggle" onclick={(e) => toggleMenu(s.id, e)} aria-label="Session options">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            {#if menuOpen === s.id}
+              <div class="ctx-menu fade-in-up" role="menu" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                <button class="ctx-item" role="menuitem" onclick={(e) => startRename(s.id, s.title || s.id, e)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Rename
+                </button>
+                <button class="ctx-item danger" role="menuitem" onclick={(e) => handleDeleteSaved(s.id, e)}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  Delete
+                </button>
+              </div>
             {/if}
-          </button>
-        </div>
+            {#if confirmingDelete === s.id && menuOpen !== s.id}
+              <button
+                class="btn-delete confirming"
+                onclick={(e) => handleDeleteSaved(s.id, e)}
+                aria-label="Confirm delete"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            {/if}
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -455,6 +548,97 @@
     color: var(--danger);
     background: var(--danger);
     color: #fff;
+  }
+
+  /* Active row with menu */
+  .active-row {
+    position: relative;
+  }
+
+  .active-row .session-id {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .menu-toggle {
+    background: transparent;
+    border: none;
+    color: var(--text-faint);
+    padding: 0.2rem;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity var(--transition), color var(--transition);
+    flex-shrink: 0;
+  }
+
+  .session-item:hover .menu-toggle,
+  .session-item.active .menu-toggle {
+    opacity: 1;
+  }
+
+  .menu-toggle:hover {
+    color: var(--text);
+    background: var(--bg-hover);
+  }
+
+  .ctx-menu {
+    position: absolute;
+    right: 0.5rem;
+    top: 100%;
+    z-index: 50;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    padding: 0.25rem;
+    min-width: 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.45rem 0.6rem;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-xs);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    transition: background var(--transition), color var(--transition);
+  }
+
+  .ctx-item:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .ctx-item.danger:hover {
+    color: var(--danger);
+    background: var(--danger-subtle);
+  }
+
+  .rename-form {
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.4rem;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent);
+  }
+
+  .rename-form input {
+    flex: 1;
+    font-size: 0.85rem;
   }
 
   .error {
