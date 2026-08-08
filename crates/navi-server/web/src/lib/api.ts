@@ -3,6 +3,7 @@ import type {
   SavedSessionInfo,
   ModelInfo,
   TurnResponse,
+  SessionSnapshot,
 } from "./types";
 
 // ── API client ───────────────────────────────────────────────────────────
@@ -109,6 +110,12 @@ export async function loadSavedSession(sessionId: string): Promise<SessionInfo> 
   return apiFetch<SessionInfo>(`/sessions/load/${sessionId}`, {
     method: "POST",
   });
+}
+
+export async function getSessionSnapshot(
+  sessionId: string,
+): Promise<SessionSnapshot> {
+  return apiFetch<SessionSnapshot>(`/sessions/${sessionId}/snapshot`);
 }
 
 export async function closeSession(sessionId: string): Promise<void> {

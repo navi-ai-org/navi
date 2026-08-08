@@ -7,6 +7,7 @@
   } from "../lib/stores";
   import SessionList from "./SessionList.svelte";
   import ChatView from "./ChatView.svelte";
+  import ModelSelector from "./ModelSelector.svelte";
 
   let {
     onLogout,
@@ -21,7 +22,13 @@
 <div class="main-view">
   <!-- Sidebar overlay (mobile) -->
   {#if $showSidebar}
-    <div class="sidebar-overlay" onclick={() => showSidebar.set(false)}></div>
+    <div
+      class="sidebar-overlay"
+      onclick={() => showSidebar.set(false)}
+      role="button"
+      tabindex="-1"
+      aria-label="Close sidebar"
+    ></div>
   {/if}
 
   <!-- Sidebar -->
@@ -40,10 +47,14 @@
     {/if}
   </div>
 
-  <!-- Top bar (mobile) -->
+  <!-- Top bar (always visible when session active) -->
   {#if $activeSession}
     <div class="topbar">
-      <button class="btn-secondary topbar-btn" onclick={toggleSidebar}>
+      <button
+        class="btn-secondary topbar-btn"
+        onclick={toggleSidebar}
+        aria-label="Toggle sidebar"
+      >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="3" y1="6" x2="21" y2="6" />
           <line x1="3" y1="12" x2="21" y2="12" />
@@ -53,6 +64,7 @@
       <span class="topbar-title truncate">
         {$activeSession.title ?? $activeSession.id}
       </span>
+      <ModelSelector />
       <span class="ws-status-dot" data-status={$wsStatus}></span>
     </div>
   {/if}
@@ -124,7 +136,7 @@
     height: 44px;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border);
-    display: none;
+    display: flex;
     align-items: center;
     gap: 0.5rem;
     padding: 0 0.5rem;
@@ -163,13 +175,7 @@
     background: var(--danger);
   }
 
-  @media (max-width: 768px) {
-    .topbar {
-      display: flex;
-    }
-
-    .chat-area {
-      padding-top: 44px;
-    }
+  .chat-area {
+    padding-top: 44px;
   }
 </style>

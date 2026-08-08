@@ -12,71 +12,93 @@
   } from "../lib/stores";
   import { sendTurn, cancelTurn, approveTool, answerQuestion } from "../lib/api";
   import { EventStream } from "../lib/ws";
-  import type { RuntimeEvent, ChatMessage, ToolCallInfo } from "../lib/types";
+  import type { RuntimeEvent, ToolCallInfo } from "../lib/types";
   import ApprovalCard from "./ApprovalCard.svelte";
   import QuestionCard from "./QuestionCard.svelte";
+  import Markdown from "./Markdown.svelte";
 
   let inputText = $state("");
   let scrollContainer: HTMLDivElement | null = $state(null);
   let eventStream: EventStream | null = null;
 
   // ── Event handling ──────────────────────────────────────────────────────
+  //
+  // RuntimeEventKind is an externally-tagged Rust enum:
+  //   { "AssistantDelta": { "text": "..." } }
+  // The variant name is the single key of the `kind` object.
 
   function handleEvent(event: RuntimeEvent) {
-    const k = event.kind as { kind: string; [key: string]: unknown };
-    switch (k.kind) {
+    const kind = event.kind;
+    const keys = Object.keys(kind);
+    if (keys.length !== 1) return;
+    const variant = keys[0];
+    const payload = (kind as Record<string, Record<string, unknown>>)[variant];
+
+    switch (variant) {
       case "AssistantDelta": {
-        const text = (k as { text: string }).text;
+        const text = (payload?.text as string) ?? "";
         appendToLastAssistant(text);
         break;
       }
       case "AssistantThinkingDelta": {
-        // Thinking deltas are shown as a system message (optional).
+        // Could be shown in a collapsible "thinking" section.
+        // For now, ignored — not critical for MVP.
         break;
       }
       case "ToolStarted": {
-        const toolName = (k as { tool_name: string }).tool_name;
+        const toolName = (payload as { tool_name: string })?.tool_name ?? "tool";
         addToolCall(toolName, "started");
         break;
       }
       case "ToolCompleted": {
-        const toolName = (k as { tool_name: string }).tool_name;
-        const success = (k as { success: boolean }).success;
-        addToolCall(toolName, success ? "completed" : "failed");
+        const toolName = (payload as { tool_name?: string })?.tool_name ?? "tool";
+        const ok = (payload as { ok?: boolean })?.ok ?? true;
+        addToolCall(toolName, ok ? "completed" : "failed");
         break;
       }
       case "ApprovalRequired": {
+        const req = payload as {
+          request_id: string;
+          tool_name: string;
+          description: string;
+        };
         pendingApproval.set({
-          requestId: (k as { request_id: string }).request_id,
-          toolName: (k as { tool_name: string }).tool_name,
-          description: (k as { description: string }).description,
+          requestId: req.request_id,
+          toolName: req.tool_name,
+          description: req.description,
         });
         break;
       }
       case "QuestionRequired": {
+        const q = payload as {
+          question_id: string;
+          question: string;
+          options?: string[];
+        };
         pendingQuestion.set({
-          questionId: (k as { question_id: string }).question_id,
-          question: (k as { question: string }).question,
-          options: (k as { options?: string[] }).options,
+          questionId: q.question_id,
+          question: q.question,
+          options: q.options,
         });
         break;
       }
       case "TurnCompleted": {
-        const text = (k as { text: string }).text;
+        const text = (payload as { text: string })?.text ?? "";
         finalizeLastAssistant(text);
         isStreaming.set(false);
         break;
       }
       case "Error": {
-        error.set((k as { message: string }).message);
+        const message = (payload as { message: string })?.message ?? "Unknown error";
+        error.set(message);
         isStreaming.set(false);
         break;
       }
       case "SessionTitleUpdated": {
-        const title = (k as { title: string }).title;
-        activeSession.update((s) =>
-          s ? { ...s, title } : s,
-        );
+        const title = (payload as { title: string })?.title;
+        if (title) {
+          activeSession.update((s) => (s ? { ...s, title } : s));
+        }
         break;
       }
     }
@@ -89,7 +111,6 @@
         last.text += text;
         return [...msgs];
       }
-      // Create new assistant message
       return [...msgs, makeMessage("assistant", text, true)];
     });
     scrollToBottom();
@@ -99,14 +120,12 @@
     messages.update((msgs) => {
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.streaming) {
-        // Replace with final text if provided and non-empty.
         if (finalText) {
           last.text = finalText;
         }
         last.streaming = false;
         return [...msgs];
       }
-      // If no streaming message was created, add the final text.
       if (finalText) {
         return [...msgs, makeMessage("assistant", finalText)];
       }
@@ -146,13 +165,11 @@
     const session = $activeSession;
     if (!session) return;
 
-    // Disconnect previous stream
     if (eventStream) {
       eventStream.disconnect();
       eventStream = null;
     }
 
-    // Connect to new session's event stream
     eventStream = new EventStream(session.id);
     const unsubEvents = eventStream.onEvent(handleEvent);
     const unsubStatus = eventStream.onStatus((s) => wsStatus.set(s));
@@ -173,15 +190,12 @@
     const text = inputText.trim();
     if (!text || $isStreaming || !$activeSession) return;
 
-    // Add user message to UI immediately
     messages.update((m) => [...m, makeMessage("user", text)]);
     inputText = "";
     isStreaming.set(true);
     error.set(null);
 
     try {
-      // The turn runs detached on the server. Events stream via WebSocket.
-      // The HTTP response is just a confirmation.
       await sendTurn($activeSession.id, text);
     } catch (err) {
       isStreaming.set(false);
@@ -236,9 +250,24 @@
   <!-- Messages -->
   <div class="messages" bind:this={scrollContainer}>
     {#each $messages as msg (msg.id)}
-      <div class="message" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"}>
+      <div class="message" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"}>
         <div class="bubble">
-          <p>{msg.text}{#if msg.streaming}<span class="cursor">▋</span>{/if}</p>
+          {#if msg.role === "assistant" && msg.toolName}
+            <!-- Tool result message -->
+            <div class="tool-result">
+              <span class="tool-icon" class:ok={msg.toolResult?.ok} class:fail={!msg.toolResult?.ok}>
+                {msg.toolResult?.ok ? "✓" : "✗"}
+              </span>
+              <span class="tool-label text-mono text-sm">{msg.toolName}</span>
+            </div>
+          {:else if msg.role === "assistant"}
+            <!-- Assistant message with markdown -->
+            <Markdown content={msg.text} />
+            {#if msg.streaming}<span class="cursor">▋</span>{/if}
+          {:else}
+            <!-- User / system message -->
+            <p>{msg.text}</p>
+          {/if}
           {#if msg.toolCalls && msg.toolCalls.length > 0}
             <div class="tool-calls">
               {#each msg.toolCalls as tc}
@@ -338,6 +367,11 @@
     align-self: flex-start;
   }
 
+  .message.system {
+    align-self: center;
+    max-width: 90%;
+  }
+
   .bubble {
     padding: 0.6rem 0.9rem;
     border-radius: var(--radius);
@@ -358,6 +392,13 @@
     border-bottom-left-radius: 2px;
   }
 
+  .message.system .bubble {
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    font-size: 0.85rem;
+  }
+
   .bubble p {
     white-space: pre-wrap;
   }
@@ -369,6 +410,29 @@
   @keyframes blink {
     0%, 50% { opacity: 1; }
     51%, 100% { opacity: 0; }
+  }
+
+  .tool-result {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .tool-icon {
+    font-size: 0.9rem;
+    font-weight: bold;
+  }
+
+  .tool-icon.ok {
+    color: var(--success);
+  }
+
+  .tool-icon.fail {
+    color: var(--danger);
+  }
+
+  .tool-label {
+    color: var(--accent);
   }
 
   .tool-calls {

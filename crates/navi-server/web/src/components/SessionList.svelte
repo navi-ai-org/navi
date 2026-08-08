@@ -5,6 +5,8 @@
     activeSession,
     showSidebar,
     clearChat,
+    messages,
+    eventsToMessages,
   } from "../lib/stores";
   import {
     listSessions,
@@ -12,6 +14,7 @@
     startSession,
     loadSavedSession,
     deleteSavedSession,
+    getSessionSnapshot,
   } from "../lib/api";
   import type { SessionInfo } from "../lib/types";
 
@@ -45,7 +48,7 @@
     localError = "";
     try {
       const info = await startSession();
-      await selectSession(info);
+      await selectSession(info, null);
     } catch (err) {
       localError = err instanceof Error ? err.message : "Failed to create session";
     } finally {
@@ -58,9 +61,25 @@
     localError = "";
     try {
       const info = await loadSavedSession(id);
-      await selectSession(info);
+      // loadSavedSession returns SessionInfo with snapshot embedded
+      await selectSession(info, info.snapshot ?? null);
     } catch (err) {
       localError = err instanceof Error ? err.message : "Failed to load session";
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function handleSelectActive(sid: string) {
+    loading = true;
+    localError = "";
+    try {
+      // Fetch snapshot for active session to restore history
+      const snapshot = await getSessionSnapshot(sid);
+      await selectSession({ id: sid }, snapshot);
+    } catch (err) {
+      // If snapshot fails (e.g. session just created), start with empty chat
+      await selectSession({ id: sid }, null);
     } finally {
       loading = false;
     }
@@ -76,10 +95,17 @@
     }
   }
 
-  async function selectSession(info: SessionInfo) {
+  async function selectSession(info: SessionInfo, snapshot: { events: import("../lib/types").AgentEvent[] } | null) {
     clearChat();
     activeSession.set(info);
     showSidebar.set(false);
+
+    // Populate chat from snapshot events if available
+    if (snapshot && snapshot.events && snapshot.events.length > 0) {
+      const chatMessages = eventsToMessages(snapshot.events);
+      messages.set(chatMessages);
+    }
+
     await refresh();
   }
 
@@ -118,7 +144,7 @@
         <button
           class="session-item"
           class:active={$activeSession?.id === sid}
-          onclick={() => selectSession({ id: sid })}
+          onclick={() => handleSelectActive(sid)}
         >
           <span class="truncate">{sid}</span>
         </button>
