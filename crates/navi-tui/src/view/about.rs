@@ -17,7 +17,7 @@ pub(crate) const RELEASES_URL: &str = "https://github.com/navi-ai-org/navi/relea
 
 const ABOUT_BLURB: &str = "NAVI is the coding agent engine that lives in your terminal — \
 same harness for TUI, headless, edge, and apps. Multi-provider. Built in Rust. \
-Low memory. Local-first agent workflows with tools, memory, plugins, and voice.";
+Low memory. Local-first agent workflows with tools, memory, and plugins.";
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum AboutLink {

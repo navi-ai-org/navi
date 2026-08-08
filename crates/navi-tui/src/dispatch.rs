@@ -1373,7 +1373,7 @@ fn maybe_emit_session_recap(app: &mut TuiApp, assistant_text: &str) {
     let assistant = assistant_text.to_string();
     let tx = app.async_sender();
 
-    // Upgrade with a real model one-liner (plain voice). On failure, keep local.
+    // Upgrade with a real model one-liner (plain text). On failure, keep local.
     spawn_runtime_task(async move {
         let Ok(provider) =
             navi_sdk::build_provider_for_project_config(&loaded_config, &project_dir)
