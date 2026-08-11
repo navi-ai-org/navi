@@ -53,6 +53,7 @@ export class EventStream {
     };
 
     this.ws.onmessage = (event: MessageEvent) => {
+      if (typeof event.data !== "string" || !event.data.trim()) return;
       try {
         const data = JSON.parse(event.data) as RuntimeEvent;
         this.handlers.forEach((h) => h(data));

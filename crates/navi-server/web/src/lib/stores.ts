@@ -153,21 +153,54 @@ export function eventsToMessages(events: AgentEvent[]): ChatMessage[] {
       case "ToolRequested": {
         const inv = payload as unknown as ToolInvocation;
         toolInvocations.set(inv.id, inv);
+        result.push({
+          id: `msg-${++msgIdCounter}`,
+          role: "assistant",
+          text: "",
+          timestamp: Date.now(),
+          toolCalls: [
+            {
+              id: inv.id,
+              name: inv.tool_name,
+              status: "requested",
+              input: inv.input,
+            },
+          ],
+        });
         break;
       }
       case "ToolCompleted": {
         const invocationId = payload.invocation_id as string;
         const ok = payload.ok as boolean;
-        const invocation = toolInvocations.get(invocationId);
-        if (invocation) {
-          result.push({
-            id: `msg-${++msgIdCounter}`,
-            role: "assistant",
-            text: "",
-            toolName: invocation.tool_name,
-            toolResult: { ok, output: payload.output },
-            timestamp: Date.now(),
-          });
+        const toolMessage = result.find((message) =>
+          message.toolCalls?.some((call) => call.id === invocationId),
+        );
+        const toolCall = toolMessage?.toolCalls?.find(
+          (call) => call.id === invocationId,
+        );
+        if (toolCall) {
+          toolCall.status = ok ? "completed" : "failed";
+          toolCall.output = payload.output;
+          toolMessage!.toolCalls = [...toolMessage!.toolCalls!];
+        } else {
+          const invocation = toolInvocations.get(invocationId);
+          if (invocation) {
+            result.push({
+              id: `msg-${++msgIdCounter}`,
+              role: "assistant",
+              text: "",
+              timestamp: Date.now(),
+              toolCalls: [
+                {
+                  id: invocationId,
+                  name: invocation.tool_name,
+                  status: ok ? "completed" : "failed",
+                  input: invocation.input,
+                  output: payload.output,
+                },
+              ],
+            });
+          }
         }
         break;
       }

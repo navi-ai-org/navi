@@ -112,10 +112,9 @@ export interface ToolResult {
 }
 
 export interface ApprovalRequest {
-  request_id: string;
-  tool_name: string;
-  description: string;
-  input?: unknown;
+  id: string;
+  summary: string;
+  risk: string;
 }
 
 export interface ApprovalDecision {
@@ -181,16 +180,34 @@ export interface SessionInfo {
 
 export interface SavedSessionInfo {
   id: string;
-  title: string;
-  updated_at: string;
-  message_count: number;
+  title?: string | null;
+  project: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProviderAccountInfo {
+  providerId: string;
+  providerLabel: string;
+  envVar: string;
+  hasStoredKey: boolean;
+  status: {
+    providerId: string;
+    configured: boolean;
+    source?: string;
+    label: string;
+  };
 }
 
 export interface ModelInfo {
-  provider: string;
+  id: string;
   name: string;
+  providerId: string;
+  providerLabel?: string;
   label?: string;
-  context_window_tokens?: number;
+  contextWindowTokens?: number;
+  supportsThinking?: boolean;
+  reasoningLevels?: string[];
 }
 
 export interface TurnResponse {
@@ -213,9 +230,11 @@ export interface ChatMessage {
 }
 
 export interface ToolCallInfo {
+  id: string;
   name: string;
   status: "requested" | "started" | "completed" | "failed";
-  summary?: string;
+  input?: unknown;
+  output?: unknown;
 }
 
 export interface PendingApproval {

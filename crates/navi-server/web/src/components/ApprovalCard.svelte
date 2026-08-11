@@ -19,15 +19,15 @@
       <line x1="12" y1="9" x2="12" y2="13"/>
       <line x1="12" y1="17" x2="12.01" y2="17"/>
     </svg>
-    <span class="title">Approval Required</span>
+    <span class="title">Permissão necessária</span>
   </div>
   <div class="body">
     <span class="tool-name text-mono">{approval.toolName}</span>
     <p class="description">{approval.description}</p>
   </div>
   <div class="actions">
-    <button class="btn-secondary" onclick={onDeny}>Deny</button>
-    <button class="btn-success" onclick={onApprove}>Approve</button>
+    <button class="btn-secondary" onclick={onDeny}>Recusar</button>
+    <button class="btn-success" onclick={onApprove}>Aceitar</button>
   </div>
 </div>
 

@@ -22,6 +22,7 @@
     submitPlanReview,
     submitSudoPassword,
     cancelSudoPrompt,
+    startSession,
   } from "../lib/api";
   import { EventStream } from "../lib/ws";
   import type { RuntimeEvent, ToolCallInfo } from "../lib/types";
@@ -31,11 +32,22 @@
   import SudoPromptCard from "./SudoPromptCard.svelte";
   import CompactNotification from "./CompactNotification.svelte";
   import Markdown from "./Markdown.svelte";
+  import ModelSelector from "./ModelSelector.svelte";
+  import ThinkingBlock from "./ThinkingBlock.svelte";
+  import ToolCallRow from "./ToolCallRow.svelte";
 
   let inputText = $state("");
   let scrollContainer: HTMLDivElement | null = $state(null);
   let textareaEl: HTMLTextAreaElement | null = $state(null);
   let eventStream: EventStream | null = null;
+  let showScrollBottom = $state(false);
+  let toolNames = new Map<string, string>();
+
+  function handleScroll() {
+    if (!scrollContainer) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+    showScrollBottom = scrollHeight - scrollTop - clientHeight > 100;
+  }
 
   // ── Event handling ──────────────────────────────────────────────────────
 
@@ -57,27 +69,49 @@
         appendToLastAssistantThinking(text);
         break;
       }
+      case "ToolRequested": {
+        closeLastThinkingForTool();
+        const invocation = payload as { id: string; tool_name: string; input: unknown };
+        toolNames.set(invocation.id, invocation.tool_name);
+        upsertToolCall({
+          id: invocation.id,
+          name: invocation.tool_name,
+          status: "requested",
+          input: invocation.input,
+        });
+        break;
+      }
       case "ToolStarted": {
-        const toolName = (payload as { tool_name: string })?.tool_name ?? "tool";
-        addToolCall(toolName, "started");
+        const invocation = payload as { id: string; tool_name: string; input: unknown };
+        toolNames.set(invocation.id, invocation.tool_name);
+        upsertToolCall({
+          id: invocation.id,
+          name: invocation.tool_name,
+          status: "started",
+          input: invocation.input,
+        });
         break;
       }
       case "ToolCompleted": {
-        const toolName = (payload as { tool_name?: string })?.tool_name ?? "tool";
-        const ok = (payload as { ok?: boolean })?.ok ?? true;
-        addToolCall(toolName, ok ? "completed" : "failed");
+        const result = payload as { invocation_id: string; ok: boolean; output: unknown };
+        upsertToolCall({
+          id: result.invocation_id,
+          name: toolNames.get(result.invocation_id) ?? "tool",
+          status: result.ok ? "completed" : "failed",
+          output: result.output,
+        });
         break;
       }
       case "ApprovalRequired": {
         const req = payload as {
-          request_id: string;
-          tool_name: string;
-          description: string;
+          id: string;
+          summary: string;
+          risk: string;
         };
         pendingApproval.set({
-          requestId: req.request_id,
-          toolName: req.tool_name,
-          description: req.description,
+          requestId: req.id,
+          toolName: toolNames.get(req.id) ?? "Ação protegida",
+          description: req.summary,
         });
         break;
       }
@@ -149,12 +183,20 @@
       }
       case "TurnCompleted": {
         const text = (payload as { text: string })?.text ?? "";
+        settleToolCalls("completed");
         finalizeLastAssistant(text);
+        isStreaming.set(false);
+        break;
+      }
+      case "SessionSaved":
+      case "SessionFinished": {
+        settleToolCalls("completed");
         isStreaming.set(false);
         break;
       }
       case "Error": {
         const message = (payload as { message: string })?.message ?? "Unknown error";
+        settleToolCalls("failed");
         error.set(message);
         isStreaming.set(false);
         break;
@@ -164,10 +206,6 @@
         if (title) {
           activeSession.update((s) => (s ? { ...s, title } : s));
         }
-        break;
-      }
-      case "SessionFinished": {
-        isStreaming.set(false);
         break;
       }
       case "AutoCompactStarted": {
@@ -192,7 +230,6 @@
         break;
       }
       case "PlanProposed": {
-        // Plan proposed in plan mode — show as system message
         const title = (payload as { title: string })?.title ?? "Plan";
         const steps = (payload as { steps: string[] })?.steps ?? [];
         const planText = `**Plan: ${title}**\n\n${steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}`;
@@ -217,7 +254,6 @@
         last.thinking = (last.thinking ?? "") + text;
         return [...msgs];
       }
-      // Create a new streaming assistant message with thinking
       const msg = makeMessage("assistant", "", true);
       msg.thinking = text;
       return [...msgs, msg];
@@ -249,19 +285,67 @@
     });
   }
 
-  function addToolCall(name: string, status: ToolCallInfo["status"]) {
+  function closeLastThinkingForTool() {
     messages.update((msgs) => {
       const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant") {
-        const calls = last.toolCalls ?? [];
-        const existing = calls.find((c) => c.name === name);
-        if (existing) existing.status = status;
-        else calls.push({ name, status });
-        last.toolCalls = [...calls];
+      if (last?.role === "assistant" && last.thinking && last.streaming) {
+        last.streaming = false;
         return [...msgs];
       }
       return msgs;
     });
+  }
+
+  function settleToolCalls(status: "completed" | "failed") {
+    messages.update((msgs) => {
+      let changed = false;
+      const settled = msgs.map((message) => {
+        if (!message.toolCalls?.length) return message;
+        const calls = message.toolCalls.map((call) => {
+          if (call.status !== "requested" && call.status !== "started") return call;
+          changed = true;
+          return { ...call, status };
+        });
+        return changed ? { ...message, toolCalls: calls } : message;
+      });
+      return changed ? settled : msgs;
+    });
+  }
+
+  function completeTurnFromResponse(finalText: string) {
+    settleToolCalls("completed");
+    messages.update((msgs) => {
+      const last = msgs[msgs.length - 1];
+      if (last?.role === "assistant" && last.streaming) {
+        if (finalText) last.text = finalText;
+        last.streaming = false;
+        return [...msgs];
+      }
+      if (!finalText) return msgs;
+      const duplicate = [...msgs].reverse().find(
+        (message) => message.role === "assistant" && message.text === finalText,
+      );
+      return duplicate ? msgs : [...msgs, makeMessage("assistant", finalText)];
+    });
+    isStreaming.set(false);
+  }
+
+  function upsertToolCall(call: ToolCallInfo) {
+    messages.update((msgs) => {
+      for (const message of msgs) {
+        const existing = message.toolCalls?.find((item) => item.id === call.id);
+        if (existing) {
+          Object.assign(existing, call);
+          message.toolCalls = [...message.toolCalls!];
+          return [...msgs];
+        }
+      }
+
+      const toolMessage = makeMessage("assistant", "");
+      toolMessage.toolCalls = [call];
+      return [...msgs, toolMessage];
+    });
+    scrollToBottom();
   }
 
   function scrollToBottom() {
@@ -275,7 +359,7 @@
   function autoResize() {
     if (textareaEl) {
       textareaEl.style.height = "auto";
-      textareaEl.style.height = Math.min(textareaEl.scrollHeight, 140) + "px";
+      textareaEl.style.height = Math.min(textareaEl.scrollHeight, 160) + "px";
     }
   }
 
@@ -294,6 +378,7 @@
     const session = $activeSession;
     if (!session) return;
 
+    toolNames = new Map();
     if (eventStream) {
       eventStream.disconnect();
       eventStream = null;
@@ -312,12 +397,39 @@
     };
   });
 
+  $effect(() => {
+    if (
+      $activeSession
+      && !$isStreaming
+      && !$pendingApproval
+      && !$pendingQuestion
+      && !$pendingPlanReview
+      && !$pendingSudo
+    ) {
+      settleToolCalls("completed");
+    }
+  });
+
   // ── Send message ────────────────────────────────────────────────────────
 
   async function handleSend(e?: Event) {
     e?.preventDefault();
     const text = inputText.trim();
-    if (!text || $isStreaming || !$activeSession) return;
+    if (!text || $isStreaming) return;
+
+    let session = $activeSession;
+    if (!session) {
+      isStreaming.set(true);
+      error.set(null);
+      try {
+        session = await startSession();
+        activeSession.set(session);
+      } catch (err) {
+        isStreaming.set(false);
+        error.set(err instanceof Error ? err.message : "Failed to create session");
+        return;
+      }
+    }
 
     messages.update((m) => [...m, makeMessage("user", text)]);
     inputText = "";
@@ -326,7 +438,8 @@
     error.set(null);
 
     try {
-      await sendTurn($activeSession.id, text);
+      const response = await sendTurn(session.id, text);
+      completeTurnFromResponse(response.text ?? "");
     } catch (err) {
       isStreaming.set(false);
       error.set(err instanceof Error ? err.message : "Failed to send message");
@@ -337,6 +450,15 @@
     if (!$activeSession) return;
     try {
       await cancelTurn($activeSession.id);
+      settleToolCalls("failed");
+      messages.update((msgs) => {
+        const last = msgs[msgs.length - 1];
+        if (last?.streaming) {
+          last.streaming = false;
+          return [...msgs];
+        }
+        return msgs;
+      });
       isStreaming.set(false);
     } catch (err) {
       error.set(err instanceof Error ? err.message : "Failed to cancel");
@@ -422,118 +544,115 @@
 </script>
 
 <div class="chat-view">
-  <!-- Messages -->
-  <div class="messages" bind:this={scrollContainer}>
-    {#each $messages as msg (msg.id)}
-      <div class="message-row fade-in-up" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"}>
-        {#if msg.role === "assistant"}
-          <div class="avatar assistant-avatar">
-            <svg width="16" height="16" viewBox="0 0 32 32">
-              <rect width="32" height="32" rx="7" fill="var(--accent)" />
-              <text x="16" y="22" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#fff" text-anchor="middle">N</text>
-            </svg>
-          </div>
-        {/if}
-
-        <div class="message-content">
-          {#if msg.role === "assistant" && msg.toolName}
-            <!-- Tool result -->
-            <div class="tool-result">
-              <span class="tool-icon" class:ok={msg.toolResult?.ok} class:fail={!msg.toolResult?.ok}>
-                {#if msg.toolResult?.ok}
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-                {:else}
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                {/if}
-              </span>
-              <span class="tool-label text-mono text-sm">{msg.toolName}</span>
-            </div>
-          {:else if msg.role === "assistant"}
-            {#if msg.thinking}
-              <details class="thinking-block">
-                <summary class="thinking-summary">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.5.8a.6.6 0 01-.997.057L12 12.5l-1.06 1.743a.6.6 0 01-.998-.057l-.5-.8z"/></svg>
-                  <span>Thinking</span>
-                </summary>
-                <div class="thinking-content text-sm text-muted">{msg.thinking}</div>
-              </details>
-            {/if}
-            <div class="bubble assistant-bubble">
-              {#if msg.text}
-                <Markdown content={msg.text} />
-              {/if}
-              {#if msg.streaming && !msg.text}
-                <span class="typing-cursor"></span>
-              {/if}
-            </div>
-          {:else if msg.role === "user"}
-            <div class="bubble user-bubble">
-              <p>{msg.text}</p>
-            </div>
-          {:else}
-            <div class="bubble system-bubble">
-              <p>{msg.text}</p>
-            </div>
-          {/if}
-
-          {#if msg.toolCalls && msg.toolCalls.length > 0}
-            <div class="tool-calls">
-              {#each msg.toolCalls as tc}
-                <span class="tool-call" class:done={tc.status === "completed"} class:failed={tc.status === "failed"} class:active={tc.status === "started" || tc.status === "requested"}>
-                  {#if tc.status === "started" || tc.status === "requested"}
-                    <span class="spinner spinner-tiny"></span>
+  <!-- Messages container -->
+  <div class="messages-container" bind:this={scrollContainer} onscroll={handleScroll}>
+    <div class="messages-inner">
+      {#each $messages as msg (msg.id)}
+        <div class="message-row fade-in-up" class:user={msg.role === "user"} class:assistant={msg.role === "assistant"} class:system={msg.role === "system"} class:tool-message={msg.role === "assistant" && Boolean(msg.toolCalls?.length) && !msg.text && !msg.thinking}>
+          <div class="message-content">
+            {#if msg.role === "assistant" && msg.toolName}
+              <!-- Tool result -->
+              <div class="tool-result">
+                <span class="tool-icon" class:ok={msg.toolResult?.ok} class:fail={!msg.toolResult?.ok}>
+                  {#if msg.toolResult?.ok}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                  {:else}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   {/if}
-                  {tc.name}
                 </span>
-              {/each}
+                <span class="tool-label text-mono text-sm">{msg.toolName}</span>
+              </div>
+            {:else if msg.role === "assistant"}
+              {#if msg.thinking || msg.streaming}
+                <ThinkingBlock text={msg.thinking ?? ""} streaming={Boolean(msg.streaming && !msg.text)} />
+              {/if}
+              {#if msg.text || msg.streaming}
+                <div class="bubble assistant-bubble">
+                  {#if msg.text}
+                    <Markdown content={msg.text} />
+                  {/if}
+                  {#if msg.streaming && !msg.text}
+                    <span class="typing-cursor"></span>
+                  {/if}
+                </div>
+              {/if}
+            {:else if msg.role === "user"}
+              <div class="bubble user-bubble">
+                <p>{msg.text}</p>
+              </div>
+            {:else}
+              <div class="bubble system-bubble">
+                <p>{msg.text}</p>
+              </div>
+            {/if}
+
+            {#if msg.toolCalls && msg.toolCalls.length > 0}
+              <div class="tool-calls">
+                {#each msg.toolCalls as tc (tc.id)}
+                  <ToolCallRow call={tc} />
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/each}
+
+      <!-- Typing indicator when streaming -->
+      {#if $isStreaming && $messages[$messages.length - 1]?.role !== "assistant"}
+        <div class="message-row assistant fade-in">
+          <div class="message-content">
+            <div class="bubble assistant-bubble typing-bubble">
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
+              <span class="typing-dot"></span>
             </div>
-          {/if}
-
-          <span class="msg-time text-xs text-faint">{formatTime(msg.timestamp)}</span>
-        </div>
-
-        {#if msg.role === "user"}
-          <div class="avatar user-avatar">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
-            </svg>
-          </div>
-        {/if}
-      </div>
-    {/each}
-
-    <!-- Typing indicator when streaming but no message yet -->
-    {#if $isStreaming && $messages[$messages.length - 1]?.role !== "assistant"}
-      <div class="message-row assistant fade-in">
-        <div class="avatar assistant-avatar">
-          <svg width="16" height="16" viewBox="0 0 32 32">
-            <rect width="32" height="32" rx="7" fill="var(--accent)" />
-            <text x="16" y="22" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" fill="#fff" text-anchor="middle">N</text>
-          </svg>
-        </div>
-        <div class="message-content">
-          <div class="bubble assistant-bubble typing-bubble">
-            <span class="typing-dot"></span>
-            <span class="typing-dot"></span>
-            <span class="typing-dot"></span>
           </div>
         </div>
-      </div>
-    {/if}
+      {/if}
 
-    {#if $messages.length === 0 && !$isStreaming}
-      <div class="empty-chat">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        <p class="text-muted">Start a conversation</p>
-        <p class="text-faint text-sm">Type a message below</p>
-      </div>
-    {/if}
+      {#if $messages.length === 0 && !$isStreaming}
+        <div class="welcome-screen fade-in">
+          <p class="welcome-kicker">NAVI</p>
+          <h1 class="welcome-heading">Em que posso ajudar?</h1>
+          <p class="welcome-copy">Descreva o que você quer fazer no projeto. Você pode começar por uma destas ideias.</p>
+
+          <div class="suggestion-list">
+            <button
+              type="button"
+              class="suggestion-card"
+              onclick={() => { inputText = "Ajude a criar e estruturar um novo projeto."; autoResize(); textareaEl?.focus(); }}
+            >
+              <span class="suggestion-title">Criar um projeto</span>
+              <span class="suggestion-desc">Estruturar um aplicativo ou componente</span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+
+            <button
+              type="button"
+              class="suggestion-card"
+              onclick={() => { inputText = "Explique o funcionamento e a arquitetura deste código."; autoResize(); textareaEl?.focus(); }}
+            >
+              <span class="suggestion-title">Entender código</span>
+              <span class="suggestion-desc">Ler arquitetura, fluxo e decisões técnicas</span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+
+            <button
+              type="button"
+              class="suggestion-card"
+              onclick={() => { inputText = "Encontre e corrija falhas ou erros no meu projeto."; autoResize(); textareaEl?.focus(); }}
+            >
+              <span class="suggestion-title">Investigar um problema</span>
+              <span class="suggestion-desc">Analisar erros de execução ou de build</span>
+              <span class="suggestion-arrow" aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </div>
+      {/if}
+    </div>
   </div>
 
-  <!-- Pending approval / question -->
+  <!-- Cards / Overlays -->
   {#if $pendingApproval}
     <ApprovalCard
       approval={$pendingApproval}
@@ -583,36 +702,63 @@
     </div>
   {/if}
 
-  <!-- Input -->
-  <form class="input-bar" onsubmit={handleSend}>
-    <textarea
-      bind:this={textareaEl}
-      bind:value={inputText}
-      oninput={autoResize}
-      placeholder="Message NAVI..."
-      rows="1"
-      onkeydown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          handleSend();
-        }
-      }}
-    ></textarea>
-    {#if $isStreaming}
-      <button type="button" class="btn-danger send-btn" onclick={handleCancel} aria-label="Cancel">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="6" y="6" width="12" height="12" rx="2"/>
-        </svg>
-      </button>
-    {:else}
-      <button type="submit" class="btn-primary send-btn" disabled={!inputText.trim()} aria-label="Send">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"/>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+  <!-- Floating Scroll-to-bottom button & Floating Input Bar (Claude-style) -->
+  <div class="input-area-wrapper">
+    {#if showScrollBottom}
+      <button
+        type="button"
+        class="scroll-bottom-btn fade-in"
+        onclick={scrollToBottom}
+        aria-label="Rolar para o final"
+        title="Rolar para o final"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="18"/>
+          <polyline points="6 12 12 18 18 12"/>
         </svg>
       </button>
     {/if}
-  </form>
+
+    <form class="floating-input-box" onsubmit={handleSend}>
+      <textarea
+        bind:this={textareaEl}
+        bind:value={inputText}
+        oninput={autoResize}
+        placeholder="Escreva uma mensagem..."
+        rows="1"
+        onkeydown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            handleSend();
+          }
+        }}
+      ></textarea>
+
+      <div class="input-toolbar">
+        <div class="toolbar-left">
+          <ModelSelector />
+        </div>
+
+        <div class="toolbar-right">
+          {#if $isStreaming}
+            <button type="button" class="btn-send stop-btn" onclick={handleCancel} aria-label="Cancelar">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            </button>
+          {:else}
+            <button type="submit" class="btn-send" disabled={!inputText.trim()} aria-label="Enviar">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5"/>
+                <polyline points="5 12 12 5 19 12"/>
+              </svg>
+            </button>
+          {/if}
+        </div>
+      </div>
+    </form>
+
+  </div>
 </div>
 
 <style>
@@ -621,81 +767,79 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    background: var(--bg);
+    position: relative;
   }
 
-  .messages {
+  .messages-container {
     flex: 1;
     overflow-y: auto;
-    padding: 1rem;
+    padding: 1.5rem 1rem 1rem 1rem;
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    align-items: center;
+  }
+
+  .messages-inner {
+    width: 100%;
+    max-width: 768px;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   .message-row {
     display: flex;
-    gap: 0.6rem;
-    max-width: 85%;
+    gap: 0.8rem;
+    width: 100%;
     align-items: flex-start;
   }
 
   .message-row.user {
-    align-self: flex-end;
-    flex-direction: row-reverse;
+    justify-content: flex-end;
   }
 
   .message-row.assistant {
-    align-self: flex-start;
+    justify-content: flex-start;
+  }
+
+  .message-row.tool-message + .message-row.tool-message {
+    margin-top: -1rem;
   }
 
   .message-row.system {
-    align-self: center;
-    max-width: 90%;
-  }
-
-  .avatar {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-
-  .assistant-avatar {
-    background: var(--bg-tertiary);
-  }
-
-  .user-avatar {
-    background: var(--bg-tertiary);
-    color: var(--text-muted);
   }
 
   .message-content {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.3rem;
+    max-width: 100%;
     min-width: 0;
+    flex: 1;
   }
 
   .message-row.user .message-content {
     align-items: flex-end;
+    flex: initial;
+    max-width: 82%;
   }
 
   .bubble {
-    padding: 0.65rem 0.9rem;
-    border-radius: var(--radius);
     word-wrap: break-word;
     overflow-wrap: break-word;
     word-break: break-word;
   }
 
   .user-bubble {
-    background: var(--accent);
-    color: #fff;
-    border-bottom-right-radius: var(--radius-xs);
+    background: var(--bg-card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 0.75rem 1.1rem;
+    border-radius: 20px;
+    border-bottom-right-radius: 6px;
+    font-size: 0.95rem;
   }
 
   .user-bubble p {
@@ -703,100 +847,43 @@
   }
 
   .assistant-bubble {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-bottom-left-radius: var(--radius-xs);
-  }
-
-  /* Thinking block */
-  .thinking-block {
-    margin-bottom: 0.3rem;
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    background: var(--bg);
-    overflow: hidden;
-  }
-
-  .thinking-summary {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.4rem 0.7rem;
-    cursor: pointer;
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    user-select: none;
-    list-style: none;
-  }
-
-  .thinking-summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .thinking-summary::before {
-    content: "▸";
-    font-size: 0.7rem;
-    transition: transform var(--transition);
-  }
-
-  .thinking-block[open] .thinking-summary::before {
-    transform: rotate(90deg);
-  }
-
-  .thinking-content {
-    padding: 0.5rem 0.7rem;
-    border-top: 1px solid var(--border-subtle);
-    white-space: pre-wrap;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.5;
-    max-height: 200px;
-    overflow-y: auto;
+    background: transparent;
+    border: none;
+    padding: 0;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
   }
 
   .system-bubble {
     background: var(--danger-subtle);
     border: 1px solid var(--danger);
     color: var(--danger);
+    padding: 0.6rem 1rem;
+    border-radius: var(--radius-sm);
     font-size: 0.85rem;
   }
 
-  .msg-time {
-    padding: 0 0.2rem;
-  }
-
-  /* Typing indicator */
   .typing-bubble {
     display: flex;
-    gap: 4px;
+    gap: 5px;
     align-items: center;
-    padding: 0.7rem 0.9rem;
+    padding: 0.5rem 0;
   }
 
   .typing-dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--text-muted);
     animation: typingBounce 1.4s infinite ease-in-out;
   }
 
-  .typing-dot:nth-child(1) {
-    animation-delay: -0.32s;
-  }
-  .typing-dot:nth-child(2) {
-    animation-delay: -0.16s;
-  }
+  .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+  .typing-dot:nth-child(2) { animation-delay: -0.16s; }
 
   @keyframes typingBounce {
-    0%, 80%, 100% {
-      transform: scale(0.6);
-      opacity: 0.4;
-    }
-    40% {
-      transform: scale(1);
-      opacity: 1;
-    }
+    0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+    40% { transform: scale(1); opacity: 1; }
   }
 
   .typing-cursor {
@@ -809,133 +896,375 @@
     animation: blink 1s infinite;
   }
 
-  /* Tool results */
   .tool-result {
     display: flex;
     align-items: center;
-    gap: 0.4rem;
-    padding: 0.4rem 0.7rem;
+    gap: 0.65rem;
+    min-height: 2.6rem;
+    padding: 0.5rem 0.7rem;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
+    border-left: 2px solid var(--accent);
     border-radius: var(--radius-sm);
-    border-left: 3px solid;
-    border-left-color: var(--text-muted);
   }
 
-  .tool-result .tool-icon.ok {
-    color: var(--success);
-  }
-
-  .tool-result .tool-icon.fail {
-    color: var(--danger);
-  }
-
-  .tool-result:has(.tool-icon.ok) {
-    border-left-color: var(--success);
-  }
-
-  .tool-result:has(.tool-icon.fail) {
-    border-left-color: var(--danger);
-  }
+  .tool-result .tool-icon.ok { color: var(--success); }
+  .tool-result .tool-icon.fail { color: var(--danger); }
+  .tool-result:has(.tool-icon.ok) { border-left-color: var(--success); }
+  .tool-result:has(.tool-icon.fail) { border-left-color: var(--danger); }
 
   .tool-label {
-    color: var(--accent);
+    color: var(--accent-hover);
+    font-size: 0.86rem;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .tool-calls {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.3rem;
-    margin-top: 0.3rem;
-  }
-
-  .tool-call {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    padding: 0.15rem 0.5rem;
-    background: var(--bg-tertiary);
-    border-radius: 12px;
-    color: var(--text-muted);
-  }
-
-  .tool-call.done {
-    color: var(--success);
-  }
-
-  .tool-call.failed {
-    color: var(--danger);
-  }
-
-  .tool-call.active {
-    color: var(--accent);
-  }
-
-  .spinner-tiny {
-    width: 10px;
-    height: 10px;
-    border-width: 1.5px;
-  }
-
-  .empty-chat {
-    flex: 1;
-    display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    gap: 0.3rem;
+    gap: 0.2rem;
+    margin-top: 0.1rem;
   }
 
   .error-banner {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.6rem 0.8rem;
+    padding: 0.6rem 1rem;
     background: var(--danger-subtle);
     border-top: 1px solid var(--danger);
     color: var(--danger);
     font-size: 0.85rem;
   }
 
-  .error-banner span {
-    flex: 1;
-  }
-
+  .error-banner span { flex: 1; }
   .error-banner button {
     background: transparent;
     border: none;
     color: var(--danger);
     font-size: 1.3rem;
     padding: 0 0.3rem;
-    line-height: 1;
   }
 
-  .input-bar {
+  .input-area-wrapper {
+    width: 100%;
     display: flex;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border-top: 1px solid var(--border);
+    flex-direction: column;
+    align-items: center;
+    padding: 0.65rem 1rem max(0.65rem, env(safe-area-inset-bottom));
+    position: relative;
+    background: transparent;
+    border-top: none;
+  }
+
+  .scroll-bottom-btn {
+    position: absolute;
+    top: -38px;
+    left: 50%;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
     background: var(--bg-secondary);
-    align-items: flex-end;
-  }
-
-  .input-bar textarea {
-    flex: 1;
-    max-height: 140px;
-    min-height: 42px;
-    line-height: 1.4;
-  }
-
-  .send-btn {
-    padding: 0.6rem;
-    width: 42px;
-    height: 42px;
+    border: 1px solid var(--border-bright);
+    color: var(--text-secondary);
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
+    transform: translateX(-50%);
+    cursor: pointer;
+    transition: background-color var(--transition), color var(--transition), transform var(--transition);
+    z-index: 5;
+  }
+
+  .scroll-bottom-btn svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+  }
+
+  .scroll-bottom-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .floating-input-box {
+    width: 100%;
+    max-width: 768px;
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0.65rem 0.75rem 0.55rem;
+    transition: border-color var(--transition), background-color var(--transition);
+  }
+
+  .floating-input-box:focus-within {
+    border-color: var(--accent);
+    background: var(--bg-secondary);
+  }
+
+  .floating-input-box textarea {
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 0.95rem;
+    line-height: 1.5;
+    padding: 0;
+    max-height: 160px;
+    min-height: 44px;
+    box-shadow: none !important;
+  }
+
+  .floating-input-box textarea::placeholder {
+    color: var(--text-faint);
+  }
+
+  .input-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-width: 0;
+    margin-top: 0.5rem;
+    padding-top: 0.35rem;
+  }
+
+  .toolbar-left,
+  .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+  }
+
+  .toolbar-left {
+    flex: 1;
+  }
+
+  .toolbar-right {
+    flex: 0 0 auto;
+  }
+
+  .btn-send {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background-color var(--transition), transform var(--transition);
+  }
+
+  .btn-send:hover:not(:disabled) {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+  }
+
+  .btn-send:disabled {
+    background: var(--bg-hover);
+    color: var(--text-faint);
+    opacity: 0.6;
+  }
+
+  .btn-send.stop-btn {
+    background: var(--danger);
+    color: #ffffff;
+  }
+
+  .btn-send.stop-btn:hover {
+    background: #b9635c;
+  }
+
+  @media (max-width: 768px) {
+    .messages-container {
+      padding: 1rem 0.5rem 0.5rem 0.5rem;
+    }
+
+    .messages-inner {
+      gap: 1.25rem;
+    }
+
+    .message-row {
+      gap: 0.5rem;
+    }
+
+    .message-row.user .message-content {
+      max-width: 90%;
+    }
+
+    .user-bubble {
+      padding: 0.65rem 0.9rem;
+      font-size: 0.9rem;
+      border-radius: 16px;
+      border-bottom-right-radius: 4px;
+    }
+
+    .assistant-bubble {
+      font-size: 0.9rem;
+    }
+
+    .input-area-wrapper {
+      padding: 0.55rem 0.5rem max(0.55rem, env(safe-area-inset-bottom));
+    }
+
+    .floating-input-box {
+      border-radius: var(--radius-sm);
+      padding: 0.6rem 0.7rem 0.5rem;
+    }
+
+    .floating-input-box textarea {
+      font-size: 0.9rem;
+      min-height: 38px;
+      max-height: 120px;
+    }
+
+    .input-toolbar {
+      gap: 0.2rem;
+    }
+
+    .toolbar-left,
+    .toolbar-right {
+      gap: 0.25rem;
+    }
+
+    .btn-send {
+      width: 32px;
+      height: 32px;
+    }
+
+    .scroll-bottom-btn {
+      top: -42px;
+      width: 32px;
+      height: 32px;
+    }
+  }
+
+  .welcome-screen {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 2rem 0;
+    max-width: 640px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .welcome-kicker {
+    color: var(--accent);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    margin-bottom: 0.7rem;
+  }
+
+  .welcome-heading {
+    font-size: clamp(1.7rem, 4vw, 2.25rem);
+    line-height: 1.1;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: -0.035em;
+    margin-bottom: 0.65rem;
+  }
+
+  .welcome-copy {
+    max-width: 480px;
+    color: var(--text-muted);
+    font-size: 0.92rem;
+    line-height: 1.55;
+    margin-bottom: 1.6rem;
+  }
+
+  .suggestion-list {
+    width: 100%;
+    border-top: 1px solid var(--border);
+  }
+
+  .suggestion-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    column-gap: 1rem;
+    align-items: center;
+    width: 100%;
+    text-align: left;
+    padding: 0.85rem 0.15rem;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    cursor: pointer;
+    transition: color var(--transition), padding-left var(--transition), background-color var(--transition);
+  }
+
+  .suggestion-card:hover {
+    background: var(--bg-secondary);
+    padding-left: 0.65rem;
+    color: var(--text);
+  }
+
+  .suggestion-title {
+    font-size: 0.9rem;
+    font-weight: 550;
+    color: var(--text-secondary);
+    grid-column: 1;
+  }
+
+  .suggestion-desc {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    grid-column: 1;
+    margin-top: 0.12rem;
+  }
+
+  .suggestion-arrow {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    color: var(--text-faint);
+    font-size: 1.1rem;
+    transition: color var(--transition), transform var(--transition);
+  }
+
+  .suggestion-card:hover .suggestion-arrow {
+    color: var(--accent);
+    transform: translate(2px, -2px);
+  }
+
+  @media (max-width: 480px) {
+    .messages-container {
+      padding-left: 0.35rem;
+      padding-right: 0.35rem;
+    }
+
+    .floating-input-box {
+      padding: 0.6rem;
+    }
+
+    .welcome-screen {
+      justify-content: flex-start;
+      padding: 3.5rem 0.5rem 1rem;
+    }
+
+    .welcome-heading {
+      font-size: 1.8rem;
+    }
+
+    .welcome-copy {
+      font-size: 0.86rem;
+      margin-bottom: 1.2rem;
+    }
   }
 </style>

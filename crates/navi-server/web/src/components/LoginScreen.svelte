@@ -47,20 +47,6 @@
 
 <div class="login-screen">
   <div class="login-card fade-in-up">
-    <div class="logo">
-      <svg width="56" height="56" viewBox="0 0 32 32">
-        <rect width="32" height="32" rx="7" fill="#161b22" stroke="#30363d" />
-        <text
-          x="16"
-          y="22"
-          font-family="system-ui, sans-serif"
-          font-size="18"
-          font-weight="bold"
-          fill="#58a6ff"
-          text-anchor="middle">N</text
-        >
-      </svg>
-    </div>
     <h1>NAVI</h1>
     <p class="subtitle">Connect to your NAVI server</p>
 
@@ -138,24 +124,18 @@
     align-items: center;
     justify-content: center;
     padding: 1rem;
-    background: radial-gradient(ellipse at top, var(--bg-secondary), var(--bg));
+    background: var(--bg);
   }
 
   .login-card {
     width: 100%;
     max-width: 380px;
-    background: var(--bg-secondary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    background: var(--bg-card);
+    border: 1px solid var(--border-bright);
+    border-radius: var(--radius-lg);
     padding: 2.5rem 2rem;
     text-align: center;
     box-shadow: var(--shadow-lg);
-  }
-
-  .logo {
-    margin-bottom: 1.25rem;
-    display: flex;
-    justify-content: center;
   }
 
   h1 {
@@ -175,7 +155,7 @@
   form {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.85rem;
   }
 
   .input-wrapper {
@@ -187,6 +167,8 @@
   .input-wrapper input {
     width: 100%;
     padding-right: 2.5rem;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
   }
 
   .toggle-btn {
@@ -209,12 +191,13 @@
 
   button[type="submit"] {
     width: 100%;
-    padding: 0.8rem;
-    font-size: 1rem;
+    padding: 0.75rem;
+    font-size: 0.95rem;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    border-radius: 20px;
   }
 
   .error {
@@ -240,8 +223,8 @@
   }
 
   .dot {
-    width: 8px;
-    height: 8px;
+    width: 7px;
+    height: 7px;
     border-radius: 50%;
     transition: background var(--transition);
   }

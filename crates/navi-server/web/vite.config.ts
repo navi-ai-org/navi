@@ -5,6 +5,13 @@ import { svelte } from "@sveltejs/vite-plugin-svelte";
 export default defineConfig({
   plugins: [svelte()],
 
+  // Ensure Svelte resolves to the client (not server) entry.
+  // Svelte 5's exports map defaults to index-server.js; the "browser"
+  // condition selects index-client.js for client-side builds.
+  resolve: {
+    conditions: ["browser"],
+  },
+
   // Dev server proxies API calls to the Rust navi-server backend.
   server: {
     host: "0.0.0.0",

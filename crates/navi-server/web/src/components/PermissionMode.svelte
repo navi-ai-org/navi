@@ -6,11 +6,11 @@
   let loaded = $state(false);
   let changing = $state(false);
 
-  const modes: { value: PermissionMode; label: string; icon: string; color: string }[] = [
-    { value: "restricted", label: "Restricted", icon: "🔒", color: "var(--danger)" },
-    { value: "accept_edits", label: "Accept Edits", icon: "✏️", color: "var(--warning)" },
-    { value: "auto", label: "Auto", icon: "⚡", color: "var(--accent)" },
-    { value: "yolo", label: "Yolo", icon: "🚀", color: "var(--success)" },
+  const modes: { value: PermissionMode; label: string; color: string }[] = [
+    { value: "restricted", label: "Restricted", color: "var(--danger)" },
+    { value: "accept_edits", label: "Accept edits", color: "var(--warning)" },
+    { value: "auto", label: "Auto", color: "var(--accent)" },
+    { value: "yolo", label: "Yolo", color: "var(--success)" },
   ];
 
   async function load() {
@@ -58,7 +58,7 @@
   {#if changing}
     <span class="spinner spinner-tiny"></span>
   {:else}
-    <span class="perm-icon">{currentMode.icon}</span>
+    <span class="perm-dot" aria-hidden="true"></span>
   {/if}
   <span class="perm-label text-xs">{currentMode.label}</span>
 </button>
@@ -67,24 +67,27 @@
   .perm-btn {
     display: flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    gap: 0.35rem;
+    padding: 0.25rem 0.4rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-xs);
     color: var(--text-secondary);
     cursor: pointer;
-    transition: border-color var(--transition), background var(--transition);
+    transition: border-color var(--transition), background-color var(--transition);
     white-space: nowrap;
   }
 
   .perm-btn:hover:not(:disabled) {
-    border-color: var(--mode-color);
+    border-color: var(--border);
+    background: var(--bg-secondary);
   }
 
-  .perm-icon {
-    font-size: 0.85rem;
-    line-height: 1;
+  .perm-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--mode-color);
   }
 
   .perm-label {

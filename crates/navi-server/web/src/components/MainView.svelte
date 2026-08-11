@@ -2,13 +2,12 @@
   import {
     activeSession,
     showSidebar,
-    wsStatus,
     error,
+    clearChat,
   } from "../lib/stores";
+  import { startSession } from "../lib/api";
   import SessionList from "./SessionList.svelte";
   import ChatView from "./ChatView.svelte";
-  import ModelSelector from "./ModelSelector.svelte";
-  import PermissionMode from "./PermissionMode.svelte";
   import TokenUsage from "./TokenUsage.svelte";
 
   let {
@@ -20,12 +19,17 @@
     showSidebar.update((v) => !v);
   }
 
-  const wsStatusLabel: Record<string, string> = {
-    connected: "Live",
-    connecting: "Connecting",
-    reconnecting: "Reconnecting",
-    disconnected: "Offline",
-  };
+  async function handleNewSession() {
+    try {
+      const info = await startSession();
+      clearChat();
+      activeSession.set(info);
+      showSidebar.set(false);
+    } catch (err) {
+      error.set(err instanceof Error ? err.message : "Failed to create session");
+    }
+  }
+
 </script>
 
 <div class="main-view">
@@ -48,47 +52,47 @@
 
   <!-- Main chat area -->
   <div class="chat-area">
-    {#if $activeSession}
-      <ChatView />
-    {:else}
-      <div class="empty-state fade-in">
-        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="var(--text-faint)" stroke-width="1.5">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        <p class="text-muted text-lg">Welcome to NAVI</p>
-        <p class="text-faint text-sm">Select or create a session to start</p>
-      </div>
-    {/if}
+    <ChatView />
   </div>
 
-  <!-- Top bar (always visible when session active) -->
-  {#if $activeSession}
-    <div class="topbar safe-top">
-      <button
-        class="btn-ghost topbar-btn"
-        onclick={toggleSidebar}
-        aria-label="Toggle sidebar"
-      >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="3" y1="6" x2="21" y2="6" />
-          <line x1="3" y1="12" x2="21" y2="12" />
-          <line x1="3" y1="18" x2="21" y2="18" />
-        </svg>
-      </button>
-      <span class="topbar-title truncate">
-        {$activeSession.title ?? $activeSession.id}
+  <!-- Top bar (always visible) -->
+  <div class="topbar safe-top">
+    <button
+      class="btn-ghost topbar-btn"
+      onclick={toggleSidebar}
+      aria-label="Alternar painel lateral"
+      title="Painel lateral"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <rect x="3" y="3" width="18" height="18" rx="3"/>
+        <line x1="9" y1="3" x2="9" y2="21"/>
+      </svg>
+    </button>
+
+    <button class="topbar-title-dropdown" onclick={toggleSidebar} title="Selecionar ou criar sessão">
+      <span class="topbar-title-text truncate">
+        {$activeSession ? ($activeSession.title ?? $activeSession.id) : "NAVI · Nova conversa"}
       </span>
-      <div class="topbar-controls">
+      <svg class="chevron-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
+
+    <div class="topbar-controls">
+      <button class="pill-btn new-chat-pill-btn" onclick={handleNewSession} title="Nova conversa">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19"/>
+          <line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        <span class="new-chat-text">Nova conversa</span>
+      </button>
+
+      {#if $activeSession}
         <TokenUsage />
-        <PermissionMode />
-        <ModelSelector />
-      </div>
-      <div class="ws-indicator" data-status={$wsStatus} title={wsStatusLabel[$wsStatus] ?? ""}>
-        <span class="ws-dot"></span>
-        <span class="ws-label text-xs">{wsStatusLabel[$wsStatus] ?? ""}</span>
-      </div>
+      {/if}
     </div>
-  {/if}
+
+  </div>
 </div>
 
 <style>
@@ -96,6 +100,7 @@
     height: 100%;
     display: flex;
     position: relative;
+    background: var(--bg);
   }
 
   .sidebar {
@@ -111,11 +116,13 @@
   /* On mobile, sidebar is a drawer */
   @media (max-width: 768px) {
     .sidebar {
-      position: absolute;
+      position: fixed;
       top: 0;
       left: 0;
       bottom: 0;
-      z-index: 100;
+      width: 82%;
+      max-width: 320px;
+      z-index: 1000;
       transform: translateX(-100%);
       transition: transform var(--transition-slow);
       box-shadow: var(--shadow-lg);
@@ -126,11 +133,11 @@
     }
 
     .sidebar-overlay {
-      position: absolute;
+      position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.55);
-      z-index: 99;
-      backdrop-filter: blur(2px);
+      background: rgba(0, 0, 0, 0.75);
+      z-index: 999;
+      backdrop-filter: blur(4px);
     }
   }
 
@@ -140,48 +147,73 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    padding-top: 48px;
+    padding-top: 52px;
+    background: var(--bg);
   }
 
-  .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    text-align: center;
-    gap: 0.5rem;
-  }
+
 
   .topbar {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
-    height: 48px;
-    background: var(--bg-secondary);
+    height: 52px;
+    background: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0 0.6rem;
+    gap: 0.35rem;
+    padding: 0 0.75rem;
     z-index: 10;
   }
 
   .topbar-btn {
-    padding: 0.35rem;
+    padding: 0.4rem;
     display: flex;
     align-items: center;
     justify-content: center;
+    border-radius: var(--radius-xs);
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 
-  .topbar-title {
+  .topbar-btn:hover {
+    color: var(--text);
+    background: var(--bg-tertiary);
+  }
+
+  .topbar-title-dropdown {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
     flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    padding: 0.35rem 0.4rem;
+    border-radius: var(--radius-xs);
+    cursor: pointer;
+    color: var(--text);
     font-size: 0.9rem;
     font-weight: 500;
-    color: var(--text);
+    max-width: none;
+    transition: background-color var(--transition), color var(--transition);
+  }
+
+  .topbar-title-dropdown:hover {
+    background: var(--bg-secondary);
+    color: var(--accent-hover);
+  }
+
+  .topbar-title-text {
+    flex: 1;
     min-width: 0;
+  }
+
+  .chevron-icon {
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   .topbar-controls {
@@ -189,52 +221,51 @@
     align-items: center;
     gap: 0.4rem;
     flex-shrink: 0;
+    margin-left: auto;
   }
 
-  .ws-indicator {
-    display: flex;
+  .pill-btn {
+    display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.2rem 0.5rem;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
     border-radius: var(--radius-sm);
-    background: var(--bg-tertiary);
-    transition: background var(--transition);
+    font-size: 0.8rem;
+    font-weight: 500;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    transition: background-color var(--transition), border-color var(--transition), color var(--transition);
   }
 
-  .ws-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    transition: background var(--transition), box-shadow var(--transition);
+  .pill-btn:hover {
+    background: var(--bg-secondary);
+    border-color: var(--border-bright);
+    color: var(--text);
   }
 
-  .ws-indicator[data-status="connected"] .ws-dot {
-    background: var(--success);
-    box-shadow: 0 0 5px var(--success);
+  .new-chat-pill-btn {
+    color: var(--accent-hover);
   }
 
-  .ws-indicator[data-status="connecting"] .ws-dot,
-  .ws-indicator[data-status="reconnecting"] .ws-dot {
-    background: var(--warning);
-    animation: pulse 1s infinite;
-  }
+  @media (max-width: 600px) {
+    .topbar-title-dropdown {
+      max-width: none;
+      font-size: 0.84rem;
+      padding: 0.3rem 0.4rem;
+    }
 
-  .ws-indicator[data-status="disconnected"] .ws-dot {
-    background: var(--danger);
-  }
-
-  .ws-label {
-    color: var(--text-muted);
-  }
-
-  @media (max-width: 480px) {
-    .ws-label {
+    .new-chat-text {
       display: none;
     }
 
-    .topbar-title {
-      font-size: 0.85rem;
+    .new-chat-pill-btn {
+      padding: 0.4rem;
+    }
+
+    .topbar {
+      padding: 0 0.5rem;
     }
   }
 </style>

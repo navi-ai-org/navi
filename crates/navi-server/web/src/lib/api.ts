@@ -4,6 +4,7 @@ import type {
   ModelInfo,
   TurnResponse,
   SessionSnapshot,
+  ProviderAccountInfo,
   PermissionMode,
   AgentMode,
   PlanReviewDecision,
@@ -55,25 +56,41 @@ async function apiFetch<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(path, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...options, headers });
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : "Network error",
+      0,
+    );
+  }
+
+  const text = await res.text();
 
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
-    try {
-      const body = await res.json();
-      message = body.error ?? message;
-    } catch {
-      // Non-JSON error body
+    if (text) {
+      try {
+        const body = JSON.parse(text);
+        message = body.error ?? body.message ?? message;
+      } catch {
+        message = text.length < 120 ? text : message;
+      }
     }
     throw new ApiError(message, res.status);
   }
 
-  // 204 No Content
-  if (res.status === 204) {
+  // 204 No Content or empty body
+  if (res.status === 204 || !text.trim()) {
     return undefined as T;
   }
 
-  return res.json() as Promise<T>;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(`Invalid JSON response from ${path}`, res.status);
+  }
 }
 
 // ── Health ───────────────────────────────────────────────────────────────
@@ -120,6 +137,10 @@ export async function getSessionSnapshot(
   sessionId: string,
 ): Promise<SessionSnapshot> {
   return apiFetch<SessionSnapshot>(`/sessions/${sessionId}/snapshot`);
+}
+
+export async function getSessionInfo(sessionId: string): Promise<SessionInfo> {
+  return apiFetch<SessionInfo>(`/sessions/${sessionId}`);
 }
 
 export async function closeSession(sessionId: string): Promise<void> {
@@ -176,6 +197,10 @@ export async function answerQuestion(
 
 export async function listModels(): Promise<ModelInfo[]> {
   return apiFetch<ModelInfo[]>("/models");
+}
+
+export async function listProviderAccounts(): Promise<ProviderAccountInfo[]> {
+  return apiFetch<ProviderAccountInfo[]>("/credentials");
 }
 
 export async function setSessionModel(
