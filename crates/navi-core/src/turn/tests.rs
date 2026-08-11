@@ -635,11 +635,14 @@ fn think_tag_splitter_handles_tags_split_across_chunks() {
 }
 
 #[test]
-fn think_tag_splitter_drops_partial_open_tag_on_drain() {
+fn think_tag_splitter_emits_partial_open_tag_on_drain() {
     let mut splitter = ThinkTagSplitter::default();
 
     assert!(splitter.push("<thi").is_empty());
-    assert!(splitter.drain_pending().is_empty());
+    // On stream end, partial tag prefixes are emitted as text, not dropped.
+    let parts = splitter.drain_pending();
+    assert_eq!(parts.len(), 1);
+    assert!(matches!(&parts[0], SplitTextPart::Text(t) if t == "<thi"));
 }
 
 /// Helper to build a TurnContext pointing at a given project directory.

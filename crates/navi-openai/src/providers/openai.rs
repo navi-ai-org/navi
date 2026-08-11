@@ -254,6 +254,13 @@ impl crate::provider::OpenAiProvider {
             }
         }
         tracing::info!(provider = %provider_id, model = %model, "provider stream completed");
+        // Flush any text held back by the TextToolCallExtractor / ThinkTagSplitter
+        // when the provider did not send a `[DONE]` sentinel (or it was lost in
+        // transit). Without this, the final partial chunk of visible text is
+        // silently dropped — the "navi keeps swallowing final words" bug.
+        for event in tool_calls.drain_pending_text() {
+            yield event?;
+        }
         yield ModelStreamEvent::Done;
         })
     }
@@ -1099,14 +1106,10 @@ impl ThinkTagSplitter {
 
     fn drain_pending(&mut self) -> Vec<Result<ModelStreamEvent>> {
         let pending = std::mem::take(&mut self.pending);
-        let tags = if self.in_think {
-            THINK_CLOSE_TAGS
-        } else {
-            THINK_OPEN_TAGS
-        };
-        if tags.iter().any(|tag| is_partial_tag_prefix(&pending, tag)) {
-            return Vec::new();
-        }
+        // On stream end there is no next chunk to complete a partial tag
+        // prefix. Emit whatever we have as text/thinking instead of dropping
+        // it — dropping causes the final-words-swallowed symptom when the
+        // model output ends with `<` or `<t` etc.
         self.split(&pending, true)
     }
 
@@ -1177,6 +1180,7 @@ fn partial_tag_suffix_len(text: &str, tag: &str) -> usize {
     0
 }
 
+#[allow(dead_code)]
 fn is_partial_tag_prefix(text: &str, tag: &str) -> bool {
     !text.is_empty()
         && text.len() < tag.len()
@@ -1769,9 +1773,12 @@ mod tool_helpers_tests {
         assert!(
             matches!(&events[0], Ok(ModelStreamEvent::ThinkingDelta { text }) if text == "text")
         );
-        // Pending "</think" is a partial close tag prefix while in_think=true, so drain is empty.
+        // On stream end, partial tag prefixes are emitted, not dropped.
         let events = splitter.drain_pending();
-        assert!(events.is_empty());
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], Ok(ModelStreamEvent::ThinkingDelta { text }) if text == "</think")
+        );
     }
 
     #[test]
@@ -1785,6 +1792,27 @@ mod tool_helpers_tests {
         assert!(should_send_prompt_cache_retention("gpt-4o", "1h"));
         assert!(should_send_prompt_cache_retention("gpt-5", "24h"));
         assert!(!should_send_prompt_cache_retention("gpt-4o", "24h"));
+    }
+
+    #[test]
+    fn chat_accumulator_drains_pending_text_without_done_sentinel() {
+        // Simulates a provider that closes the HTTP stream without sending
+        // `[DONE]`. The caller calls drain_pending_text() to flush whatever
+        // the TextToolCallExtractor held back as a potential tool-call marker
+        // prefix.
+        let mut acc = ChatToolCallAccumulator::default();
+        // Text ending with `<` — the extractor holds `<` as pending because it
+        // could be the start of a tool-call marker.
+        let events: Vec<_> = acc.push_content("no registro de <").into_iter().collect();
+        // The visible text before `<` is emitted immediately.
+        assert!(events.iter().any(|e| matches!(
+            e, Ok(ModelStreamEvent::TextDelta { text }) if text == "no registro de "
+        )));
+        // drain_pending_text flushes the held-back `<` as visible text.
+        let flushed: Vec<_> = acc.drain_pending_text().into_iter().collect();
+        assert!(flushed.iter().any(|e| matches!(
+            e, Ok(ModelStreamEvent::TextDelta { text }) if text == "<"
+        )));
     }
 
     #[test]

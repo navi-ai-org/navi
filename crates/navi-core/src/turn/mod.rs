@@ -1107,10 +1107,10 @@ impl ThinkTagSplitter {
 
     fn drain_pending(&mut self) -> Vec<SplitTextPart> {
         let pending = std::mem::take(&mut self.pending);
-        let tag = if self.in_think { "</think>" } else { "<think>" };
-        if is_partial_tag_prefix(&pending, tag) {
-            return Vec::new();
-        }
+        // On stream end there is no next chunk to complete a partial tag
+        // prefix. Emit whatever we have as text/thinking instead of dropping
+        // it — dropping causes the final-words-swallowed symptom when the
+        // model output ends with `<` or `<t` etc.
         self.split(&pending, true)
     }
 
@@ -1172,6 +1172,7 @@ fn partial_tag_suffix_len(text: &str, tag: &str) -> usize {
     0
 }
 
+#[allow(dead_code)]
 fn is_partial_tag_prefix(text: &str, tag: &str) -> bool {
     !text.is_empty()
         && text.len() < tag.len()
