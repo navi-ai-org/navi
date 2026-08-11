@@ -468,21 +468,6 @@ export class NaviNapiEngine {
   memoryDistill(): Promise<void>;
   memoryCheckpoint(): Promise<string>;
   memoryRebuildPreview(): string;
-  // Voice / local + remote dictation
-  voiceStatus(): JsonValue;
-  voiceTranscriptionProviders(): JsonValue;
-  setVoiceConfig(update: JsonValue, saveTarget?: SaveTarget): JsonValue;
-  voiceDoctor(): JsonValue;
-  voiceEngineInstalled(engine?: string): boolean;
-  voiceInit(engine?: string, force?: boolean): Promise<string>;
-  voiceTranscribeFile(path: string, language?: string): Promise<{ text: string; tokenIds: number[] }>;
-  voiceTranscribeFileAsync(path: string, language?: string): Promise<{ text: string; tokenIds: number[] }>;
-  voiceStartStream(language?: string): void;
-  /** Push 16 kHz mono samples; returns text delta for this chunk (may be empty). */
-  voicePushPcm(samples: number[] | Float32Array): string;
-  voiceEndStream(): string;
-  voiceCancelStream(): void;
-  subscribeVoiceEvents(): NaviNapiVoiceEventStream;
   // Permission mode
   getPermissionMode(): string;
   setPermissionMode(mode: string): void;
@@ -527,9 +512,4 @@ export class NaviNapiAcpServer {
 
 export class NaviNapiEventStream {
   next(): Promise<RuntimeEvent | null>;
-}
-
-/** Engine-global voice events: started | partial | final | error | stopped | model_missing */
-export class NaviNapiVoiceEventStream {
-  next(): Promise<JsonValue | null>;
 }
