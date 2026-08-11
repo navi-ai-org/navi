@@ -140,8 +140,8 @@ impl SystemPromptRenderer {
         let mut developer_messages = Vec::new();
 
         // Global user instructions (~/.config/navi/AGENTS.md).
-        if let Ok(dirs) = crate::config::persistence::navi_dirs() {
-            let global_agents_path = dirs.config_dir().join("AGENTS.md");
+        if let Some(global_dir) = crate::config::persistence::global_config_dir() {
+            let global_agents_path = global_dir.join("AGENTS.md");
             if let Ok(global_agents) = self.cache.read_file(&global_agents_path)
                 && !global_agents.trim().is_empty()
             {

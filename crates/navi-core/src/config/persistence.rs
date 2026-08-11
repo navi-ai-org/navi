@@ -9,7 +9,12 @@ impl NaviConfig {
     /// project's `.navi/config.toml`, returning the merged config with paths.
     pub fn load(cwd: &Path) -> Result<LoadedConfig> {
         let dirs = navi_dirs()?;
-        let global_path = dirs.config_dir().join("config.toml");
+        // Prefer the XDG-style `~/.config/navi/` when it exists — this is the
+        // path documented in AGENTS.md and used on Linux/macOS. On Windows,
+        // `directories::ProjectDirs` returns `%APPDATA%\navi\config` which is
+        // not where users (following the docs) place their config.
+        let global_dir = global_config_dir().unwrap_or_else(|| dirs.config_dir().to_path_buf());
+        let global_path = global_dir.join("config.toml");
         let project_path = cwd.join(".navi").join("config.toml");
 
         let mut config = NaviConfig::default();
@@ -221,6 +226,39 @@ fn merge_from_file(
 
 pub(crate) fn navi_dirs() -> Result<ProjectDirs> {
     ProjectDirs::from("dev", "navi", "navi").context("failed to locate user config directory")
+}
+
+/// Returns the directory that holds the global user config (`config.toml`,
+/// `AGENTS.md`, …).
+///
+/// Prefers the XDG-style `~/.config/navi/` when it exists — this is the path
+/// documented in AGENTS.md and used on Linux/macOS. On Windows,
+/// `directories::ProjectDirs` returns `%APPDATA%\navi\config` which is not
+/// where users (following the docs) place their config. When the XDG-style
+/// directory does not exist, falls back to the platform-native
+/// `ProjectDirs::config_dir()`.
+pub(crate) fn global_config_dir() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.trim().is_empty()
+    {
+        let p = PathBuf::from(xdg).join("navi");
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    let home_candidates: [Option<String>; 2] = [
+        std::env::var("HOME").ok().filter(|s| !s.trim().is_empty()),
+        std::env::var("USERPROFILE")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+    ];
+    for home in home_candidates.iter().flatten() {
+        let p = PathBuf::from(home).join(".config").join("navi");
+        if p.is_dir() {
+            return Some(p);
+        }
+    }
+    navi_dirs().ok().map(|d| d.config_dir().to_path_buf())
 }
 
 #[cfg(test)]
@@ -466,5 +504,84 @@ name = "gpt-test"
         let audio = reloaded.attachment_models.audio.expect("audio");
         assert_eq!(audio.provider, "openai");
         assert_eq!(audio.name, "gpt-4o-audio-preview");
+    }
+
+    #[test]
+    fn global_config_dir_prefers_xdg_style_when_exists() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let xdg_config = tempdir.path().join(".config").join("navi");
+        fs::create_dir_all(&xdg_config).expect("mkdir");
+
+        // Save HOME and XDG_CONFIG_HOME, restore on drop.
+        let old_home = std::env::var_os("HOME");
+        let old_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        // On Windows, HOME is typically unset; set it to the temp dir.
+        // SAFETY: tests are single-threaded here; no other thread reads env.
+        unsafe {
+            std::env::set_var("HOME", tempdir.path());
+            std::env::remove_var("XDG_CONFIG_HOME");
+        }
+
+        let resolved = global_config_dir();
+        assert_eq!(
+            resolved,
+            Some(xdg_config.clone()),
+            "global_config_dir should prefer $HOME/.config/navi when it exists"
+        );
+
+        // Restore.
+        // SAFETY: same single-threaded context.
+        unsafe {
+            if let Some(v) = old_home {
+                std::env::set_var("HOME", v);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            if let Some(v) = old_xdg {
+                std::env::set_var("XDG_CONFIG_HOME", v);
+            } else {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn global_config_dir_xdg_config_home_takes_precedence() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let xdg_root = tempdir.path().join("xdg");
+        let xdg_config = xdg_root.join("navi");
+        fs::create_dir_all(&xdg_config).expect("mkdir");
+        // Also create $HOME/.config/navi to prove XDG_CONFIG_HOME wins.
+        let _home_config = tempdir.path().join(".config").join("navi");
+        fs::create_dir_all(&_home_config).expect("mkdir");
+
+        let old_home = std::env::var_os("HOME");
+        let old_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        // SAFETY: tests are single-threaded here; no other thread reads env.
+        unsafe {
+            std::env::set_var("HOME", tempdir.path());
+            std::env::set_var("XDG_CONFIG_HOME", &xdg_root);
+        }
+
+        let resolved = global_config_dir();
+        assert_eq!(
+            resolved,
+            Some(xdg_config),
+            "XDG_CONFIG_HOME should take precedence over $HOME/.config"
+        );
+
+        // SAFETY: same single-threaded context.
+        unsafe {
+            if let Some(v) = old_home {
+                std::env::set_var("HOME", v);
+            } else {
+                std::env::remove_var("HOME");
+            }
+            if let Some(v) = old_xdg {
+                std::env::set_var("XDG_CONFIG_HOME", v);
+            } else {
+                std::env::remove_var("XDG_CONFIG_HOME");
+            }
+        }
     }
 }
