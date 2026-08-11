@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-08
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.6.0...v0.7.0
+
+### Added
+
+- **Web frontend** — Svelte 5 + Vite + TypeScript SPA embedded in `navi-server`
+  via rust-embed, with mobile-first dark UI: login, session list, chat with
+  streaming, approval/question/plan-review/sudo cards, markdown rendering,
+  model selector, permission-mode selector, token usage display, and
+  auto-compact notifications. The binary is now self-contained with the UI
+  embedded at compile time (`--web-dir` override for filesystem serving).
+- **Mobile agent workspace UI** — model picker modal with connected-provider
+  filtering, provider groups, search, current-model state, and recent-model
+  history; mobile-friendly tool timeline with semantic actions, live status,
+  and expandable details; streaming thinking panel; session sidebar with
+  activity monitoring, workspace grouping, search, cached loading, inline
+  approvals, title expansion, and long-press rename.
+- **TUI narrative kaomoji activity animations** — fixed-width narrative
+  animations for idle, thinking, streaming, and tool activity in the composer
+  status line, with longer success and error transitions that return to idle
+  after the turn completes.
+- **Compact kaomoji activity indicator** — reduced to four visual states:
+  idle (sleeping), working (pencil sliding across frames), success
+  (celebration peak held for 3s), and error (table flip). All loading states
+  share one unified writing animation; the text label reflects the real phase.
+- **N-API bindings synced** — `index.d.ts` updated with `setGoalForHostTurn`,
+  `buildHostSetGoalUserPrompt`, `agentMode`, `enterPlanMode`, `exitPlanMode`,
+  `acpServer` / `NaviNapiAcpServer`, and computer-use methods that were added
+  to `lib.rs` but missing from the declarations.
+
+### Changed
+
+- **Session and tool state reconciliation** — the web frontend now reconciles
+  transient tool states on turn completion, session save, cancellation,
+  response completion, and errors so stale spinners do not remain visible.
+- **Web frontend runtime event coverage** — `ChatView` now handles all 19
+  `RuntimeEventKind` variants (was 8), including thinking deltas, approval /
+  question / plan-review resolution, sudo prompts, token updates,
+  auto-compaction, and agent-mode changes.
+- **Vite browser resolution** — `resolve.conditions: ["browser"]` so Svelte's
+  client entry is used in development and `mount()` works in the browser.
+- **Voice mentions removed** from the TUI about modal blurb.
+- **`build-native.mjs`** keeps `computer-use` feature enabled when disabling
+  `voice-onnx` on Windows/macOS x64.
+
+### Fixed
+
+- **XDG config on Windows** — `NaviConfig::load` now checks
+  `~/.config/navi/config.toml` (and `$XDG_CONFIG_HOME/navi/`) before falling
+  back to the platform-native `ProjectDirs` path. Previously, Windows users
+  who placed their config at `~/.config/navi/config.toml` (as documented in
+  AGENTS.md) had it silently ignored. Global `AGENTS.md` resolution uses the
+  same path resolver.
+- **Final-word loss on stream end** — provider stream now flushes
+  `ChatToolCallAccumulator::drain_pending_text` before emitting
+  `ModelStreamEvent::Done`, so text held back as a potential tool-call marker
+  prefix is emitted when the provider closes the HTTP body without a `[DONE]`
+  sentinel. `ThinkTagSplitter::drain_pending` no longer drops partial
+  `</think` tag prefixes on stream end.
+- **Alt+punctuation on compose-key layouts** — Alt+comma and Alt+period no
+  longer consumed as camel-hump navigation shortcuts, so compose-key sequences
+  (e.g. Alt+, → ç on US International) finally type the intended character.
+  Camel-hump navigation is still available via Alt+Left/Alt+b and
+  Alt+Right/Alt+f.
+- **Reasoning content preserved across session restore** — providers
+  requiring `reasoning_content` (e.g. DeepSeek thinking mode) no longer reject
+  rebuilt history after session restore. A new persisted `ToolTurnThinking`
+  event carries the reasoning trace of tool-call steps through reload.
+- **Web frontend session history** — saved sessions now load with full message
+  history by parsing `snapshot.events` and reconstructing the chat; active
+  sessions fetch `/sessions/:id/snapshot` when switching. `RuntimeEventKind`
+  types corrected to match Rust's externally-tagged enum serialization.
+
 ## [0.6.0] - 2026-08-04
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.5.0...v0.6.0
