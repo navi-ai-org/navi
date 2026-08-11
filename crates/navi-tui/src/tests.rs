@@ -1382,14 +1382,43 @@ fn alt_backspace_deletes_until_previous_space_not_separator() {
 }
 
 #[test]
-fn alt_comma_and_period_move_by_camel_humps() {
+fn alt_arrows_and_letters_move_by_camel_humps() {
     let mut app = test_app("fooBar");
 
-    handle_normal_key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);
+    // Alt+Left and Alt+b still navigate by camel humps.
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::ALT);
     assert_eq!(app.input_cursor, 3);
 
-    handle_normal_key(&mut app, KeyCode::Char('.'), KeyModifiers::ALT);
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::ALT);
     assert_eq!(app.input_cursor, 6);
+
+    let mut app2 = test_app("fooBar");
+    handle_normal_key(&mut app2, KeyCode::Char('b'), KeyModifiers::ALT);
+    assert_eq!(app2.input_cursor, 3);
+
+    handle_normal_key(&mut app2, KeyCode::Char('f'), KeyModifiers::ALT);
+    assert_eq!(app2.input_cursor, 6);
+}
+
+#[test]
+fn alt_punctuation_inserts_character_not_shortcut() {
+    // Alt+punctuation must fall through to character insertion so that
+    // compose-key sequences (e.g. Alt+, → ç on US International) work.
+    let mut app = test_app("");
+
+    handle_normal_key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);
+    assert_eq!(app.input, ",");
+    assert_eq!(app.input_cursor, 1);
+
+    handle_normal_key(&mut app, KeyCode::Char('.'), KeyModifiers::ALT);
+    assert_eq!(app.input, ",.");
+    assert_eq!(app.input_cursor, 2);
+
+    // Composed characters (sent by the OS with ALT modifier still set)
+    // must also be inserted, not consumed.
+    let mut app2 = test_app("");
+    handle_normal_key(&mut app2, KeyCode::Char('ç'), KeyModifiers::ALT);
+    assert_eq!(app2.input, "ç");
 }
 
 #[test]

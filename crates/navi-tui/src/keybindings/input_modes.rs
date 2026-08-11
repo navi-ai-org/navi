@@ -67,11 +67,10 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
     }
 
     if modifiers.contains(KeyModifiers::ALT) {
+        let mut handled_as_shortcut = true;
         match code {
-            KeyCode::Left | KeyCode::Char('b') | KeyCode::Char(',') => {
-                move_input_previous_hump(app)
-            }
-            KeyCode::Right | KeyCode::Char('f') | KeyCode::Char('.') => move_input_next_hump(app),
+            KeyCode::Left | KeyCode::Char('b') => move_input_previous_hump(app),
+            KeyCode::Right | KeyCode::Char('f') => move_input_next_hump(app),
             KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Char('\u{7f}') => {
                 delete_input_previous_space_word(app)
             }
@@ -79,9 +78,15 @@ pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyM
             // Alt+T is a global toggle for thinking visibility — leave it
             // for route_global_key rather than treating it as text input.
             KeyCode::Char('t') | KeyCode::Char('T') => return false,
+            // Alt+punctuation/symbols may be compose-key sequences (e.g.
+            // Alt+, → ç on US International). Fall through to character
+            // insertion instead of consuming the key as a shortcut.
+            KeyCode::Char(_) => handled_as_shortcut = false,
             _ => return false,
         }
-        return false;
+        if handled_as_shortcut {
+            return false;
+        }
     }
 
     match code {
