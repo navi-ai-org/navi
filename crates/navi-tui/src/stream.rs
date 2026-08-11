@@ -31,6 +31,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
 
     app.is_loading = true;
     app.loading_start = Some(Instant::now());
+    app.clear_activity_animation();
     // Until the provider reports authoritative usage, expose a conservative
     // request estimate in the Usage modal. It is never billed into totals.
     app.usage_state

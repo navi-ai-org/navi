@@ -789,13 +789,20 @@ where
             .map(|s| s.width.saturating_sub(4) as usize)
             .unwrap_or(80);
         let composer_animating = crate::view::input::advance_composer_animation(app, input_width);
-        // Pulse ◆/◇ for in-flight tools, turn loading, and background commands.
-        // Without this the event loop only redraws on input/events, so the
-        // running diamond freezes on the first frame.
+        if app.expire_activity_animation() {
+            needs_draw = true;
+        }
         let bg_running = app.background_commands.iter().any(|c| c.is_running());
-        let activity_animating = app.is_loading || !app.running_tools.is_empty() || bg_running;
+        let activity_animating = app.is_loading
+            || !app.running_tools.is_empty()
+            || bg_running
+            || app.activity_transition.is_some();
+        let idle_animating = !app.is_loading
+            && app.provider_configured
+            && app.mode == Mode::Normal
+            && app.activity_transition.is_none();
 
-        if needs_draw || composer_animating || activity_animating {
+        if needs_draw || composer_animating || activity_animating || idle_animating {
             // Bracket each frame in DECSET 2026 synchronized output so the
             // terminal presents it atomically. Without this, the ~30fps redraws
             // during streaming/tools tear on Windows Terminal (cursor and cells
@@ -858,8 +865,10 @@ where
             .as_ref()
             .is_some_and(|p| p.is_done() && p.completed_at.is_some());
         let mut timeout = if activity_animating || composer_animating {
-            // ~30fps is enough for a 320ms pulse frame and keeps CPU low.
+            // ~30fps is enough for active action frames and keeps CPU low.
             Duration::from_millis(33)
+        } else if idle_animating {
+            Duration::from_millis(100)
         } else if checkpoint_due_soon {
             Duration::from_millis(50)
         } else if app.messages.is_empty() || visible_notification(app).is_some() {

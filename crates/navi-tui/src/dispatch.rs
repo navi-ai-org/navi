@@ -1248,6 +1248,18 @@ fn handle_turn_completed(app: &mut TuiApp, res: std::result::Result<String, Stri
         maybe_refresh_account_usage_after_turn(app);
         drain_next_queued_message(app);
     }
+
+    if app.is_loading {
+        app.clear_activity_animation();
+    } else if completed_ok {
+        app.start_activity_animation(crate::render::status::ActivityAnimation::Success);
+    } else if app
+        .messages
+        .last()
+        .is_some_and(|message| message.status.as_deref() == Some("error"))
+    {
+        app.start_activity_animation(crate::render::status::ActivityAnimation::Error);
+    }
 }
 
 /// OS toast when a turn finished and the user is not looking at the TUI.

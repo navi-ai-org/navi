@@ -351,38 +351,49 @@ pub(crate) fn render_input_hint(frame: &mut Frame<'_>, _app: &TuiApp, area: Rect
 }
 
 fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
-    if !app.is_loading || !app.provider_configured {
-        return None;
-    }
-    let elapsed_ms = app
+    let (animation, animation_elapsed_ms, turn_active) = current_activity_animation(app)?;
+    let turn_elapsed_ms = app
         .loading_start
         .map(|start| start.elapsed().as_millis() as u64)
         .unwrap_or(0);
-    let (status, color) = composer_activity_status(app, elapsed_ms);
-    let elapsed = format_activity_elapsed(elapsed_ms);
-    // diamond pulse while a turn is running — no corner trail.
-    let diamond = crate::render::status::running_diamond(elapsed_ms);
+    let (status, color) = match animation {
+        crate::render::status::ActivityAnimation::Success => ("Done".to_string(), accent()),
+        crate::render::status::ActivityAnimation::Error => ("Error".to_string(), red()),
+        crate::render::status::ActivityAnimation::Idle => ("Ready".to_string(), muted()),
+        _ => composer_activity_status(app, turn_elapsed_ms),
+    };
+    let frame = crate::render::status::padded_activity_frame(animation, animation_elapsed_ms);
 
-    // Target shape (when room allows):
-    //   ◆ Thinking · 7s (esc to interrupt) · (avg 42 t/s)
-    // Long idle wait escalates copy so a multi-minute hang is obvious:
-    //   ◆ Still waiting for model · 2m10s (esc to cancel) · (no tokens yet)
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(
-            diamond,
+            frame,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(" ", Style::default().fg(ghost())),
-        Span::styled(status.clone(), Style::default().fg(text())),
-        Span::styled(format!(" · {elapsed}"), Style::default().fg(code_number())),
+        Span::styled(status, Style::default().fg(text())),
     ];
+    if turn_active {
+        let elapsed = format_activity_elapsed(turn_elapsed_ms);
+        spans.push(Span::styled(
+            format!(" · {elapsed}"),
+            Style::default().fg(code_number()),
+        ));
+    }
 
-    let interrupt_hint = if is_long_model_wait(app, elapsed_ms) {
-        " (esc to cancel)"
+    let interrupt_hint = if turn_active {
+        Some(if is_long_model_wait(app, turn_elapsed_ms) {
+            " (esc to cancel)"
+        } else {
+            " (esc to interrupt)"
+        })
     } else {
-        " (esc to interrupt)"
+        None
     };
-    let details = activity_detail_hints(app, elapsed_ms);
+    let details = if turn_active {
+        activity_detail_hints(app, turn_elapsed_ms)
+    } else {
+        String::new()
+    };
     let full_details = if details.is_empty() {
         String::new()
     } else {
@@ -391,24 +402,24 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     let used = spans_display_width(&spans);
     let remaining = width.saturating_sub(used);
 
-    if !full_details.is_empty()
-        && remaining >= display_width(interrupt_hint) + display_width(&full_details)
-    {
-        spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
-        spans.push(Span::styled(full_details, Style::default().fg(ghost())));
-    } else if remaining >= display_width(interrupt_hint) {
-        spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
-    } else {
-        // Narrow: keep core status + elapsed only, soft-trim if needed.
-        let plain = spans_to_text(&spans);
-        let trimmed = fit_display_width(&plain, width.max(1));
-        return Some(Line::from(vec![Span::styled(
-            trimmed,
-            Style::default().fg(text()),
-        )]));
+    if let Some(interrupt_hint) = interrupt_hint {
+        if !full_details.is_empty()
+            && remaining >= display_width(interrupt_hint) + display_width(&full_details)
+        {
+            spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
+            spans.push(Span::styled(full_details, Style::default().fg(ghost())));
+        } else if remaining >= display_width(interrupt_hint) {
+            spans.push(Span::styled(interrupt_hint, Style::default().fg(ghost())));
+        } else {
+            let plain = spans_to_text(&spans);
+            let trimmed = fit_display_width(&plain, width.max(1));
+            return Some(Line::from(vec![Span::styled(
+                trimmed,
+                Style::default().fg(text()),
+            )]));
+        }
     }
 
-    // Soft-trim if we still overflow after layout math (wide glyphs / edge widths).
     let total = spans_display_width(&spans);
     if total > width && width > 1 {
         let plain = spans_to_text(&spans);
@@ -420,6 +431,67 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     }
 
     Some(Line::from(spans))
+}
+
+fn current_activity_animation(
+    app: &TuiApp,
+) -> Option<(crate::render::status::ActivityAnimation, u64, bool)> {
+    if !app.provider_configured {
+        return None;
+    }
+
+    if let Some(state) = app.activity_transition {
+        let elapsed_ms = state.started_at.elapsed().as_millis() as u64;
+        if state.animation.is_transient() && elapsed_ms < state.animation.duration_ms() {
+            return Some((state.animation, elapsed_ms, app.is_loading));
+        }
+    }
+
+    if !app.is_loading {
+        if app.mode != crate::state::Mode::Normal {
+            return None;
+        }
+        return Some((
+            crate::render::status::ActivityAnimation::Idle,
+            app.tick().saturating_mul(80),
+            false,
+        ));
+    }
+
+    let elapsed_ms = app
+        .loading_start
+        .map(|start| start.elapsed().as_millis() as u64)
+        .unwrap_or_else(|| app.tick().saturating_mul(80));
+    let animation = if !app.pending_approvals.is_empty()
+        || !app.pending_questions.is_empty()
+        || !app.running_tools.is_empty()
+        || !app.streaming_tool_calls.is_empty()
+        || background_subagent_status(app).is_some()
+        || app
+            .background_commands
+            .iter()
+            .any(|command| command.is_running())
+    {
+        crate::render::status::ActivityAnimation::Tool
+    } else {
+        let active = active_assistant_message(app);
+        let status = active.and_then(|message| message.status.as_deref());
+        if status == Some("receiving")
+            || active.is_some_and(|message| {
+                !message.content.trim().is_empty() && message.thinking_content.is_empty()
+            })
+        {
+            crate::render::status::ActivityAnimation::Streaming
+        } else if status
+            .is_some_and(|label| label.starts_with("tool:") || label.starts_with("streaming_tool:"))
+        {
+            crate::render::status::ActivityAnimation::Tool
+        } else {
+            crate::render::status::ActivityAnimation::Thinking
+        }
+    };
+
+    Some((animation, elapsed_ms, true))
 }
 
 /// Compact right-side hints for the live activity line.
@@ -1445,17 +1517,31 @@ mod tests {
     }
 
     #[test]
-    fn composer_activity_line_only_shows_while_loading() {
+    fn composer_activity_line_shows_idle_and_active_states() {
         let mut app = crate::tests::test_app("");
-        assert!(composer_activity_line(&app, 80).is_none());
+        let idle = line_text(&composer_activity_line(&app, 80).expect("idle activity line"));
+        assert!(idle.contains("Ready"));
+        assert!(idle.contains("( ・_・ )"));
 
         app.is_loading = true;
         app.loading_start = Some(Instant::now());
-        let line = composer_activity_line(&app, 80).expect("activity line");
-        let text = line_text(&line);
+        let active = line_text(&composer_activity_line(&app, 80).expect("activity line"));
 
-        assert!(text.contains("Waiting for model"));
-        assert!(text.contains("0s"));
+        assert!(active.contains("Waiting for model"));
+        assert!(active.contains("0s"));
+    }
+
+    #[test]
+    fn composer_activity_line_renders_terminal_transitions() {
+        let mut app = crate::tests::test_app("");
+
+        app.start_activity_animation(crate::render::status::ActivityAnimation::Success);
+        let success = line_text(&composer_activity_line(&app, 120).expect("success line"));
+        assert!(success.contains("Done"));
+
+        app.start_activity_animation(crate::render::status::ActivityAnimation::Error);
+        let error = line_text(&composer_activity_line(&app, 120).expect("error line"));
+        assert!(error.contains("Error"));
     }
 
     #[test]

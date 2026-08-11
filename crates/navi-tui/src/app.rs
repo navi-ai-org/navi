@@ -74,6 +74,7 @@ pub struct TuiApp {
     pub(crate) scroll_offset: usize,
     pub(crate) is_loading: bool,
     pub(crate) loading_start: Option<Instant>,
+    pub(crate) activity_transition: Option<crate::render::status::ActivityAnimationState>,
     pub(crate) conversation_history: Vec<ModelMessage>,
 
     // async bridge
@@ -410,6 +411,7 @@ impl TuiApp {
             scroll_offset: 0,
             is_loading: false,
             loading_start: None,
+            activity_transition: None,
             conversation_history: vec![ModelMessage::system(system_prompt)],
             async_tx,
             async_rx,
@@ -615,6 +617,30 @@ impl TuiApp {
 
     pub(crate) fn advance_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
+    }
+
+    pub(crate) fn start_activity_animation(
+        &mut self,
+        animation: crate::render::status::ActivityAnimation,
+    ) {
+        self.activity_transition = Some(crate::render::status::ActivityAnimationState::new(
+            animation,
+        ));
+    }
+
+    pub(crate) fn clear_activity_animation(&mut self) {
+        self.activity_transition = None;
+    }
+
+    pub(crate) fn expire_activity_animation(&mut self) -> bool {
+        let expired = self.activity_transition.is_some_and(|state| {
+            state.animation.is_transient()
+                && state.started_at.elapsed().as_millis() as u64 >= state.animation.duration_ms()
+        });
+        if expired {
+            self.activity_transition = None;
+        }
+        expired
     }
 
     pub(crate) fn tick(&self) -> u64 {
