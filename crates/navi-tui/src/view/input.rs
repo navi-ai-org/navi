@@ -360,7 +360,9 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
         crate::render::status::ActivityAnimation::Success => ("Done".to_string(), accent()),
         crate::render::status::ActivityAnimation::Error => ("Error".to_string(), red()),
         crate::render::status::ActivityAnimation::Idle => ("Ready".to_string(), muted()),
-        _ => composer_activity_status(app, turn_elapsed_ms),
+        crate::render::status::ActivityAnimation::Working => {
+            composer_activity_status(app, turn_elapsed_ms)
+        }
     };
     let frame = crate::render::status::padded_activity_frame(animation, animation_elapsed_ms);
 
@@ -433,65 +435,70 @@ fn composer_activity_line(app: &TuiApp, width: usize) -> Option<Line<'static>> {
     Some(Line::from(spans))
 }
 
-fn current_activity_animation(
-    app: &TuiApp,
-) -> Option<(crate::render::status::ActivityAnimation, u64, bool)> {
+pub(crate) fn advance_activity_transition(app: &mut TuiApp) -> bool {
+    let Some(target) = activity_animation_target(app) else {
+        return false;
+    };
+
+    let Some(state) = app.activity_transition else {
+        app.activity_transition = Some(crate::render::status::ActivityAnimationState::new(target));
+        return true;
+    };
+
+    // Hold transient Success/Error animations until they expire; the event
+    // loop's expire_activity_animation clears them and returns to idle/target.
+    if state.animation.is_transient() {
+        return false;
+    }
+
+    if state.animation == target {
+        return false;
+    }
+
+    app.activity_transition = Some(crate::render::status::ActivityAnimationState::new(target));
+    true
+}
+
+fn activity_animation_target(app: &TuiApp) -> Option<crate::render::status::ActivityAnimation> {
     if !app.provider_configured {
         return None;
     }
+
+    if !app.is_loading {
+        return (app.mode == crate::state::Mode::Normal)
+            .then_some(crate::render::status::ActivityAnimation::Idle);
+    }
+
+    // Any loading state — thinking, streaming, tools, approvals, background
+    // commands — shares one unified "working" writing animation. The text
+    // label still reflects the real phase via composer_activity_status.
+    Some(crate::render::status::ActivityAnimation::Working)
+}
+
+fn current_activity_animation(
+    app: &TuiApp,
+) -> Option<(crate::render::status::ActivityAnimation, u64, bool)> {
+    let target = activity_animation_target(app)?;
 
     if let Some(state) = app.activity_transition {
         let elapsed_ms = state.started_at.elapsed().as_millis() as u64;
         if state.animation.is_transient() && elapsed_ms < state.animation.duration_ms() {
             return Some((state.animation, elapsed_ms, app.is_loading));
         }
-    }
-
-    if !app.is_loading {
-        if app.mode != crate::state::Mode::Normal {
-            return None;
+        if state.animation == target {
+            return Some((state.animation, elapsed_ms, app.is_loading));
         }
-        return Some((
-            crate::render::status::ActivityAnimation::Idle,
-            app.tick().saturating_mul(80),
-            false,
-        ));
     }
 
-    let elapsed_ms = app
-        .loading_start
-        .map(|start| start.elapsed().as_millis() as u64)
-        .unwrap_or_else(|| app.tick().saturating_mul(80));
-    let animation = if !app.pending_approvals.is_empty()
-        || !app.pending_questions.is_empty()
-        || !app.running_tools.is_empty()
-        || !app.streaming_tool_calls.is_empty()
-        || background_subagent_status(app).is_some()
-        || app
-            .background_commands
-            .iter()
-            .any(|command| command.is_running())
-    {
-        crate::render::status::ActivityAnimation::Tool
+    let elapsed_ms = if target == crate::render::status::ActivityAnimation::Idle {
+        app.tick().saturating_mul(80)
     } else {
-        let active = active_assistant_message(app);
-        let status = active.and_then(|message| message.status.as_deref());
-        if status == Some("receiving")
-            || active.is_some_and(|message| {
-                !message.content.trim().is_empty() && message.thinking_content.is_empty()
-            })
-        {
-            crate::render::status::ActivityAnimation::Streaming
-        } else if status
-            .is_some_and(|label| label.starts_with("tool:") || label.starts_with("streaming_tool:"))
-        {
-            crate::render::status::ActivityAnimation::Tool
-        } else {
-            crate::render::status::ActivityAnimation::Thinking
-        }
+        app.loading_start
+            .map(|start| start.elapsed().as_millis() as u64)
+            .unwrap_or_else(|| app.tick().saturating_mul(80))
     };
 
-    Some((animation, elapsed_ms, true))
+    Some((target, elapsed_ms, app.is_loading))
 }
 
 /// Compact right-side hints for the live activity line.
@@ -1521,7 +1528,7 @@ mod tests {
         let mut app = crate::tests::test_app("");
         let idle = line_text(&composer_activity_line(&app, 80).expect("idle activity line"));
         assert!(idle.contains("Ready"));
-        assert!(idle.contains("( ・_・ )"));
+        assert!(idle.contains("(￣ω￣) z"));
 
         app.is_loading = true;
         app.loading_start = Some(Instant::now());
@@ -1542,6 +1549,19 @@ mod tests {
         app.start_activity_animation(crate::render::status::ActivityAnimation::Error);
         let error = line_text(&composer_activity_line(&app, 120).expect("error line"));
         assert!(error.contains("Error"));
+    }
+
+    #[test]
+    fn activity_state_transitions_directly_without_handoff() {
+        let mut app = crate::tests::test_app("");
+        assert!(advance_activity_transition(&mut app));
+
+        app.is_loading = true;
+        app.loading_start = Some(Instant::now());
+        assert!(advance_activity_transition(&mut app));
+        let working = line_text(&composer_activity_line(&app, 120).expect("working line"));
+        assert!(working.contains("φ__(．．)"));
+        assert!(working.contains("Waiting for model"));
     }
 
     #[test]

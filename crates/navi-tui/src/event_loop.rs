@@ -792,15 +792,21 @@ where
         if app.expire_activity_animation() {
             needs_draw = true;
         }
+        if crate::view::input::advance_activity_transition(app) {
+            needs_draw = true;
+        }
         let bg_running = app.background_commands.iter().any(|c| c.is_running());
+        let activity_transition_animating = app
+            .activity_transition
+            .is_some_and(|state| state.animation.is_transient());
         let activity_animating = app.is_loading
             || !app.running_tools.is_empty()
             || bg_running
-            || app.activity_transition.is_some();
+            || activity_transition_animating;
         let idle_animating = !app.is_loading
             && app.provider_configured
             && app.mode == Mode::Normal
-            && app.activity_transition.is_none();
+            && !activity_transition_animating;
 
         if needs_draw || composer_animating || activity_animating || idle_animating {
             // Bracket each frame in DECSET 2026 synchronized output so the

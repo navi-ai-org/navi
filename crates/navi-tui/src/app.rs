@@ -629,7 +629,9 @@ impl TuiApp {
     }
 
     pub(crate) fn clear_activity_animation(&mut self) {
-        self.activity_transition = None;
+        self.activity_transition = Some(crate::render::status::ActivityAnimationState::new(
+            crate::render::status::ActivityAnimation::Idle,
+        ));
     }
 
     pub(crate) fn expire_activity_animation(&mut self) -> bool {
@@ -638,7 +640,7 @@ impl TuiApp {
                 && state.started_at.elapsed().as_millis() as u64 >= state.animation.duration_ms()
         });
         if expired {
-            self.activity_transition = None;
+            self.clear_activity_animation();
         }
         expired
     }

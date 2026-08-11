@@ -70,9 +70,7 @@ pub(crate) fn running_diamond_color(accent: Color) -> Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ActivityAnimation {
     Idle,
-    Thinking,
-    Streaming,
-    Tool,
+    Working,
     Error,
     Success,
 }
@@ -83,17 +81,15 @@ impl ActivityAnimation {
     }
 
     pub(crate) const fn loops(self) -> bool {
-        !self.is_transient()
+        matches!(self, Self::Idle | Self::Working)
     }
 
     pub(crate) const fn duration_ms(self) -> u64 {
         match self {
-            Self::Idle => 10_800,
-            Self::Thinking => 5_800,
-            Self::Streaming => 3_000,
-            Self::Tool => 4_000,
-            Self::Error => 8_300,
-            Self::Success => 5_600,
+            Self::Idle => 2_200,
+            Self::Working => 1_350,
+            Self::Error => 1_800,
+            Self::Success => 4_000,
         }
     }
 }
@@ -119,274 +115,78 @@ struct ActivityFrame {
     duration_ms: u64,
 }
 
-const IDLE_FRAMES: [ActivityFrame; 8] = [
+const IDLE_FRAMES: [ActivityFrame; 3] = [
     ActivityFrame {
-        text: "( ・_・ )",
-        duration_ms: 1_500,
+        text: "(￣ω￣) z",
+        duration_ms: 650,
     },
     ActivityFrame {
-        text: "(  ・_・)",
-        duration_ms: 1_200,
+        text: "(－ω－) zz",
+        duration_ms: 650,
     },
     ActivityFrame {
-        text: "( ・_・ )",
-        duration_ms: 1_000,
-    },
-    ActivityFrame {
-        text: "(・_・ )",
-        duration_ms: 1_200,
-    },
-    ActivityFrame {
-        text: "( ・ω・ ) y~",
-        duration_ms: 800,
-    },
-    ActivityFrame {
-        text: "(－ω－) zzZ",
-        duration_ms: 2_000,
-    },
-    ActivityFrame {
-        text: "[(－－)]..zzZ",
-        duration_ms: 2_500,
-    },
-    ActivityFrame {
-        text: "( ´ ω ` )!",
-        duration_ms: 600,
+        text: "(￣ω￣) zzZ",
+        duration_ms: 900,
     },
 ];
 
-const THINKING_FRAMES: [ActivityFrame; 10] = [
+/// Unified writing animation for any working state (thinking, streaming, tools,
+/// approvals, background commands). One face per state was not a real
+/// animation and the per-state variants read as noise — a single expressive
+/// writing loop reads as "the agent is busy" without lying about phase.
+///
+/// The pencil (φ) slides left→right across the three frames so the whole
+/// glyph animates, not just the eyes. Frames stay at display width 9 so the
+/// status label + elapsed time still fit on narrow terminals.
+const WORKING_FRAMES: [ActivityFrame; 3] = [
+    ActivityFrame {
+        text: "φ__(．．)",
+        duration_ms: 450,
+    },
+    ActivityFrame {
+        text: "_φ_(．．)",
+        duration_ms: 450,
+    },
+    ActivityFrame {
+        text: "__φ(．．)",
+        duration_ms: 450,
+    },
+];
+
+const ERROR_FRAMES: [ActivityFrame; 3] = [
     ActivityFrame {
         text: "(・_・;)",
-        duration_ms: 700,
-    },
-    ActivityFrame {
-        text: "(￣～￣;)",
-        duration_ms: 700,
-    },
-    ActivityFrame {
-        text: "(￢_￢)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(←_←)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(↼_↼)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(＠_＠)",
-        duration_ms: 600,
-    },
-    ActivityFrame {
-        text: "(◎ ◎)ゞ",
-        duration_ms: 600,
-    },
-    ActivityFrame {
-        text: "(•ิ_•ิ)?",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(°ロ°) !",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "(￣▽￣)",
-        duration_ms: 800,
-    },
-];
-
-const STREAMING_FRAMES: [ActivityFrame; 8] = [
-    ActivityFrame {
-        text: "(°ロ°) !",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "Σ(°ロ°)",
-        duration_ms: 300,
-    },
-    ActivityFrame {
-        text: "( ◕▿◕ )",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "( ◕▿◕ )",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "( ◕▽◕ )",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "( ◕▽◕ )",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "ヽ(>∀<☆)ノ",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "(☆▽☆)",
-        duration_ms: 500,
-    },
-];
-
-const TOOL_FRAMES: [ActivityFrame; 10] = [
-    ActivityFrame {
-        text: "─=≡Σ((( つ＞＜)つ",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "ε=ε=ε=ε=┌(;￣▽￣)┘",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "C= C= C= C=┌( `ー´)┘",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "ε===(っ≧ω≦)っ",
-        duration_ms: 300,
-    },
-    ActivityFrame {
-        text: "☆ﾐ(o*･ω･)ﾉ",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "( ◕▿◕ )",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "( ◕▽◕ )",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "ε=ε=ε=ε=┌(;￣▽￣)┘",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "C= C= C= C=┌( `ー´)┘",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "─=≡Σ((( つ＞＜)つ",
-        duration_ms: 400,
-    },
-];
-
-const ERROR_FRAMES: [ActivityFrame; 14] = [
-    ActivityFrame {
-        text: "( •̀ω•́ )",
-        duration_ms: 600,
-    },
-    ActivityFrame {
-        text: "( ￣ー￣)φ__",
-        duration_ms: 600,
-    },
-    ActivityFrame {
-        text: "(・_・;)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(；⌣̀_⌣́)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "(＃＞＜)",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "( ` ω ´ )",
         duration_ms: 400,
     },
     ActivityFrame {
         text: "(╬ Ò﹏Ó)",
-        duration_ms: 400,
+        duration_ms: 600,
     },
     ActivityFrame {
         text: "(╯°□°）╯︵ ┻━┻",
-        duration_ms: 300,
-    },
-    ActivityFrame {
-        text: "(ノಠ益ಠ)ノ彡┻━┻",
-        duration_ms: 300,
-    },
-    ActivityFrame {
-        text: "(×_×)",
-        duration_ms: 700,
-    },
-    ActivityFrame {
-        text: "(x_x) ~~",
-        duration_ms: 700,
-    },
-    ActivityFrame {
-        text: r"┬──┬ ¯\_(ツ)",
         duration_ms: 800,
-    },
-    ActivityFrame {
-        text: "(´-ω-`)",
-        duration_ms: 1_000,
-    },
-    ActivityFrame {
-        text: "( ´_ゝ`)",
-        duration_ms: 1_000,
     },
 ];
 
-const SUCCESS_FRAMES: [ActivityFrame; 11] = [
-    ActivityFrame {
-        text: "( ￣ー￣)φ__",
-        duration_ms: 500,
-    },
-    ActivityFrame {
-        text: "___〆(・∀・)",
-        duration_ms: 500,
-    },
+const SUCCESS_FRAMES: [ActivityFrame; 3] = [
     ActivityFrame {
         text: "(・_・;)",
         duration_ms: 400,
     },
     ActivityFrame {
-        text: "(°ロ°) !",
-        duration_ms: 300,
-    },
-    ActivityFrame {
-        text: "(ﾉ≧∀≦)ﾉ ‥…━━━★",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "(ﾉ>ω<)ﾉ :｡･:*:･ﾟ’★,｡･:*:･ﾟ’☆",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "＼(≧▽≦)／",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "✧(≧▽≦)✧",
-        duration_ms: 350,
-    },
-    ActivityFrame {
-        text: "o(>ω<)o",
-        duration_ms: 400,
-    },
-    ActivityFrame {
-        text: "(b ᵔ▽ᵔ)b",
+        text: "(ﾉ≧∀≦)ﾉ★",
         duration_ms: 600,
     },
     ActivityFrame {
-        text: "(￣▽￣)",
-        duration_ms: 1_000,
+        text: "＼(≧▽≦)／",
+        duration_ms: 3_000,
     },
 ];
 
 fn activity_frames(animation: ActivityAnimation) -> &'static [ActivityFrame] {
     match animation {
         ActivityAnimation::Idle => &IDLE_FRAMES,
-        ActivityAnimation::Thinking => &THINKING_FRAMES,
-        ActivityAnimation::Streaming => &STREAMING_FRAMES,
-        ActivityAnimation::Tool => &TOOL_FRAMES,
+        ActivityAnimation::Working => &WORKING_FRAMES,
         ActivityAnimation::Error => &ERROR_FRAMES,
         ActivityAnimation::Success => &SUCCESS_FRAMES,
     }
@@ -447,20 +247,22 @@ mod tests {
     }
 
     #[test]
-    fn activity_animations_reach_their_narrative_frames() {
-        assert_eq!(activity_frame(ActivityAnimation::Thinking, 0), "(・_・;)");
+    fn activity_animations_use_compact_transitions() {
+        assert_eq!(activity_frame(ActivityAnimation::Idle, 0), "(￣ω￣) z");
+        assert_eq!(activity_frame(ActivityAnimation::Idle, 650), "(－ω－) zz");
         assert_eq!(
-            activity_frame(ActivityAnimation::Thinking, 4_600),
-            "(°ロ°) !"
+            activity_frame(ActivityAnimation::Idle, 1_300),
+            "(￣ω￣) zzZ"
         );
-        assert_eq!(activity_frame(ActivityAnimation::Tool, 1_500), "☆ﾐ(o*･ω･)ﾉ");
-        assert_eq!(activity_frame(ActivityAnimation::Error, 4_100), "(×_×)");
+        assert_eq!(activity_frame(ActivityAnimation::Working, 0), "φ__(．．)");
+        assert_eq!(activity_frame(ActivityAnimation::Working, 450), "_φ_(．．)");
+        assert_eq!(activity_frame(ActivityAnimation::Working, 900), "__φ(．．)");
         assert_eq!(
-            activity_frame(ActivityAnimation::Success, 1_700),
-            "(ﾉ≧∀≦)ﾉ ‥…━━━★"
+            activity_frame(ActivityAnimation::Error, 1_000),
+            "(╯°□°）╯︵ ┻━┻"
         );
         assert_eq!(
-            activity_frame(ActivityAnimation::Success, 2_500),
+            activity_frame(ActivityAnimation::Success, 1_000),
             "＼(≧▽≦)／"
         );
     }
@@ -476,10 +278,17 @@ mod tests {
         );
         assert_eq!(
             activity_frame(
+                ActivityAnimation::Working,
+                ActivityAnimation::Working.duration_ms()
+            ),
+            activity_frame(ActivityAnimation::Working, 0)
+        );
+        assert_eq!(
+            activity_frame(
                 ActivityAnimation::Success,
                 ActivityAnimation::Success.duration_ms() + 1_000
             ),
-            "(￣▽￣)"
+            "＼(≧▽≦)／"
         );
     }
 
@@ -487,9 +296,7 @@ mod tests {
     fn padded_animation_frames_have_stable_display_width() {
         for animation in [
             ActivityAnimation::Idle,
-            ActivityAnimation::Thinking,
-            ActivityAnimation::Streaming,
-            ActivityAnimation::Tool,
+            ActivityAnimation::Working,
             ActivityAnimation::Error,
             ActivityAnimation::Success,
         ] {
