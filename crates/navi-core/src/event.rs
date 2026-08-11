@@ -531,6 +531,16 @@ pub enum AgentEvent {
     },
     /// The assistant requested a tool invocation.
     ToolRequested(ToolInvocation),
+    /// Persisted thinking/reasoning content from an assistant step that
+    /// produced tool calls. Stored separately from [`ToolRequested`] (which
+    /// only carries the invocation) so the reasoning trace survives session
+    /// restore and can be echoed back to providers that require it
+    /// (e.g. DeepSeek thinking mode: "The reasoning_content in the thinking
+    /// mode must be passed back to the API").
+    ToolTurnThinking {
+        /// Accumulated reasoning/thinking text for this tool-call step.
+        thinking: String,
+    },
     /// A tool invocation completed.
     ToolCompleted(ToolResult),
     /// Transient status for a nested subagent.

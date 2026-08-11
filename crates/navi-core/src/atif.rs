@@ -470,6 +470,7 @@ impl Folder {
                 AgentEvent::ModelDelta { .. }
                 | AgentEvent::ModelThinkingDelta { .. }
                 | AgentEvent::ToolCallStreaming { .. }
+                | AgentEvent::ToolTurnThinking { .. }
                 | AgentEvent::SubagentActivity { .. }
                 | AgentEvent::SubagentTranscript { .. }
                 | AgentEvent::HarnessTrace(_)

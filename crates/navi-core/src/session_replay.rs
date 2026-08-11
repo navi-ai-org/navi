@@ -31,6 +31,7 @@ pub fn model_messages_from_agent_events(
 ) -> Vec<ModelMessage> {
     let mut messages = Vec::new();
     let mut pending_tool_calls: Vec<ToolInvocation> = Vec::new();
+    let mut pending_tool_thinking: Option<String> = None;
     let mut tool_names: HashMap<String, String> = HashMap::new();
 
     for event in events {
@@ -40,7 +41,11 @@ pub fn model_messages_from_agent_events(
                 content_parts,
                 submitted_at: _,
             } => {
-                flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+                flush_pending_tool_calls(
+                    &mut messages,
+                    &mut pending_tool_calls,
+                    pending_tool_thinking.take(),
+                );
                 if content_parts.is_empty() {
                     messages.push(ModelMessage::user(text.clone()));
                 } else {
@@ -51,7 +56,11 @@ pub fn model_messages_from_agent_events(
                 }
             }
             AgentEvent::ModelOutput { text, thinking } => {
-                flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+                flush_pending_tool_calls(
+                    &mut messages,
+                    &mut pending_tool_calls,
+                    pending_tool_thinking.take(),
+                );
                 messages.push(ModelMessage::assistant_with_thinking(
                     text.clone(),
                     thinking.clone(),
@@ -61,8 +70,21 @@ pub fn model_messages_from_agent_events(
                 tool_names.insert(invocation.id.clone(), invocation.tool_name.clone());
                 pending_tool_calls.push(invocation.clone());
             }
+            AgentEvent::ToolTurnThinking { thinking } => {
+                // Persisted reasoning trace for a tool-call step. Stored
+                // separately from ToolRequested (which only carries the
+                // invocation) so providers requiring reasoning_content
+                // (e.g. DeepSeek) accept the rebuilt history on restore.
+                if !thinking.is_empty() {
+                    pending_tool_thinking = Some(thinking.clone());
+                }
+            }
             AgentEvent::ToolCompleted(result) => {
-                flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+                flush_pending_tool_calls(
+                    &mut messages,
+                    &mut pending_tool_calls,
+                    pending_tool_thinking.take(),
+                );
                 let tool_name = tool_names
                     .get(&result.invocation_id)
                     .cloned()
@@ -84,7 +106,11 @@ pub fn model_messages_from_agent_events(
             } => {
                 // Collapse prior conversation into the compact summary so restored
                 // sessions do not rehydrate the full pre-compact history.
-                flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+                flush_pending_tool_calls(
+                    &mut messages,
+                    &mut pending_tool_calls,
+                    pending_tool_thinking.take(),
+                );
                 if summary.trim().is_empty() {
                     continue;
                 }
@@ -103,11 +129,19 @@ pub fn model_messages_from_agent_events(
         }
     }
     // Orphan tool calls (interrupted turn) still surface as assistant requests.
-    flush_pending_tool_calls(&mut messages, &mut pending_tool_calls);
+    flush_pending_tool_calls(
+        &mut messages,
+        &mut pending_tool_calls,
+        pending_tool_thinking.take(),
+    );
     messages
 }
 
-fn flush_pending_tool_calls(messages: &mut Vec<ModelMessage>, pending: &mut Vec<ToolInvocation>) {
+fn flush_pending_tool_calls(
+    messages: &mut Vec<ModelMessage>,
+    pending: &mut Vec<ToolInvocation>,
+    thinking: Option<String>,
+) {
     if pending.is_empty() {
         return;
     }
@@ -115,7 +149,7 @@ fn flush_pending_tool_calls(messages: &mut Vec<ModelMessage>, pending: &mut Vec<
     messages.push(ModelMessage::assistant_tool_calls_with_context(
         calls,
         String::new(),
-        None,
+        thinking,
     ));
 }
 
@@ -465,5 +499,101 @@ mod tests {
         // one assistant with 2 calls + two tool results
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].tool_calls.len(), 2);
+    }
+
+    #[test]
+    fn tool_turn_thinking_preserved_on_replay() {
+        // Simulates a persisted session where the model produced reasoning
+        // content alongside tool calls. Without ToolTurnThinking, the
+        // reasoning_content is lost on restore and providers like DeepSeek
+        // reject the rebuilt history ("reasoning_content must be passed back").
+        let events = vec![
+            AgentEvent::UserTaskSubmitted {
+                text: "do the thing".into(),
+                content_parts: Vec::new(),
+                submitted_at: None,
+            },
+            AgentEvent::ToolRequested(ToolInvocation {
+                id: "call-1".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "src/main.rs" }),
+            }),
+            AgentEvent::ToolTurnThinking {
+                thinking: "I need to read the file first.".into(),
+            },
+            AgentEvent::ToolCompleted(ToolResult {
+                invocation_id: "call-1".into(),
+                ok: true,
+                output: json!({ "content": "fn main() {}" }),
+            }),
+            AgentEvent::ModelOutput {
+                text: "Done.".into(),
+                thinking: None,
+            },
+        ];
+        let messages = model_messages_from_agent_events(&events, None, None);
+        // user + assistant(tool_call) + tool_result + assistant(final)
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[1].role, crate::model::ModelRole::Assistant);
+        assert_eq!(messages[1].tool_calls.len(), 1);
+        assert_eq!(
+            messages[1].thinking_content.as_deref(),
+            Some("I need to read the file first."),
+            "reasoning_content must be preserved on tool-call steps for replay"
+        );
+    }
+
+    #[test]
+    fn tool_turn_thinking_preserved_for_parallel_tool_calls() {
+        let events = vec![
+            AgentEvent::ToolRequested(ToolInvocation {
+                id: "a".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "a.rs" }),
+            }),
+            AgentEvent::ToolRequested(ToolInvocation {
+                id: "b".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "b.rs" }),
+            }),
+            AgentEvent::ToolTurnThinking {
+                thinking: "Reading both files in parallel.".into(),
+            },
+            AgentEvent::ToolCompleted(ToolResult {
+                invocation_id: "a".into(),
+                ok: true,
+                output: json!({ "content": "a" }),
+            }),
+            AgentEvent::ToolCompleted(ToolResult {
+                invocation_id: "b".into(),
+                ok: true,
+                output: json!({ "content": "b" }),
+            }),
+        ];
+        let messages = model_messages_from_agent_events(&events, None, None);
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].tool_calls.len(), 2);
+        assert_eq!(
+            messages[0].thinking_content.as_deref(),
+            Some("Reading both files in parallel.")
+        );
+    }
+
+    #[test]
+    fn tool_turn_thinking_without_tool_requested_is_ignored() {
+        // A stray ToolTurnThinking with no pending tool calls should not
+        // produce a spurious assistant message.
+        let events = vec![
+            AgentEvent::ToolTurnThinking {
+                thinking: "orphan thinking".into(),
+            },
+            AgentEvent::ModelOutput {
+                text: "hello".into(),
+                thinking: None,
+            },
+        ];
+        let messages = model_messages_from_agent_events(&events, None, None);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "hello");
     }
 }

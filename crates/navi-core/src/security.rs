@@ -894,6 +894,9 @@ pub fn redact_agent_event(event: &AgentEvent) -> AgentEvent {
         AgentEvent::ToolRequested(invocation) => {
             AgentEvent::ToolRequested(redact_tool_invocation(invocation))
         }
+        AgentEvent::ToolTurnThinking { thinking } => AgentEvent::ToolTurnThinking {
+            thinking: redact_secrets(thinking),
+        },
         AgentEvent::ToolCompleted(result) => AgentEvent::ToolCompleted(redact_tool_result(result)),
         AgentEvent::SubagentActivity {
             invocation_id,

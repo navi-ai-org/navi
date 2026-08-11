@@ -2481,6 +2481,7 @@ fn runtime_event_kind_from_agent_event(event: &AgentEvent) -> Option<RuntimeEven
             reason: reason.clone(),
         }),
         AgentEvent::UserTaskSubmitted { .. } | AgentEvent::ModelOutput { .. } => None,
+        AgentEvent::ToolTurnThinking { .. } => None,
         AgentEvent::RepeatedToolCallWarning { .. } => None,
         AgentEvent::RepetitionDetected { .. } => None,
         AgentEvent::GoalUpdated { .. } => None,

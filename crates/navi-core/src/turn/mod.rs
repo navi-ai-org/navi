@@ -1188,6 +1188,17 @@ async fn handle_tool_calls(
     let tool_call_content = std::mem::take(&mut output.text);
     let tool_call_thinking =
         (!output.thinking.is_empty()).then(|| std::mem::take(&mut output.thinking));
+    // Persist thinking content for tool-call steps so session replay can
+    // echo it back to providers that require reasoning_content (e.g.
+    // DeepSeek thinking mode). ModelThinkingDelta is transient (not
+    // persisted), so without this the reasoning trace is lost on restore.
+    if let Some(ref tx) = ctx.event_tx
+        && let Some(ref thinking) = tool_call_thinking
+    {
+        let _ = tx.send(AgentEvent::ToolTurnThinking {
+            thinking: thinking.clone(),
+        });
+    }
     messages.push(ModelMessage::assistant_tool_calls_with_context(
         output.tool_calls.clone(),
         tool_call_content,

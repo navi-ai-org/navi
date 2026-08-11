@@ -1015,6 +1015,9 @@ fn handle_agent_event(app: &mut TuiApp, event: AgentEvent) {
         } => {}
         AgentEvent::WindowsEnumerated { count: _ } => {}
         AgentEvent::UiElementInspected { supported: _ } => {}
+        // Persisted reasoning trace for tool-call steps; consumed by session
+        // replay, not displayed live (thinking deltas already streamed).
+        AgentEvent::ToolTurnThinking { .. } => {}
         AgentEvent::InputSimulated {
             actions_performed: _,
             denied: Some(reason),
