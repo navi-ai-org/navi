@@ -1,0 +1,16 @@
+# Copy this workflow into navi-ai-org/navi-marketplace when publishing.
+name: validate-catalog
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate catalog.json
+        run: python scripts/validate_catalog.py

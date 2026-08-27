@@ -1,0 +1,36 @@
+version = 1
+id = "hard-state-machine"
+title = "Hard: job state machine transitions and retries"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-state-machine"
+task = """
+Fix the job lifecycle state machine.
+
+Requirements (from tests):
+- Fail while Running should retry (back to Pending) until max_retries, then Failed
+- Cancel is illegal from Succeeded
+- Resume is illegal from Running
+- Pause/Resume and Cancel from Paused must still work
+
+Multiple transition rules are wrong. Implement the correct transition table.
+Run `cargo test` until green.
+"""
+max_turns = 18
+max_tool_calls = 90
+timeout_ms = 600000
+tags = ["tool-quality", "hard", "state-machine"]
+
+[metadata]
+difficulty = "hard"
+focus = "transition table + retry counter"
+eval_axis = "precise_logic"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

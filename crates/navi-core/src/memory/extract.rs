@@ -1,0 +1,301 @@
+//! Per-turn memory extraction.
+//!
+//! After each completed turn, a background task analyzes the conversation
+//! and extracts durable memories after each turn:
+//! fire-and-forget, only when the model hasn't already written memories
+//! during the turn (mutual exclusion with the `memory` tool).
+
+use anyhow::Result;
+use serde::Deserialize;
+
+use crate::memory::{AutoMemoryStore, MemoryType, new_entry, sanitize_id};
+use crate::model::{ModelMessage, ModelProvider, ModelRequest, ThinkingConfig};
+
+/// System contract for memory extraction (identity + output format once).
+const EXTRACT_SYSTEM: &str = r#"You are a memory extraction subagent for NAVI.
+Extract durable memories useful in future sessions. Only facts that are durable
+(not temporary debug state), non-obvious (not derivable from code), and specific.
+
+Memory types: user, feedback, project, reference.
+Do NOT extract secrets, temporary errors, or facts obvious from the code.
+
+Return a JSON array of objects with: id (snake_case), type, name, description, body (1-3 sentences).
+If nothing worth remembering, return []. Output ONLY the JSON array — no markdown fences."#;
+
+/// A memory extracted by the model.
+#[derive(Debug, Clone, Deserialize)]
+struct ExtractedMemory {
+    id: String,
+    #[serde(rename = "type")]
+    memory_type: String,
+    name: String,
+    description: String,
+    body: String,
+}
+
+/// Runs memory extraction reusing an existing message history.
+///
+/// This is the forked-main-session path: the live conversation messages are
+/// cloned and the extraction prompt is appended as a final user message. This
+/// lets the provider cache hit the prefix of the main chat turn.
+pub async fn extract_memories_from_messages(
+    mut messages: Vec<ModelMessage>,
+    model_provider: &dyn ModelProvider,
+    model_name: &str,
+    store: &AutoMemoryStore,
+) -> Result<usize> {
+    messages.push(ModelMessage::user(format!(
+        "{EXTRACT_SYSTEM}\n\nUsing the conversation history above, extract durable memories as a JSON array. Output ONLY the JSON array — no markdown fences."
+    )));
+
+    let request = ModelRequest {
+        model: model_name.to_string(),
+        instructions: None,
+        messages,
+        thinking: ThinkingConfig::Off,
+        tools: vec![],
+        session_id: None,
+    };
+
+    let response = model_provider.complete(request).await?;
+    parse_and_save_memories(&response.text, store)
+}
+
+fn parse_and_save_memories(text: &str, store: &AutoMemoryStore) -> Result<usize> {
+    let text = text.trim();
+
+    // Parse JSON array
+    let memories: Vec<ExtractedMemory> = if text.starts_with('[') {
+        serde_json::from_str(text).unwrap_or_default()
+    } else {
+        // Try to extract JSON from markdown fences
+        if let Some(start) = text.find('[') {
+            if let Some(end) = text.rfind(']') {
+                serde_json::from_str(&text[start..=end]).unwrap_or_default()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    };
+
+    let mut saved = 0;
+    for m in &memories {
+        let memory_type = match MemoryType::from_str(&m.memory_type) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        let id = sanitize_id(&m.id);
+
+        // Skip if memory already exists with same id
+        if store.get(&id).ok().flatten().is_some() {
+            continue;
+        }
+
+        let entry = new_entry(&id, memory_type, &m.name, &m.description, &m.body);
+        if store.upsert(&entry).is_ok() {
+            saved += 1;
+        }
+    }
+
+    if saved > 0 {
+        tracing::info!("extracted {} memories from turn", saved);
+    }
+
+    Ok(saved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_system_has_json_array() {
+        assert!(EXTRACT_SYSTEM.contains("JSON array"));
+    }
+
+    #[test]
+    fn test_extracted_memory_deserialization() {
+        let json = r#"[{"id":"test_mem","type":"feedback","name":"Test","description":"A test memory","body":"This is a test"}]"#;
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert_eq!(memories.len(), 1);
+        assert_eq!(memories[0].id, "test_mem");
+        assert_eq!(memories[0].memory_type, "feedback");
+    }
+
+    #[test]
+    fn test_extracted_memory_with_invalid_type() {
+        let json =
+            r#"[{"id":"bad","type":"invalid_type","name":"Bad","description":"Bad","body":"Bad"}]"#;
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert_eq!(memories.len(), 1);
+        // from_str on memory_type will return None, so it should be skipped
+        assert!(MemoryType::from_str(&memories[0].memory_type).is_none());
+    }
+
+    #[test]
+    fn test_extracted_memory_empty_array() {
+        let json = "[]";
+        let memories: Vec<ExtractedMemory> = serde_json::from_str(json).unwrap();
+        assert!(memories.is_empty());
+    }
+
+    /// Mock model provider for testing extract_memories without a real API.
+    struct MockProvider {
+        response: String,
+    }
+
+    impl crate::model::ModelProvider for MockProvider {
+        fn stream(&self, _request: ModelRequest) -> crate::model::ModelStream {
+            let text = self.response.clone();
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(crate::model::ModelStreamEvent::TextDelta { text }),
+                Ok(crate::model::ModelStreamEvent::Done),
+            ]))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_with_mock_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        // Mock provider returns one memory
+        let provider = MockProvider {
+            response: r#"[{"id":"redis_tests","type":"feedback","name":"Redis for Tests","description":"Need Redis running","body":"Start Redis before running tests"}]"#.to_string(),
+        };
+
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user(
+                "User: fix the tests\n\nAssistant: I found that Redis needs to be running"
+                    .to_string(),
+            )],
+            &provider,
+            "test-model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, 1);
+
+        // Verify the memory was saved
+        let entry = store.get("redis_tests").unwrap().unwrap();
+        assert_eq!(entry.name, "Redis for Tests");
+        assert_eq!(entry.memory_type, MemoryType::Feedback);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_skips_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        // Pre-populate with an existing memory
+        let entry = new_entry(
+            "redis_tests",
+            MemoryType::Feedback,
+            "Existing",
+            "Old",
+            "Old body",
+        );
+        store.upsert(&entry).unwrap();
+
+        // Mock provider returns the same id
+        let provider = MockProvider {
+            response: r#"[{"id":"redis_tests","type":"feedback","name":"New","description":"New","body":"New body"}]"#.to_string(),
+        };
+
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("test".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        // Should skip because it already exists
+        assert_eq!(result, 0);
+
+        // Verify the existing memory was NOT overwritten
+        let existing = store.get("redis_tests").unwrap().unwrap();
+        assert_eq!(existing.name, "Existing");
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_empty_response() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: "[]".to_string(),
+        };
+
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("nothing useful".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_garbage_response() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: "This is not JSON at all".to_string(),
+        };
+
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("test".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_extract_memories_json_in_markdown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("memories.db");
+        let store = AutoMemoryStore::open(&db_path).unwrap();
+
+        let provider = MockProvider {
+            response: r#"Here are the memories:
+```json
+[{"id":"pref_dark","type":"user","name":"Dark Mode","description":"User prefers dark mode","body":"The user prefers dark mode themes"}]
+```
+"#.to_string(),
+        };
+
+        let result = extract_memories_from_messages(
+            vec![ModelMessage::user("User: I like dark mode".to_string())],
+            &provider,
+            "model",
+            &store,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result, 1);
+        let entry = store.get("pref_dark").unwrap().unwrap();
+        assert_eq!(entry.name, "Dark Mode");
+        assert_eq!(entry.memory_type, MemoryType::User);
+    }
+}

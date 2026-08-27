@@ -1,0 +1,255 @@
+# Compaction
+
+NAVI implements conversation compaction and memory layers that manage context window usage across long sessions. The system runs micro-compact and auto-compact before each model request in `navi-core/src/turn.rs`, persists session summaries across sessions, and maintains long-horizon project memory under the NAVI data directory.
+
+All compaction logic lives in `navi-core/src/compact.rs`. Configuration is spread across `HarnessConfig` and `MemoryConfig` in `navi-core/src/config.rs`. The TUI mirrors compaction state via events and displays context usage in the status bar.
+
+> **See also**: [Auto-Memory](auto-memory.md) for the persistent SQLite memory system with semantic search, extractMemories, and auto-dream.
+
+## Levels
+
+| Level | Trigger | Mechanism | Data Loss |
+|---|---|---|---|
+| Micro-compact | Time gap > 60 min since last assistant message | Clears read-only tool result content in-place | Tool output text only |
+| Auto-compact | Context usage ≥ **80%** of the window (or `input + buffer >= window`) | Summarizes conversation via the **session chat model**, replaces older turns with system + summary (+ optional recent keep ratio) | Older turns replaced by summary |
+| Session memory | Session end with compact summary | Saves summary to `<data_dir>/memory/<project_hash>.json`, injected on next session | None (additive) |
+| Long-horizon rebuild (fallback) | Context still ≥ **95%** after auto-compact (or circuit open) | Rebuilds live messages from checkpoint/history memory under `<data_dir>/memory/projects/<project_hash>/` | Live messages replaced by rebuild context |
+
+## Micro-Compact
+
+`micro_compact(messages, gap_threshold_minutes)` clears the `content` of tool result messages whose `tool_name` is in the read-only set (including `read_file`, `search` / `grep` / `fs_browser`, `tool_search`, `code`, `question`, `plan`, and related inspect tools).
+
+Write tools (`edit`, `write_file`, `apply_patch`, …) are never cleared. Cleared content is replaced with `[Old tool result content cleared]` and is not double-cleared on subsequent passes.
+
+The gap threshold is configured by `HarnessConfig.micro_compact_gap_minutes` (default: 60). The gap is measured from the `created_at` timestamp of the last `Assistant` message to the current time. Messages without timestamps are ignored.
+
+Emits `AgentEvent::MicroCompactApplied { messages_cleared }`.
+
+## Auto-Compact
+
+`CompactState::auto_compact()` runs in `maintain_context_budget` **before** long-horizon memory rebuild. It fires when `should_autocompact()` is true:
+
+- context usage ≥ `AUTO_COMPACT_THRESHOLD_PERCENT` (**80%** of `context_window`, including unsent preflight), or
+- `last_input_tokens + autocompact_buffer_tokens >= context_window`
+
+and the circuit breaker is not open.
+
+The summary request uses the **active session model/provider** (not a separate background model), so the compact text is produced by the same chat model. After a successful compact, the agent loop continues the current turn with the reduced history.
+
+### Summarization
+
+The conversation (excluding system messages) is serialized to text via `build_conversation_text()` and sent to the model with one of two prompts:
+
+- **`COMPACT_PROMPT`** — used for the first compaction. Produces a 9-section summary.
+- **`PARTIAL_COMPACT_PROMPT`** — used when a previous summary exists. Merges new conversation into the existing summary, preserving all 9 sections.
+
+The 9 summary sections are:
+
+1. **Primary Request and Intent** — all explicit user requests
+2. **Key Technical Concepts** — technologies and frameworks discussed
+3. **Files and Code Snippets** — files examined, modified, or created
+4. **Errors and Fixes** — errors encountered and how they were fixed
+5. **Problem Resolution** — problems solved and ongoing investigations
+6. **All User Messages** — verbatim user messages (prefixed with `> `)
+7. **Pending Tasks** — explicitly requested pending tasks
+8. **Current Work** — what was being worked on immediately before compaction
+9. **Next Step (Optional)** — suggested next step
+
+After a successful summary, the message list is replaced with:
+- The original system message
+- A user message containing `"Here is a summary of the conversation so far:\n\n{summary}"`
+
+### Thresholds
+
+`CompactThreshold` is computed from `last_input_tokens` and `context_window`:
+
+| Threshold | Condition | TUI Color |
+|---|---|---|
+| `Normal` | `remaining > 33K` tokens | `MUTED` |
+| `Warning` | `remaining <= 33K` tokens | `ACCENT` |
+| `Error` | `remaining <= 20K` tokens | `SIGNAL` |
+| `CircuitOpen` | `consecutive_failures >= 3` | `SIGNAL` |
+
+Constants:
+
+| Constant | Value | Purpose |
+|---|---|---|
+| `AUTO_COMPACT_THRESHOLD_PERCENT` | 80 | Primary trigger: compact when usage ≥ 80% of the window |
+| `AUTOCOMPACT_BUFFER_TOKENS` | 13,000 | Hard ceiling: compact when `input + buffer >= window` |
+| `WARNING_THRESHOLD_BUFFER_TOKENS` | 20,000 | Warning threshold for remaining tokens |
+| `ERROR_THRESHOLD_BUFFER_TOKENS` | 20,000 | Error threshold for remaining tokens |
+| `MAX_OUTPUT_TOKENS_FOR_SUMMARY` | 20,000 | Max output tokens for the summary request |
+| `MAX_CONSECUTIVE_FAILURES` | 3 | Opens circuit breaker after this many failures |
+
+### Circuit Breaker
+
+After 3 consecutive auto-compact failures, the circuit breaker opens (`CircuitOpen` threshold). No further auto-compact attempts are made. The counter resets on any successful compaction.
+
+Emits:
+- `AgentEvent::AutoCompactStarted` — before the summary request
+- `AgentEvent::AutoCompactCompleted { tokens_saved, summary, kept_recent_messages }` — on success
+- `AgentEvent::AutoCompactFailed { reason }` — on failure
+
+## Session Memory
+
+Session memory persists compact summaries across sessions so a new session can continue where the previous one left off.
+
+### Storage
+
+Memory files are stored at `<data_dir>/memory/<project_hash>.json`, where `project_hash` is a `DefaultHasher` digest of the project directory path.
+
+```rust
+pub struct ProjectMemory {
+    pub project_hash: String,
+    pub entries: Vec<MemoryEntry>,
+}
+
+pub struct MemoryEntry {
+    pub created_at: u64,      // unix seconds
+    pub summary: String,       // compact summary text
+    pub session_id: String,    // source session id
+}
+```
+
+### Injection
+
+When `MemoryConfig.session_memory_enabled` is true and a new session starts (empty `conversation_history`), the TUI loads the project memory and calls `ProjectMemory::format_injection(max_memory_entries)`. This returns a formatted string containing the N most recent entries, which is appended to the system prompt via `build_system_prompt_with_memory()`.
+
+### Saving
+
+When a session ends and the `CompactState` has a `summary`, the TUI calls `SessionStore::add_memory_entry()` to append the summary to the project memory file.
+
+## Long-Horizon Project Memory
+
+NAVI's checkpoint memory is stored outside the project tree. By default, each project gets a private memory directory under:
+
+```txt
+<data_dir>/memory/projects/<project_hash>/
+```
+
+The directory contains:
+
+- `memories.db` (SQLite: memories, session_checkpoint, session_notes tables)
+- `history.sqlite`
+- optional archive/maintenance subdirectories, including dream review copies
+
+## Dream Maintenance
+
+Dream maintenance is an offline memory synthesis pass. It reads the existing SQLite auto-memory index, global memory, checkpoint, notes, and recent session history, then asks the selected model to produce a separate reviewed memory store.
+
+By default, dreams do not modify active memory. NAVI writes each dream result under:
+
+```txt
+<data_dir>/memory/projects/<project_hash>/dreams/dream-<timestamp>/
+```
+
+Each dream directory contains:
+
+- `project-memory.md` (candidate output)
+- `global-memory.md` (candidate output)
+- `dream-report.md`
+
+Use the CLI to run a review-only dream:
+
+```bash
+navi memory dream
+```
+
+Useful options:
+
+```bash
+navi memory dream --sessions 25
+navi memory dream --instructions "Preserve active implementation details and remove stale debugging notes"
+navi memory dream --apply
+```
+
+`--sessions` controls how many recent sessions are mined, capped at 100. `--instructions` steers synthesis. `--apply` first writes the review copy, then replaces the active project and global memory files with the dream output.
+
+## Configuration
+
+### HarnessConfig (compaction fields)
+
+| Field | Default | Purpose |
+|---|---|---|
+| `micro_compact_gap_minutes` | 60 | Minutes of inactivity before micro-compact runs |
+| `autocompact_buffer_tokens` | 13,000 | Buffer that triggers auto-compact |
+| `autocompact_warning_buffer_tokens` | 20,000 | Warning threshold for remaining tokens |
+| `autocompact_error_buffer_tokens` | 20,000 | Error threshold for remaining tokens |
+| `autocompact_max_output_tokens` | 20,000 | Max output tokens for summary generation |
+| `autocompact_max_consecutive_failures` | 3 | Consecutive failures before circuit breaker opens |
+
+### MemoryConfig
+
+| Field | Default | Purpose |
+|---|---|---|
+| `session_memory_enabled` | false | Enable project memory across sessions |
+| `max_memory_entries` | 3 | Number of recent summaries to inject |
+| `enabled` | true | Enable long-horizon checkpoint/rebuild memory |
+| `root` | `memory/projects` | Data-dir-relative base directory for per-project long-horizon memory |
+| `checkpoint_thresholds` | `[0.20, 0.45, 0.70]` | Utilization levels that write durable checkpoints |
+| `rebuild_threshold` | **0.95** | Last-resort rebuild after auto-compact (must stay above 80%) |
+
+Example `.navi/config.toml`:
+
+```toml
+[memory]
+session_memory_enabled = true
+max_memory_entries = 5
+root = "memory/projects"
+rebuild_threshold = 0.95
+
+[harness]
+micro_compact_gap_minutes = 30
+autocompact_buffer_tokens = 13000
+```
+
+## TUI Integration
+
+The TUI mirrors `CompactState` locally from events:
+
+- `UsageReported` → updates `compact_state.last_input_tokens` and populates `ChatMessage.usage_label`
+- `MicroCompactApplied` → shows notification
+- `AutoCompactCompleted` → shows notification, resets `consecutive_failures`, updates provider history, and **appends** the compact summary as normal assistant output after a `--------` divider (prior chat stays visible; `is_compact_summary: true`)
+- `AutoCompactFailed` → pushes diagnostic, increments `consecutive_failures`
+
+### Status Bar
+
+The shortcut tips line (below the input) shows a right-aligned context indicator:
+
+```
+ ? for shortcuts · ctrl+p commands · ctrl+c quit    ctx:72% ~compact
+```
+
+Color coding: `MUTED` for normal, `ACCENT` for warning, `SIGNAL` for error or circuit-open.
+
+### Compact Context Command
+
+`ctrl+p` → "Compact" force-compacts the live session with the **session's own model**
+(not a subagent / background route). The engine summarizes conversation history,
+replaces the live message list, emits `AutoCompactCompleted` with the summary text,
+and the TUI appends the summary to the visible chat while rewriting `conversation_history`
+so the next turn stays compacted.
+
+### Compact Summary Rendering
+
+Messages with `is_compact_summary: true` are rendered with a special header and the
+summary body (including a plain `--------` divider above the compact text):
+
+```
+ ◈ compacted ────────────────────────────────────────
+--------
+[Context compacted — 12k tokens saved]
+
+## Primary Request and Intent
+...
+```
+
+## Turn Flow
+
+Each iteration of the turn loop in `navi-core/src/turn.rs` runs compaction before sending a request to the model:
+
+1. **Micro-compact** — clears stale tool results if the time gap exceeds the threshold
+2. **Auto-compact** — summarizes with the session model at ≥80% usage (or hard buffer ceiling)
+3. **Memory checkpoints / rebuild fallback** — writes checkpoints; only rebuilds near ~95% if context is still full
+4. **Model request** — continues the active task with the (possibly compacted) messages
+5. **Usage update** — on `ModelStreamEvent::Usage`, updates `CompactState.last_input_tokens` via `AgentEvent::UsageReported`

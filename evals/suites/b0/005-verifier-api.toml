@@ -1,0 +1,12 @@
+version = 1
+id = "b0-verifier-api"
+title = "verifier API module exists"
+category = "simple_repo_task"
+task = "Verify that the verifier API is available."
+tags = ["b0", "verifier"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/verifier.rs"
+required = true
+

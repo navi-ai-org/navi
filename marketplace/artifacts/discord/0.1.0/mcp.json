@@ -1,0 +1,11 @@
+{
+  "id": "discord",
+  "command": "npx",
+  "args": ["-y", "@iqai/mcp-discord"],
+  "env": {
+    "DISCORD_TOKEN": ""
+  },
+  "enabled": true,
+  "tool_prefix": "discord",
+  "timeout_ms": 60000
+}

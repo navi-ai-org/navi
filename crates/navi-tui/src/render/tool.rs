@@ -1,0 +1,4336 @@
+use navi_sdk::{ToolInvocation, ToolResult};
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
+const MAX_TOOL_RENDER_LINES: usize = 5000;
+/// Soft cap for auto-expanded shell failure bodies (sticky summary stays full).
+const MAX_SHELL_FAILURE_BODY_LINES: usize = 48;
+/// Soft cap for success shell dumps when the user expands them.
+const MAX_SHELL_SUCCESS_BODY_LINES: usize = 80;
+/// Preferred command width in compact tool headers (full command still in body).
+const COMPACT_COMMAND_CHARS: usize = 72;
+
+fn truncate_to_lines(text: &str, max_lines: usize) -> &str {
+    let mut count = 0;
+    for (i, ch) in text.char_indices() {
+        if ch == '\n' {
+            count += 1;
+            if count >= max_lines {
+                return &text[..=i];
+            }
+        }
+    }
+    text
+}
+
+/// One-line label for a tool that is still running (no result yet).
+///
+/// Mirrors the settled summaries but without exit/elapsed status so the chat
+/// can show `◆ Run cargo test · 3s` while the command is in flight.
+pub(crate) fn tool_running_text(invocation: &ToolInvocation) -> String {
+    match invocation.tool_name.as_str() {
+        "run" => {
+            let action = invocation.input.get("action").and_then(|v| v.as_str());
+            if action == Some("list") {
+                return "List background commands".into();
+            }
+            if let Some(task_id) = invocation.input.get("task_id").and_then(|v| v.as_str()) {
+                return if action == Some("cancel") {
+                    format!("Cancel background command {task_id}")
+                } else {
+                    format!("Poll background command {task_id}")
+                };
+            }
+            let command = invocation
+                .input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("command");
+            let bg = invocation
+                .input
+                .get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if bg {
+                format!("Run {} (background…)", compact_command(command))
+            } else {
+                format!("Run {}", compact_command(command))
+            }
+        }
+        "read" | "read_file" | "view_file" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            format!("Read {}", display_path(path))
+        }
+        "write" | "write_file" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            format!("Write {}", display_path(path))
+        }
+        "edit" | "multiedit" => {
+            let path = invocation
+                .input
+                .get("path")
+                .or_else(|| invocation.input.get("file_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("file");
+            let label = if invocation.tool_name == "multiedit" {
+                "MultiEdit"
+            } else {
+                "Edit"
+            };
+            format!("{label} {}", display_path(path))
+        }
+        "grep" => {
+            let pattern = invocation
+                .input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("pattern");
+            format!("Grep {}", one_line(pattern))
+        }
+        "search" | "glob" | "list_dir" => {
+            let q = invocation
+                .input
+                .get("pattern")
+                .or_else(|| invocation.input.get("query"))
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("…");
+            format!(
+                "{} {}",
+                humanize_tool_name(&invocation.tool_name),
+                one_line(q)
+            )
+        }
+        "subagent" => {
+            let desc = invocation
+                .input
+                .get("description")
+                .or_else(|| invocation.input.get("prompt"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("Subagent");
+            format!("Subagent {}", one_line(desc))
+        }
+        "plan" => {
+            let action = invocation
+                .input
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let title = invocation
+                .input
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if title.is_empty() {
+                format!("Plan {action}")
+            } else {
+                format!("Plan {action} \"{}\"", one_line(title))
+            }
+        }
+        other => humanize_tool_name(other),
+    }
+}
+
+pub(crate) fn tool_compact_text(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let mut text = match invocation.tool_name.as_str() {
+        // ── Existing (kept) ──────────────────────────────────────────────
+        "read" | "read_file" | "view_file" => read_file_summary(invocation, result),
+        "write_file" => write_file_summary(invocation, result),
+        "apply_patch" => apply_patch_summary(invocation, result),
+        "edit" | "multiedit" => edit_summary(invocation, result),
+        "write" if has_patch_input(invocation) => apply_patch_summary(invocation, result),
+        // Direct write (path + content)
+        "write" => write_file_summary(invocation, result),
+        "run" => bash_summary(invocation, result),
+        "grep" => grep_summary(invocation, result),
+        "fs_browser" => fs_browser_summary(invocation, result),
+
+        // ── Code Intelligence ─────────────────────────────────────────────
+        "code" => code_summary(invocation, result),
+        "code_edit" => code_edit_summary(invocation, result),
+        "code_exec" => code_exec_summary(invocation, result),
+        "ast_search" => ast_search_summary(invocation, result),
+        "symbol_goto" => symbol_goto_summary(invocation, result),
+        "symbol_references" => symbol_references_summary(invocation, result),
+        "dependency_graph_query" => dependency_graph_summary(result),
+        "test_discovery" => test_discovery_summary(result),
+        "ownership_churn_query" => churn_summary(result),
+
+        // ── Repo Search Aliases ───────────────────────────────────────────
+        "search" | "list_dir" | "glob" => search_tool_summary(invocation, result),
+
+        // ── Repo Explore & Subagent ───────────────────────────────────────
+        "repo_explore" => repo_explore_summary(invocation, result),
+        "subagent" => subagent_summary(invocation, result),
+        "workflow" => workflow_summary(invocation, result),
+
+        // ── Planning & Session ────────────────────────────────────────────
+        "plan" => plan_summary(invocation, result),
+        "init_session" => init_session_summary(result),
+        "mark_feature_done" => mark_feature_done_summary(result),
+
+        // ── Interaction ──────────────────────────────────────────────────
+        "question" => question_summary(invocation),
+        "request_user_input" => request_user_input_summary(invocation),
+        "append_note" => append_note_summary(result),
+
+        // ── Utility ──────────────────────────────────────────────────────
+        "current_time" => current_time_summary(result),
+        "sleep" => sleep_summary(result),
+        "set_goal" => set_goal_summary(invocation, result),
+        "wait" => wait_summary(invocation, result),
+        "get_context_remaining" => context_remaining_summary(result),
+        "view_image" | "inspect_image" => view_image_summary(invocation, result),
+        "new_context_window" => new_context_window_summary(result),
+        "tool_search" => tool_search_summary(invocation, result),
+        "runtime_info" => runtime_info_summary(result),
+        "history_ops" => history_ops_summary(invocation, result),
+        "sandbox" => sandbox_summary(invocation, result),
+
+        name => humanize_tool_name(name),
+    };
+
+    if !result.ok {
+        // Bash owns failure chrome in `bash_summary` (`Run … · exit N · bits`).
+        // Never append a second `· exit N` / generic "Bash failed" here.
+        if invocation.tool_name == "run" {
+            // nothing extra
+        } else if let Some(error) = tool_error_message(&result.output) {
+            // Prefer a short, high-signal failure reason over repeating "Bash failed".
+            let short = one_line(error);
+            if short.eq_ignore_ascii_case("bash failed")
+                || short.eq_ignore_ascii_case("command failed")
+            {
+                if let Some(signal) = shell_failure_signal(&result.output) {
+                    text.push_str(&format!(" · {signal}"));
+                } else {
+                    text.push_str(&format!(" · error: {short}"));
+                }
+            } else {
+                text.push_str(&format!(" · error: {short}"));
+            }
+        } else if let Some(signal) = shell_failure_signal(&result.output) {
+            text.push_str(&format!(" · {signal}"));
+        } else {
+            text.push_str(" · error");
+        }
+    }
+
+    text
+}
+
+/// Full tool content including the one-line summary (used by tests / copy).
+pub(crate) fn tool_full_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let mut content = format!(
+        "{} {}\n\n",
+        super::status::settled_diamond(),
+        tool_compact_text(invocation, result),
+    );
+    content.push_str(&tool_body_content(invocation, result));
+    content
+}
+
+/// Body only — the chat renderer already paints the compact header card above.
+pub(crate) fn tool_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if let Some(formatted) = formatted_tool_output(invocation, result) {
+        formatted
+    } else {
+        generic_tool_summary(invocation, result)
+    }
+}
+fn formatted_tool_output(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    let obj = result.output.as_object()?;
+    let mut content = String::new();
+
+    // Prefer structured error rendering for any failed tool (or success payloads
+    // that still carry an `error` field). Never dump the full error envelope as
+    // raw ```json — that is what made edit failures look unprofessional.
+    if !result.ok || obj.get("error").and_then(|v| v.as_str()).is_some() {
+        return Some(render_tool_error_body(invocation, result, obj));
+    }
+
+    if matches!(
+        invocation.tool_name.as_str(),
+        "read" | "read_file" | "view_file"
+    ) {
+        let path = obj.get("path").and_then(|v| v.as_str())?;
+        content.push_str(&format!("View {}", display_path(path)));
+        if let Some(details) = read_file_line_details(result) {
+            content.push_str(&format!(" ({details})"));
+        }
+        content.push_str("\n\n");
+        if let Some(file_content) = obj.get("content").and_then(|v| v.as_str()) {
+            let language = language_for_path(path);
+            let start_line = obj
+                .get("start_line")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1)
+                .max(1);
+            content.push_str(&format!("```{language}\n"));
+            let truncated_content = truncate_to_lines(file_content, MAX_TOOL_RENDER_LINES);
+            append_numbered_source_lines(&mut content, truncated_content, start_line as u32);
+            if !content.ends_with('\n') {
+                content.push('\n');
+            }
+            if truncated_content.len() < file_content.len() {
+                content.push_str(&format!(
+                    "... (truncated, {} lines total)\n",
+                    file_content.lines().count()
+                ));
+            }
+            content.push_str("```\n");
+        }
+    } else if is_patch_invocation(invocation) {
+        // Header card already has "Edited path (+N -M)". Body is clean ```diff only
+        // (no "Edited…" chrome, no "Patch:" label, no *** Begin/End Patch / Update File).
+        // Prefer the engine-provided numbered display diff (real file line numbers)
+        // over the raw model patch (often bare `@@` with no numbers).
+        if let Some(diff) = result
+            .output
+            .get("diff")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            append_diff_fence(diff, &mut content);
+        } else {
+            let patches = patch_inputs(invocation);
+            if patches.is_empty() {
+                content.push_str("Applied patch successfully\n");
+            } else {
+                append_patch_bodies(&patches, &mut content);
+            }
+        }
+        // Any apply_patch tool stdout/stderr: plain streams, no Stdout:/``` chrome.
+        if obj.contains_key("stdout") || obj.contains_key("stderr") {
+            append_shell_streams(obj, &mut content);
+        }
+    } else if invocation.tool_name == "write_file" || invocation.tool_name == "write" {
+        // Header already has "Write path (+N -M lines)". Body is just the numbered diff.
+        if let Some(diff) = write_display_diff(invocation, result) {
+            append_diff_fence(&diff, &mut content);
+        }
+    } else if invocation.tool_name == "edit" || invocation.tool_name == "multiedit" {
+        if let Some(diff) = write_display_diff(invocation, result) {
+            append_diff_fence(&diff, &mut content);
+        }
+    } else if invocation.tool_name == "code_edit" {
+        // Prefer a numbered ```diff body (like write/apply_patch) over raw JSON.
+        if let Some(diff) = code_edit_display_diff(invocation, result) {
+            append_diff_fence(&diff, &mut content);
+        } else {
+            render_named_structured_output("Code output", result, &mut content);
+        }
+    } else if invocation.tool_name == "run" {
+        // Header may truncate long pipelines; always surface the full command
+        // once in the body when it was compacted, then streams.
+        if let Some(command) = invocation.input.get("command").and_then(|v| v.as_str()) {
+            let flat = one_line(command);
+            if compact_command(command) != flat {
+                content.push_str(&format!("$ {flat}\n\n"));
+            }
+        }
+        append_shell_streams(obj, &mut content);
+    } else if invocation.tool_name == "grep" {
+        content.push_str("Found matches:\n\n");
+        if let Some(matches) = obj.get("matches").and_then(|v| v.as_array()) {
+            for m in matches {
+                if let Some(m_obj) = m.as_object() {
+                    let path = m_obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                    let line = m_obj.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let text = m_obj.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    content.push_str(&format!("{path}:{line}: {text}\n"));
+                }
+            }
+        }
+    } else if invocation.tool_name == "fs_browser" {
+        content.push_str("Browse filesystem\n\n");
+        if let Some(files) = obj.get("files").and_then(|v| v.as_array()) {
+            for (i, file) in files.iter().enumerate() {
+                if let Some(file) = file.as_str() {
+                    content.push_str(&format!("{:>4}  {}\n", i + 1, file));
+                }
+            }
+        }
+        if let Some(entries) = obj.get("entries").and_then(|v| v.as_array()) {
+            render_tree_entries(entries, &mut content, 0);
+        }
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "search" | "list_dir" | "glob"
+    ) {
+        render_search_output(invocation, result, &mut content);
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "code"
+            | "code_exec"
+            | "ast_search"
+            | "symbol_goto"
+            | "symbol_references"
+            | "dependency_graph_query"
+            | "test_discovery"
+            | "ownership_churn_query"
+    ) {
+        render_named_structured_output("Code output", result, &mut content);
+    } else if invocation.tool_name == "plan" {
+        // Human checklist — never dump the full plan JSON into chat.
+        content.push_str(&plan_body_content(invocation, result));
+    } else if matches!(
+        invocation.tool_name.as_str(),
+        "repo_explore"
+            | "subagent"
+            | "init_session"
+            | "mark_feature_done"
+            | "question"
+            | "request_user_input"
+            | "append_note"
+            | "current_time"
+            | "sleep"
+            | "set_goal"
+            | "wait"
+            | "get_context_remaining"
+            | "view_image"
+            | "inspect_image"
+            | "new_context_window"
+            | "tool_search"
+            | "runtime_info"
+            | "history_ops"
+            | "sandbox"
+    ) {
+        render_named_structured_output("Output", result, &mut content);
+    } else if obj.contains_key("stdout")
+        || obj.contains_key("stderr")
+        || obj.contains_key("raw_output")
+    {
+        // process / verifier / any stream-bearing tool not listed above:
+        // plain streams, never dump the whole result as ```json.
+        if let Some(summary) = obj.get("summary").and_then(|v| v.as_str()) {
+            content.push_str(summary);
+            content.push_str("\n\n");
+        } else if let Some(message) = obj.get("message").and_then(|v| v.as_str()) {
+            content.push_str(message);
+            content.push_str("\n\n");
+        }
+        if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
+            append_plain_stream(&mut content, raw);
+        } else {
+            append_shell_streams(obj, &mut content);
+        }
+    } else {
+        return None;
+    }
+
+    if obj.get("truncated").and_then(|v| v.as_bool()) == Some(true) {
+        content.push_str("... (truncated)\n");
+    }
+    Some(content)
+}
+
+fn generic_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if !result.ok {
+        if let Some(obj) = result.output.as_object() {
+            return render_tool_error_body(invocation, result, obj);
+        }
+        return format!("{} failed\n", humanize_tool_name(&invocation.tool_name));
+    }
+
+    let mut content = String::new();
+    // Stream-bearing successes: plain text only (process/verifier fallback path).
+    if let Some(obj) = result.output.as_object()
+        && (obj.contains_key("stdout")
+            || obj.contains_key("stderr")
+            || obj.contains_key("raw_output"))
+    {
+        if let Some(summary) = obj.get("summary").and_then(|v| v.as_str()) {
+            content.push_str(summary);
+            content.push_str("\n\n");
+        }
+        if let Some(raw) = obj.get("raw_output").and_then(|v| v.as_str()) {
+            append_plain_stream(&mut content, raw);
+        } else {
+            append_shell_streams(obj, &mut content);
+        }
+        return content;
+    }
+
+    content.push_str(&format!(
+        "{} completed successfully\n",
+        humanize_tool_name(&invocation.tool_name)
+    ));
+
+    // Prefer a short human summary of common keys over raw JSON dumps.
+    if let Some(summary) = human_output_summary(&result.output) {
+        content.push('\n');
+        content.push_str(&summary);
+        if !summary.ends_with('\n') {
+            content.push('\n');
+        }
+        // Only dump full JSON when the summary is incomplete (large/nested payload).
+        if output_needs_json_fallback(&result.output) {
+            content.push('\n');
+            append_json_section(&mut content, "Details", &result.output);
+        }
+    } else {
+        append_json_section(&mut content, "Input", &invocation.input);
+        append_json_section(&mut content, "Output", &result.output);
+    }
+    content
+}
+
+/// Extract the human-facing failure message from a tool result payload.
+///
+/// Tools use either `error` (common) or `message` (`helpers::tool_error` contract).
+fn tool_error_message(output: &Value) -> Option<&str> {
+    output
+        .get("error")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            output
+                .get("message")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+/// Keys that form the standard tool-error envelope. These must never force a
+/// raw JSON dump by themselves — the UI should render them as plain fields.
+const ERROR_ENVELOPE_KEYS: &[&str] = &[
+    "error",
+    "error_code",
+    "error_kind",
+    "hint",
+    "recoverable",
+    "retryable",
+    "message",
+    "status",
+    "stdout",
+    "stderr",
+    "exit_code",
+    "schema_version",
+    "raw_output",
+    "duration_ms",
+    "elapsed_ms",
+    "tool",
+];
+
+fn is_error_envelope_key(key: &str) -> bool {
+    ERROR_ENVELOPE_KEYS.contains(&key)
+}
+
+/// Professional error body for tool cards.
+///
+/// Header already carries `· error: <message>`. Body adds actionable context
+/// (hint, code, streams, simple fields) and only falls back to JSON for nested
+/// leftovers the model/human still need to inspect.
+fn render_tool_error_body(
+    invocation: &ToolInvocation,
+    result: &ToolResult,
+    obj: &serde_json::Map<String, Value>,
+) -> String {
+    let mut content = String::new();
+    let error = tool_error_message(&result.output);
+    let hint = obj
+        .get("hint")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty() && *s != "null");
+    let error_code = obj
+        .get("error_code")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+
+    let has_stdout = obj
+        .get("stdout")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_stderr = obj
+        .get("stderr")
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.trim().is_empty());
+    let has_streams = has_stdout || has_stderr;
+    let is_shellish = invocation.tool_name == "run"
+        || has_streams
+        || matches!(invocation.tool_name.as_str(), "process" | "verifier");
+
+    // Extra non-envelope keys (framework, path, suggestions, problems, …).
+    let extra_keys: Vec<&str> = obj
+        .keys()
+        .filter(|k| !is_error_envelope_key(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+    let has_extra = !extra_keys.is_empty();
+
+    // Shell failures: sticky high-signal summary first (counts, failed test,
+    // assert, location). Generic "Error: Bash failed" is demoted so the wall
+    // of cargo output no longer competes with the real signal.
+    //
+    // Keep pure timeout/envelope-only failures header-only (no body), matching
+    // non-shell tools — avoids double-printing the same error string.
+    if is_shellish {
+        let has_sticky = shell_failure_summary(obj).is_some();
+        // Only echo the command when there is real output/context — not for a
+        // bare exit code (header already says `exit N`). Never dump multi-line
+        // scripts / heredocs as a single flattened wall of text.
+        let should_show_command = has_sticky || has_streams || has_extra || hint.is_some();
+        if should_show_command
+            && let Some(command) = invocation
+                .input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+        {
+            let flat = one_line(command);
+            let header_compacted = compact_command(command) != flat;
+            if command_is_bulky(command) || header_compacted || has_sticky || has_streams {
+                content.push_str(&format_command_for_body(command));
+            }
+        }
+        if let Some(summary) = shell_failure_summary(obj) {
+            // Skip pure "Summary: exit N" — header already has exit.
+            if !is_exit_only_failure_summary(&summary) {
+                content.push_str(&summary);
+                if !summary.ends_with('\n') {
+                    content.push('\n');
+                }
+                content.push('\n');
+            }
+        } else if (has_streams || has_extra)
+            && let Some(error) = error
+        {
+            // Streams/extra context: show a non-generic error lead-in.
+            let short = one_line(error);
+            if !short.eq_ignore_ascii_case("bash failed")
+                && !short.eq_ignore_ascii_case("command failed")
+            {
+                content.push_str(&format!("Error: {short}\n"));
+            }
+        }
+        // else: empty streams + only error envelope → leave body empty (header has it).
+    } else {
+        // Non-shell: repeat Error only when the body has more context below it.
+        // Pure envelope errors stay header-only to avoid double-printing.
+        let should_repeat_error = has_streams || has_extra;
+        if should_repeat_error {
+            if let Some(error) = error {
+                content.push_str(&format!("Error: {error}\n"));
+            } else {
+                content.push_str(&format!(
+                    "Error: {} failed\n",
+                    humanize_tool_name(&invocation.tool_name)
+                ));
+            }
+        }
+    }
+
+    if let Some(code) = error_code {
+        // Always surface the stable code — models and users use it to recover.
+        content.push_str(&format!("Code: {code}\n"));
+    }
+    if let Some(hint) = hint {
+        content.push_str(&format!("Hint: {hint}\n"));
+    }
+
+    if is_shellish {
+        append_shell_streams_capped(obj, &mut content, MAX_SHELL_FAILURE_BODY_LINES);
+    }
+
+    if has_extra {
+        // Humanize simple extra fields first.
+        let mut leftover = serde_json::Map::new();
+        for key in &extra_keys {
+            if let Some(val) = obj.get(*key) {
+                match val {
+                    Value::String(s)
+                        if !s.is_empty()
+                            && s.len() < 400
+                            && !s.contains('\n')
+                            && *key != "error" =>
+                    {
+                        content.push_str(&format!("{key}: {s}\n"));
+                    }
+                    Value::Number(n) => content.push_str(&format!("{key}: {n}\n")),
+                    Value::Bool(b) => content.push_str(&format!("{key}: {b}\n")),
+                    Value::Null => {}
+                    other => {
+                        leftover.insert((*key).to_string(), other.clone());
+                    }
+                }
+            }
+        }
+        // Nested / multi-line leftovers only — never re-dump the error envelope.
+        if !leftover.is_empty() {
+            append_json_section(&mut content, "Details", &Value::Object(leftover));
+        }
+    }
+
+    content
+}
+
+/// Pull common string/number fields into plain lines for readability.
+fn human_output_summary(output: &Value) -> Option<String> {
+    let obj = output.as_object()?;
+    if obj.is_empty() {
+        return None;
+    }
+    const KEYS: &[&str] = &[
+        "path",
+        "message",
+        "status",
+        "action",
+        "id",
+        "name",
+        "count",
+        "files_patched",
+        "patches_applied",
+        "bytes",
+        "lines_added",
+        "lines_removed",
+        "exit_code",
+        "command",
+        "query",
+        "result",
+        "summary",
+        "hint",
+        "error_code",
+        "framework",
+    ];
+    let mut lines = Vec::new();
+    for key in KEYS {
+        if let Some(val) = obj.get(*key) {
+            match val {
+                Value::String(s) if !s.is_empty() && s.len() < 400 && !s.contains('\n') => {
+                    lines.push(format!("{key}: {s}"));
+                }
+                Value::Number(n) => lines.push(format!("{key}: {n}")),
+                Value::Bool(b) => lines.push(format!("{key}: {b}")),
+                _ => {}
+            }
+        }
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn output_needs_json_fallback(output: &Value) -> bool {
+    let Some(obj) = output.as_object() else {
+        return true;
+    };
+    // Nested objects/arrays or many keys → keep Details JSON.
+    if obj.len() > 8 {
+        return true;
+    }
+    obj.values().any(|v| v.is_object() || v.is_array())
+}
+
+fn render_search_output(invocation: &ToolInvocation, result: &ToolResult, content: &mut String) {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or(match invocation.tool_name.as_str() {
+            "list_dir" => "list",
+            "glob" => "find",
+            _ => "grep",
+        });
+
+    match action {
+        "grep" => {
+            content.push_str("Found matches:\n\n");
+            render_matches(result.output.get("matches"), content);
+        }
+        "tree" => {
+            content.push_str("Directory tree:\n\n");
+            if let Some(entries) = result.output.get("entries").and_then(|v| v.as_array()) {
+                render_tree_entries(entries, content, 0);
+            }
+        }
+        "list" | "find" => {
+            let title = if action == "find" {
+                "Files found"
+            } else {
+                "Directory entries"
+            };
+            content.push_str(title);
+            content.push_str(":\n\n");
+            render_file_list(result.output.get("files"), content);
+        }
+        "stat" => {
+            content.push_str("File metadata:\n");
+            append_json_section(content, "Output", &result.output);
+        }
+        _ => append_json_section(content, "Output", &result.output),
+    }
+}
+
+fn render_named_structured_output(title: &str, result: &ToolResult, content: &mut String) {
+    if let Some(message) = result.output.get("message").and_then(|v| v.as_str()) {
+        content.push_str(message);
+        content.push_str("\n\n");
+    } else if let Some(summary) = result.output.get("summary").and_then(|v| v.as_str()) {
+        content.push_str(summary);
+        content.push_str("\n\n");
+    }
+    // Tools that carry command streams should never dump them as escaped JSON.
+    if let Some(obj) = result.output.as_object()
+        && (obj.contains_key("stdout") || obj.contains_key("stderr"))
+    {
+        append_shell_streams(obj, content);
+        return;
+    }
+    append_json_section(content, title, &result.output);
+}
+
+fn render_matches(matches: Option<&Value>, content: &mut String) {
+    let Some(matches) = matches.and_then(|v| v.as_array()) else {
+        return;
+    };
+    for m in matches {
+        if let Some(m_obj) = m.as_object() {
+            let path = m_obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            let line = m_obj
+                .get("line")
+                .or_else(|| m_obj.get("line_number"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let text = m_obj
+                .get("text")
+                .or_else(|| m_obj.get("line_text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            content.push_str(&format!("{path}:{line}: {text}\n"));
+        } else if let Some(text) = m.as_str() {
+            content.push_str(text);
+            content.push('\n');
+        }
+    }
+}
+
+fn render_file_list(files: Option<&Value>, content: &mut String) {
+    let Some(files) = files.and_then(|v| v.as_array()) else {
+        return;
+    };
+    for (index, file) in files.iter().enumerate() {
+        if let Some(file) = file.as_str() {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, file));
+        } else if let Some(path) = file.get("path").and_then(|v| v.as_str()) {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, path));
+        } else {
+            content.push_str(&format!("{:>4}  {}\n", index + 1, compact_json(file)));
+        }
+    }
+}
+
+fn append_json_section(content: &mut String, title: &str, value: &Value) {
+    if value.is_null() {
+        return;
+    }
+    content.push_str(&format!("\n{title}:\n```json\n"));
+    let rendered = pretty_json(value);
+    let truncated = truncate_to_lines(&rendered, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < rendered.len() {
+        content.push_str(&format!(
+            "... (truncated, {} lines total)\n",
+            rendered.lines().count()
+        ));
+    }
+    content.push_str("```\n");
+}
+
+/// Shell/tool stream body: plain text, no labels or code fences.
+/// Non-zero exit codes get a single `exit N` line above the streams.
+fn append_shell_streams(obj: &serde_json::Map<String, Value>, content: &mut String) {
+    append_shell_streams_capped(obj, content, MAX_SHELL_SUCCESS_BODY_LINES)
+}
+
+fn append_shell_streams_capped(
+    obj: &serde_json::Map<String, Value>,
+    content: &mut String,
+    max_lines: usize,
+) {
+    let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let exit_code = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()));
+
+    // Prefer sticky summary over a second exit line. Skip a lone `exit N`
+    // when streams are empty — the header already carries the code.
+    let already_has_summary = content.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("Summary:")
+            || t.starts_with("Failed:")
+            || t.starts_with("Assert:")
+            || t.starts_with("At:")
+    });
+    let has_stream_text = !stdout.trim().is_empty() || !stderr.trim().is_empty();
+    if let Some(code) = exit_code
+        && code != 0
+        && !already_has_summary
+        && has_stream_text
+    {
+        content.push_str(&format!("exit {code}\n"));
+    }
+
+    // Prefer failure-relevant tail when streams are long (cargo dumps often bury
+    // the panic at the end after recompile noise).
+    let combined_lines = stdout.lines().count() + stderr.lines().count();
+    if combined_lines > max_lines {
+        append_relevant_shell_excerpt(content, stdout, stderr, max_lines);
+        return;
+    }
+
+    append_plain_stream_capped(content, stdout, max_lines);
+    if !stderr.is_empty() {
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        // Separate stderr from stdout when both present (no "Stderr:" chrome).
+        if !stdout.is_empty() && !content.ends_with("\n\n") {
+            content.push('\n');
+        }
+        let remaining = max_lines.saturating_sub(content.lines().count().max(1));
+        append_plain_stream_capped(content, stderr, remaining.max(12));
+    }
+}
+
+fn append_plain_stream(content: &mut String, text: &str) {
+    append_plain_stream_capped(content, text, MAX_TOOL_RENDER_LINES)
+}
+
+fn append_plain_stream_capped(content: &mut String, text: &str, max_lines: usize) {
+    if text.is_empty() {
+        return;
+    }
+    let truncated = truncate_to_lines(text, max_lines);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < text.len() {
+        content.push_str(&format!(
+            "… (truncated, {} lines total — expand tool or ctrl+o)\n",
+            text.lines().count()
+        ));
+    }
+}
+
+/// Keep the failure signal: prefer lines around FAILED / panic / assertion, else tail.
+/// Cargo recompile / file-lock noise is collapsed into a single build-log note.
+fn append_relevant_shell_excerpt(
+    content: &mut String,
+    stdout: &str,
+    stderr: &str,
+    max_lines: usize,
+) {
+    let mut lines: Vec<&str> = Vec::new();
+    lines.extend(stdout.lines());
+    if !stderr.is_empty() {
+        if !stdout.is_empty() {
+            lines.push("");
+        }
+        lines.extend(stderr.lines());
+    }
+    if lines.is_empty() {
+        return;
+    }
+
+    let noise = |line: &str| -> bool {
+        let t = line.trim();
+        t.starts_with("Blocking waiting for file lock")
+            || t.starts_with("Compiling ")
+            || t.starts_with("    Compiling ")
+            || t.starts_with("   Compiling ")
+            || t.starts_with("    Finished ")
+            || t.starts_with("   Finished ")
+            || t.starts_with("     Running unittests")
+            || t.starts_with("    Running unittests")
+            || t.contains("target/debug/deps/")
+            || t.starts_with("note: run with `RUST_BACKTRACE")
+    };
+
+    let noise_count = lines.iter().filter(|l| noise(l)).count();
+    let signal_lines: Vec<&str> = lines.iter().copied().filter(|l| !noise(l)).collect();
+
+    if noise_count > 0 {
+        content.push_str(&format!(
+            "Build log: {noise_count} compile/lock lines omitted\n"
+        ));
+    }
+
+    let focus_pool = if signal_lines.is_empty() {
+        &lines
+    } else {
+        &signal_lines
+    };
+
+    let focus = focus_pool.iter().position(|line| {
+        let lower = line.to_ascii_lowercase();
+        lower.contains("failed")
+            || lower.contains("panicked")
+            || lower.contains("assertion")
+            || lower.contains("error:")
+            || lower.contains("left:")
+            || lower.contains("right:")
+    });
+
+    let (start, end) = if let Some(idx) = focus {
+        let half = max_lines / 3;
+        let start = idx.saturating_sub(half);
+        let end = (start + max_lines).min(focus_pool.len());
+        let start = end.saturating_sub(max_lines);
+        (start, end)
+    } else {
+        let end = focus_pool.len();
+        let start = end.saturating_sub(max_lines);
+        (start, end)
+    };
+
+    if start > 0 {
+        content.push_str(&format!("… ({start} earlier lines omitted)\n"));
+    }
+    for line in &focus_pool[start..end] {
+        content.push_str(line);
+        content.push('\n');
+    }
+    if end < focus_pool.len() {
+        content.push_str(&format!(
+            "… ({} later lines omitted — expand tool or ctrl+o)\n",
+            focus_pool.len() - end
+        ));
+    }
+}
+
+fn pretty_json(value: &Value) -> String {
+    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn compact_json(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Existing summaries (unchanged)
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn read_file_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    if let Some(details) = read_file_line_details(result) {
+        format!("Read {} ({details})", display_path(path))
+    } else {
+        format!("Read {}", display_path(path))
+    }
+}
+
+fn read_file_line_details(result: &ToolResult) -> Option<String> {
+    let start = result.output.get("start_line").and_then(|v| v.as_u64());
+    let end = result.output.get("end_line").and_then(|v| v.as_u64());
+    let total = result.output.get("total_lines").and_then(|v| v.as_u64());
+    let read_lines = match (start, end) {
+        (Some(start), Some(end)) if end >= start => Some(end - start + 1),
+        (Some(_), Some(_)) => Some(0),
+        _ => result
+            .output
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(count_changed_lines)
+            .map(|count| count as u64),
+    };
+
+    let read_lines = read_lines?;
+    let line_count = pluralize_lines(read_lines);
+
+    match (start, end, total) {
+        (Some(start), Some(end), Some(total)) if read_lines > 0 => Some(format!(
+            "lines {start}-{end} of {total}, {read_lines} {line_count} read"
+        )),
+        (Some(start), Some(end), None) if read_lines > 0 => Some(format!(
+            "lines {start}-{end}, {read_lines} {line_count} read"
+        )),
+        (_, _, Some(total)) => Some(format!("{read_lines} {line_count} read of {total}")),
+        _ => Some(format!("{read_lines} {line_count} read")),
+    }
+}
+
+fn pluralize_lines(count: u64) -> &'static str {
+    if count == 1 { "line" } else { "lines" }
+}
+
+fn write_file_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .or_else(|| invocation.input.get("file_path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let (added, removed) = write_file_line_counts(invocation, result);
+    format!("Write {} (+{added} -{removed} lines)", display_path(path))
+}
+
+fn edit_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .or_else(|| invocation.input.get("file_path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let (added, removed) = write_file_line_counts(invocation, result);
+    let label = if invocation.tool_name == "multiedit" {
+        "MultiEdit"
+    } else {
+        "Edit"
+    };
+    format!("{label} {} (+{added} -{removed} lines)", display_path(path))
+}
+
+fn write_file_line_counts(invocation: &ToolInvocation, result: &ToolResult) -> (usize, usize) {
+    let added = result
+        .output
+        .get("lines_added")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize)
+        .or_else(|| {
+            invocation
+                .input
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(count_changed_lines)
+        })
+        .unwrap_or(0);
+    let removed = result
+        .output
+        .get("lines_removed")
+        .and_then(|v| v.as_u64())
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    (added, removed)
+}
+
+fn has_patch_input(invocation: &ToolInvocation) -> bool {
+    invocation.input.get("patch").is_some()
+        || invocation.input.get("patches").is_some()
+        || invocation.input.get("edits").is_some()
+}
+
+fn is_patch_invocation(invocation: &ToolInvocation) -> bool {
+    invocation.tool_name == "apply_patch"
+        || (invocation.tool_name == "write" && has_patch_input(invocation))
+}
+
+fn apply_patch_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    // Prefer engine display diff for path + line counts (edits / post-apply snapshot).
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        && let Some(summary) = patch_edit_summaries(diff).into_iter().next()
+    {
+        return summary;
+    }
+    let Some(patch) = first_patch_input(invocation) else {
+        return if invocation.tool_name == "write" {
+            "Write patch".to_string()
+        } else {
+            "Apply patch".to_string()
+        };
+    };
+    patch_edit_summaries(&patch)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "Apply patch".to_string())
+}
+
+fn first_patch_input(invocation: &ToolInvocation) -> Option<String> {
+    patch_inputs(invocation).into_iter().next()
+}
+
+fn append_patch_bodies(patches: &[String], content: &mut String) {
+    if patches.is_empty() {
+        return;
+    }
+
+    for (index, patch) in patches.iter().enumerate() {
+        if patches.len() > 1 {
+            // Multi-file: light separator before each fence (not "Patch:" chrome).
+            if index > 0 {
+                content.push('\n');
+            }
+        }
+        append_diff_fence(patch, content);
+    }
+}
+
+/// Fence a display/unified/structured diff as ```diff so markdown colors +/− lines.
+fn append_diff_fence(diff: &str, content: &mut String) {
+    if diff.is_empty() {
+        return;
+    }
+    content.push_str("```diff\n");
+    let normalized = normalize_diff_for_display(diff);
+    let total_lines = normalized.lines().count();
+    let truncated = truncate_to_lines(&normalized, MAX_TOOL_RENDER_LINES);
+    content.push_str(truncated);
+    if !truncated.ends_with('\n') {
+        content.push('\n');
+    }
+    if truncated.len() < normalized.len() {
+        let shown = truncated.lines().count();
+        content.push_str(&format!(
+            "… (showing {shown} of {total_lines} lines — expand tool or use ctrl+o for full view)\n"
+        ));
+    }
+    content.push_str("```\n");
+}
+
+/// Prefer the tool-provided `diff` field; otherwise synthesize from write `content`.
+fn write_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(diff.to_string());
+    }
+
+    // Fallback: numbered + lines only (tool card already shows the path).
+    let new_content = invocation.input.get("content").and_then(|v| v.as_str())?;
+    let new_count = new_content.lines().count().max(1);
+    let mut out = format!("@@ -0,0 +1,{new_count} @@\n");
+    for line in new_content.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// Build a numbered display diff for `code_edit` from input content + result line range.
+fn code_edit_display_diff(invocation: &ToolInvocation, result: &ToolResult) -> Option<String> {
+    if let Some(diff) = result
+        .output
+        .get("diff")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Some(diff.to_string());
+    }
+
+    let content = invocation
+        .input
+        .get("content")
+        .or_else(|| invocation.input.get("replacement"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let start = result
+        .output
+        .get("start_line")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .max(1);
+    let end = result
+        .output
+        .get("end_line")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(start);
+    let new_count = content.lines().count().max(1) as u64;
+    // Without the prior body we cannot show deletions; number the inserted/replaced lines.
+    let old_count = end.saturating_sub(start).saturating_add(1).max(1);
+    let mut out = format!("@@ -{start},{old_count} +{start},{new_count} @@\n");
+    for line in content.lines() {
+        out.push('+');
+        out.push_str(line);
+        out.push('\n');
+    }
+    Some(out)
+}
+
+/// Clean structured/unified patch text for chat display.
+///
+/// Compact tool body layout:
+/// - strips protocol chrome (`*** Begin/End Patch`, bare `@@`, unified `---/+++`)
+/// - emits a line-number gutter when `@@ -old +new @@` is present:
+///   `  37 context`, `-  39 removed`, `+  39 added`
+/// - keeps `*** Update/Add/Delete File:` path headers (tool card may also summarize)
+/// - inserts `…` between hunks of the same file
+fn normalize_diff_for_display(patch: &str) -> String {
+    let mut out = String::with_capacity(patch.len().saturating_add(64));
+    let mut old_line: Option<u32> = None;
+    let mut new_line: Option<u32> = None;
+    let mut last_was_hunk = false;
+    let mut saw_file_header = false;
+
+    for line in patch.lines() {
+        let trimmed = line.trim_end();
+
+        // Protocol wrappers — never show in the chat body.
+        if trimmed == "*** Begin Patch"
+            || trimmed == "*** End Patch"
+            || trimmed.eq_ignore_ascii_case("*** begin patch")
+            || trimmed.eq_ignore_ascii_case("*** end patch")
+        {
+            continue;
+        }
+
+        // Environment ID preamble from Codex-style patches.
+        if trimmed.starts_with("*** Environment ID:") {
+            continue;
+        }
+
+        if let Some(path) = strip_patch_file_header(trimmed) {
+            // Never paint `*** Update File:` protocol chrome. For multi-file
+            // patches, a quiet bare path separates hunks (first path is on the card).
+            if saw_file_header {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(path.path);
+                out.push('\n');
+            }
+            old_line = None;
+            new_line = if path.is_add { Some(1) } else { None };
+            if path.is_delete {
+                old_line = Some(1);
+            }
+            last_was_hunk = false;
+            saw_file_header = true;
+            continue;
+        }
+
+        // Unified diff file headers — path already on the card; just reset counters.
+        if let Some(_path) = trimmed.strip_prefix("+++ b/") {
+            old_line = None;
+            new_line = None;
+            last_was_hunk = false;
+            saw_file_header = true;
+            continue;
+        }
+        if trimmed.starts_with("+++ ")
+            || trimmed.starts_with("--- ")
+            || trimmed.starts_with("diff ")
+            || trimmed.starts_with("index ")
+        {
+            continue;
+        }
+
+        if trimmed.starts_with("@@") {
+            if last_was_hunk {
+                out.push_str("…\n");
+            }
+            let (old, new) = parse_hunk_line_numbers(trimmed);
+            old_line = old;
+            new_line = new;
+            // Bare `@@` (no numbers): leave counters unset so body stays `+/-content`.
+            last_was_hunk = true;
+            continue;
+        }
+
+        // Move-to markers stay as meta.
+        if trimmed.starts_with("*** Move to:") {
+            out.push_str(trimmed);
+            out.push('\n');
+            continue;
+        }
+
+        let (sign, content) = match line.chars().next() {
+            Some('-') if !line.starts_with("---") => ('-', &line[1..]),
+            Some('+') if !line.starts_with("+++") => ('+', &line[1..]),
+            Some(' ') => (' ', &line[1..]),
+            // Context without leading space (structured patch style).
+            _ if !line.is_empty()
+                && !line.starts_with('*')
+                && !line.starts_with('@')
+                && !line.starts_with('\\') =>
+            {
+                (' ', line)
+            }
+            _ => {
+                // Unknown meta — pass through.
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        };
+
+        match sign {
+            '-' => {
+                push_numbered_diff_line(&mut out, '-', old_line, content);
+                if let Some(n) = old_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+            '+' => {
+                push_numbered_diff_line(&mut out, '+', new_line, content);
+                if let Some(n) = new_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+            _ => {
+                let num = new_line.or(old_line);
+                push_numbered_diff_line(&mut out, ' ', num, content);
+                if let Some(n) = old_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+                if let Some(n) = new_line.as_mut() {
+                    *n = n.saturating_add(1);
+                }
+            }
+        }
+    }
+    out
+}
+
+struct PatchFileHeader<'a> {
+    path: &'a str,
+    is_add: bool,
+    is_delete: bool,
+}
+
+fn strip_patch_file_header(trimmed: &str) -> Option<PatchFileHeader<'_>> {
+    if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
+        return Some(PatchFileHeader {
+            path,
+            is_add: false,
+            is_delete: false,
+        });
+    }
+    if let Some(path) = trimmed.strip_prefix("*** Add File: ") {
+        return Some(PatchFileHeader {
+            path,
+            is_add: true,
+            is_delete: false,
+        });
+    }
+    if let Some(path) = trimmed.strip_prefix("*** Delete File: ") {
+        return Some(PatchFileHeader {
+            path,
+            is_add: false,
+            is_delete: true,
+        });
+    }
+    None
+}
+
+/// Parse `@@ -12,3 +14,4 @@` → (Some(12), Some(14)). Bare `@@` → (None, None).
+fn parse_hunk_line_numbers(hunk: &str) -> (Option<u32>, Option<u32>) {
+    let rest = hunk.strip_prefix("@@").unwrap_or(hunk).trim();
+    // Expect `-old[,count] +new[,count]` optionally followed by context.
+    let mut old = None;
+    let mut new = None;
+    for token in rest.split_whitespace() {
+        if let Some(num) = token.strip_prefix('-') {
+            old = num
+                .split(',')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|&n| n > 0);
+        } else if let Some(num) = token.strip_prefix('+') {
+            new = num
+                .split(',')
+                .next()
+                .and_then(|s| s.parse::<u32>().ok())
+                .filter(|&n| n > 0);
+        }
+        if old.is_some() && new.is_some() {
+            break;
+        }
+    }
+    (old, new)
+}
+
+/// Emit `{sign}{num:>4}|{content}` when line numbers are known, else `{sign}{content}`.
+///
+/// The `|` separator avoids false positives when unnumbered content happens to
+/// start with digits (e.g. `+  39 bottles`).
+fn push_numbered_diff_line(out: &mut String, sign: char, num: Option<u32>, content: &str) {
+    out.push(sign);
+    if let Some(n) = num {
+        // Fixed 4-wide gutter + pipe so the markdown renderer can detect numbers.
+        out.push_str(&format!("{n:>4}|"));
+    }
+    out.push_str(content);
+    out.push('\n');
+}
+
+fn patch_inputs(invocation: &ToolInvocation) -> Vec<String> {
+    if let Some(patch) = invocation.input.get("patch").and_then(|v| v.as_str()) {
+        return vec![patch.to_string()];
+    }
+    if let Some(patches) = invocation.input.get("patches").and_then(|v| v.as_array()) {
+        let patches = patches
+            .iter()
+            .filter_map(|v| v.as_str())
+            .filter(|patch| !patch.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if !patches.is_empty() {
+            return patches;
+        }
+    }
+    invocation
+        .input
+        .get("edits")
+        .and_then(|v| v.as_array())
+        .map(|edits| edits.iter().filter_map(edit_to_patch_body).collect())
+        .unwrap_or_default()
+}
+
+fn edit_to_patch_body(edit: &Value) -> Option<String> {
+    let path = edit.get("path").and_then(Value::as_str)?;
+    let search = edit.get("search").and_then(Value::as_str)?;
+    let replace = edit.get("replace").and_then(Value::as_str)?;
+    let mut patch = format!("*** Begin Patch\n*** Update File: {path}\n@@\n");
+    append_prefixed_lines(&mut patch, '-', search);
+    append_prefixed_lines(&mut patch, '+', replace);
+    patch.push_str("*** End Patch");
+    Some(patch)
+}
+
+fn append_prefixed_lines(output: &mut String, prefix: char, text: &str) {
+    for line in text.lines() {
+        output.push(prefix);
+        output.push_str(line);
+        output.push('\n');
+    }
+}
+
+fn bash_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation.input.get("action").and_then(|v| v.as_str());
+    if action == Some("list") {
+        return "List background commands".to_string();
+    }
+    if let Some(task_id) = invocation.input.get("task_id").and_then(|v| v.as_str()) {
+        return if action == Some("cancel") {
+            format!("Cancel background command {task_id}")
+        } else {
+            format!("Poll background command {task_id}")
+        };
+    }
+
+    let command = invocation
+        .input
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("command");
+    let cmd = compact_command(command);
+    let is_background = result.output.get("background").and_then(|v| v.as_bool()) == Some(true);
+
+    if is_background {
+        let status = result
+            .output
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let elapsed = result
+            .output
+            .get("elapsed_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let elapsed_str = crate::background::format_duration_ms(elapsed);
+        if let Some(exit_code) = result.output.get("exit_code").and_then(|v| v.as_i64()) {
+            format!("Run {cmd} ({status} · exit {exit_code} · {elapsed_str})")
+        } else {
+            format!("Run {cmd} ({status} · {elapsed_str})")
+        }
+    } else {
+        // Prefer a sticky failure signal in the header for failed runs so the
+        // card reads `Run cargo test · foo::bar · left 3 ≠ right 6` instead of
+        // only `exit 101` (body still has the full dump).
+        if !result.ok {
+            let mut parts = vec![format!("Run {cmd}")];
+            if let Some(signal) = shell_failure_header_bits(&result.output) {
+                if let Some(status) = result
+                    .output
+                    .get("status")
+                    .and_then(|v| v.as_i64())
+                    .or_else(|| result.output.get("exit_code").and_then(|v| v.as_i64()))
+                {
+                    parts.push(format!("exit {status}"));
+                }
+                parts.extend(signal);
+            } else if let Some(status) = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_i64())
+                .or_else(|| result.output.get("exit_code").and_then(|v| v.as_i64()))
+            {
+                // Bare failure: single exit chip (never `exit N · exit N`).
+                parts.push(format!("exit {status}"));
+            } else {
+                parts.push("failed".to_string());
+            }
+            return parts.join(" · ");
+        }
+
+        let mut summary = format!("Run {cmd}");
+        if let Some(status) = result.output.get("status").and_then(|v| v.as_i64()) {
+            summary.push_str(&format!(" (exit {status})"));
+        }
+        summary
+    }
+}
+
+/// Compact multi-bit failure signal for bash tool headers.
+///
+/// Returns ordered fragments like `["4p/1f", "scroll…offset", "3 ≠ 6"]` so the
+/// header can join them without burying the command.
+fn shell_failure_header_bits(output: &Value) -> Option<Vec<String>> {
+    let obj = output.as_object()?;
+    let summary = shell_failure_summary(obj)?;
+    let mut bits = Vec::new();
+
+    // Counts from `Summary: FAILED. 4 passed; 1 failed; …`
+    if let Some(line) = summary
+        .lines()
+        .find(|l| l.trim_start().starts_with("Summary:"))
+    {
+        let rest = line.trim_start().trim_start_matches("Summary:").trim();
+        let passed = extract_count(rest, "passed");
+        let failed = extract_count(rest, "failed");
+        if let (Some(p), Some(f)) = (passed, failed) {
+            bits.push(format!("{p}p/{f}f"));
+        } else if rest.to_ascii_lowercase().contains("failed") {
+            bits.push(truncate_for_summary(rest, 28));
+        }
+    }
+
+    if let Some(failed) = summary.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("Failed:")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }) {
+        // Prefer short test leaf name when path-like.
+        let leaf = failed.rsplit("::").next().unwrap_or(failed);
+        bits.push(truncate_for_summary(leaf, 36));
+    }
+
+    if let Some(assert) = summary.lines().find_map(|l| {
+        l.trim()
+            .strip_prefix("Assert:")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }) {
+        // Prefer `left X ≠ right Y` form; drop the "left/right" words if long.
+        let compact = assert
+            .replace("left ", "")
+            .replace("right ", "")
+            .replace("≠", "≠");
+        bits.push(truncate_for_summary(compact.trim(), 24));
+    }
+
+    if bits.is_empty() { None } else { Some(bits) }
+}
+
+fn extract_count(text: &str, label: &str) -> Option<u64> {
+    // Match `4 passed` / `1 failed` (cargo test result line).
+    let needle = format!(" {label}");
+    let lower = text.to_ascii_lowercase();
+    let label_l = label.to_ascii_lowercase();
+    let idx = lower.find(&format!(" {label_l}"))?;
+    let before = &text[..idx];
+    before
+        .split(|c: char| !c.is_ascii_digit())
+        .rfind(|s| !s.is_empty())
+        .and_then(|n| n.parse().ok())
+        .or_else(|| {
+            // also allow `FAILED. 4 passed` without leading space edge cases
+            let _ = needle;
+            None
+        })
+}
+
+fn grep_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let pattern = invocation
+        .input
+        .get("pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("pattern");
+    let path = invocation
+        .input
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or(".");
+    let matches = result
+        .output
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .map(|matches| matches.len())
+        .unwrap_or(0);
+    let truncated = result
+        .output
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let suffix = if truncated { "+" } else { "" };
+    format!(
+        "Search \"{}\" in {} ({}{suffix} matches)",
+        one_line(pattern),
+        path,
+        matches
+    )
+}
+
+fn fs_browser_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("browse");
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(".");
+    let count = result
+        .output
+        .get("files")
+        .and_then(|v| v.as_array())
+        .or_else(|| result.output.get("entries").and_then(|v| v.as_array()))
+        .map(|items| items.len());
+    let action = match action {
+        "list" => "List",
+        "tree" => "Tree",
+        "find" => "Find",
+        "stat" => "Stat",
+        _ => "Browse",
+    };
+    if let Some(count) = count {
+        format!("{action} {} ({count} items)", display_path(path))
+    } else {
+        format!("{action} {}", display_path(path))
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Code Intelligence tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn code_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "overview" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let symbols = result
+                .output
+                .get("symbols")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let files = result
+                .output
+                .get("files_scanned")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!(
+                "Code overview {} ({symbols} symbols in {files} files)",
+                display_path(path)
+            )
+        }
+        "find" => {
+            let query = result
+                .output
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let matches = result
+                .output
+                .get("matches")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code find \"{query}\" ({matches} symbols)")
+        }
+        "references" => {
+            let name = invocation
+                .input
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let refs = result
+                .output
+                .get("references")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code references to \"{name}\" ({refs} refs)")
+        }
+        "diagnostics" => {
+            let path = result
+                .output
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let issues = result
+                .output
+                .get("diagnostics")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Code diagnostics {} ({issues} issues)", display_path(path))
+        }
+        _ => "Code".to_string(),
+    }
+}
+
+fn code_edit_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = result
+        .output
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("edit");
+    let path = result
+        .output
+        .get("path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("file");
+    let edits = result
+        .output
+        .get("edits")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let start = result.output.get("start_line").and_then(|v| v.as_u64());
+    let end = result.output.get("end_line").and_then(|v| v.as_u64());
+
+    match (start, end) {
+        (Some(s), Some(e)) => {
+            format!(
+                "Code edit {action} {} ({} edits, lines {s}-{e})",
+                display_path(path),
+                edits
+            )
+        }
+        _ => {
+            format!(
+                "Code edit {action} {} ({} edits)",
+                display_path(path),
+                edits
+            )
+        }
+    }
+}
+
+fn code_exec_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let ops = result
+        .output
+        .get("ops_executed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if let Some(failed_op) = result.output.get("failed_op").and_then(|v| v.as_u64()) {
+        format!("Code exec (failed at op {failed_op}/{ops})")
+    } else {
+        format!("Code exec ({status}, {ops} ops)")
+    }
+}
+
+fn ast_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let matches = result
+        .output
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("AST search \"{query}\" ({matches} matches)")
+}
+
+fn symbol_goto_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let name = result
+        .output
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    if let Some(symbol) = result.output.get("symbol").and_then(|v| v.as_object()) {
+        let path = symbol.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+        let line = symbol.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+        format!("Goto {name} → {}:{line}", display_path(path))
+    } else {
+        format!("Goto {name} (not found)")
+    }
+}
+
+fn symbol_references_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let name = invocation
+        .input
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let refs = result
+        .output
+        .get("references")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("References to \"{name}\" ({refs} refs)")
+}
+
+fn dependency_graph_summary(result: &ToolResult) -> String {
+    let edges = result
+        .output
+        .get("edges")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let files = result
+        .output
+        .get("files_indexed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!("Dependency graph ({edges} edges in {files} files)")
+}
+
+fn test_discovery_summary(result: &ToolResult) -> String {
+    let tests = result
+        .output
+        .get("tests")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    if tests == 0 {
+        "Test discovery (no tests found)".to_string()
+    } else if let Some(tests_arr) = result.output.get("tests").and_then(|v| v.as_array()) {
+        if let Some(cmd) = tests_arr
+            .first()
+            .and_then(|v| v.get("command"))
+            .or_else(|| tests_arr.first().and_then(|v| v.get("suggestion")))
+            .and_then(|v| v.as_str())
+        {
+            format!("Test discovery → {cmd}")
+        } else {
+            format!("Test discovery ({tests} suggestions)")
+        }
+    } else {
+        format!("Test discovery ({tests} suggestions)")
+    }
+}
+
+fn churn_summary(result: &ToolResult) -> String {
+    let files = result
+        .output
+        .get("churn")
+        .and_then(|v| v.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    format!("Churn query ({files} files)")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Repo Search Aliases
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn search_tool_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    // search, list_dir, glob are aliases of SearchTool.
+    // For search the action is explicit; for list_dir it's always "list";
+    // for glob it's always "find".
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or(match invocation.tool_name.as_str() {
+            "list_dir" => "list",
+            "glob" => "find",
+            _ => "grep",
+        });
+
+    match action {
+        "grep" => grep_summary(invocation, result),
+        "list" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let count = result
+                .output
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("List {} ({count} items)", display_path(path))
+        }
+        "tree" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            let count = result
+                .output
+                .get("entries")
+                .and_then(|v| v.as_array())
+                .map(|entries| count_tree_entries(entries))
+                .unwrap_or(0);
+            format!("Tree {} ({count} items)", display_path(path))
+        }
+        "find" => {
+            let pattern = invocation
+                .input
+                .get("pattern")
+                .and_then(|v| v.as_str())
+                .unwrap_or("*");
+            let count = result
+                .output
+                .get("files")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("Find \"{pattern}\" ({count} files)")
+        }
+        "stat" => {
+            let path = result
+                .output
+                .get("path")
+                .or_else(|| invocation.input.get("path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".");
+            if let Some(size) = result.output.get("size").and_then(|v| v.as_u64()) {
+                format!("Stat {} ({size} bytes)", display_path(path))
+            } else {
+                format!("Stat {}", display_path(path))
+            }
+        }
+        _ => "Search".to_string(),
+    }
+}
+
+fn count_tree_entries(entries: &[serde_json::Value]) -> usize {
+    let mut count = 0;
+    for entry in entries {
+        count += 1;
+        if let Some(children) = entry.get("entries").and_then(|v| v.as_array()) {
+            count += count_tree_entries(children);
+        }
+    }
+    count
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Repo Explore & Subagent
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn repo_explore_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let elapsed = result
+        .output
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!(
+        "Repo explore \"{}\" · {}",
+        one_line(query),
+        crate::background::format_duration_ms(elapsed)
+    )
+}
+
+fn subagent_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation.input.get("action").and_then(|v| v.as_str());
+
+    if action == Some("list") {
+        let count = result
+            .output
+            .get("tasks")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0);
+        return format!("Subagent list ({count} tasks)");
+    }
+
+    if let Some(task_id) = invocation.input.get("task_id").and_then(|v| v.as_str()) {
+        return if action == Some("cancel") {
+            format!("Cancel subagent {task_id}")
+        } else {
+            // poll
+            let status = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let elapsed = result
+                .output
+                .get("elapsed_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!(
+                "Poll subagent {task_id} ({status} · {})",
+                crate::background::format_duration_ms(elapsed)
+            )
+        };
+    }
+
+    // New subagent run
+    let prompt = invocation
+        .input
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("task");
+    let is_background = invocation.input.get("background").and_then(|v| v.as_bool()) == Some(true);
+    let elapsed = result
+        .output
+        .get("elapsed_ms")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+
+    if is_background {
+        let task_id = result
+            .output
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
+        format!(
+            "Subagent \"{}\" (bg {})",
+            truncate_for_summary(prompt, 40),
+            task_id
+        )
+    } else {
+        format!(
+            "Subagent \"{}\" · {}",
+            truncate_for_summary(prompt, 40),
+            crate::background::format_duration_ms(elapsed)
+        )
+    }
+}
+
+fn workflow_summary(_invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or(if result.ok { "completed" } else { "failed" });
+    let run_id = result
+        .output
+        .get("run_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let agents = result
+        .output
+        .get("stats")
+        .and_then(|s| s.get("agents_started"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let elapsed = result
+        .output
+        .get("stats")
+        .and_then(|s| s.get("elapsed_ms"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if result.ok {
+        format!(
+            "Workflow {run_id} · {status} · {agents} agents · {}",
+            crate::background::format_duration_ms(elapsed)
+        )
+    } else {
+        let err = result
+            .output
+            .get("error")
+            .and_then(|e| {
+                e.get("code")
+                    .and_then(|c| c.as_str())
+                    .or_else(|| e.as_str())
+            })
+            .or_else(|| result.output.get("message").and_then(|m| m.as_str()))
+            .unwrap_or("error");
+        format!("Workflow {run_id} · {status} · {err}")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Planning & Session
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn plan_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "write" => {
+            let title = result
+                .output
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let chars = result
+                .output
+                .get("body_chars")
+                .and_then(|v| v.as_u64())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("body_markdown")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.chars().count() as u64)
+                })
+                .unwrap_or(0);
+            format!("Plan write \"{title}\" ({chars} chars)")
+        }
+        "submit" | "create" => {
+            let title = result
+                .output
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let steps = result
+                .output
+                .get("steps_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if result.output.get("needs_review").and_then(|v| v.as_bool()) == Some(true) {
+                format!("Plan \"{title}\" ({steps} steps) · awaiting review")
+            } else {
+                format!("Plan {action} \"{title}\" ({steps} steps)")
+            }
+        }
+        "update" => {
+            let title = result
+                .output
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("plan");
+            let status = result
+                .output
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("updated");
+            format!("Plan update \"{title}\" ({status})")
+        }
+        "complete_step" => {
+            let desc = result
+                .output
+                .get("step_description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("step");
+            let done = result
+                .output
+                .get("completed_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let total = result
+                .output
+                .get("total_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if result.output.get("all_complete").and_then(|v| v.as_bool()) == Some(true) {
+                format!("Plan complete ({done}/{total})")
+            } else {
+                format!("Plan step done ({done}/{total}) · {desc}")
+            }
+        }
+        "get" => {
+            if let Some(plan) = result.output.get("plan").and_then(|v| v.as_object()) {
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Plan get \"{title}\"")
+            } else {
+                "Plan get".to_string()
+            }
+        }
+        "list" => {
+            let count = result
+                .output
+                .get("count")
+                .and_then(|v| v.as_u64())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("plans")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.len() as u64)
+                })
+                .unwrap_or(0);
+            format!("Plan list ({count} plans)")
+        }
+        "active" => {
+            if let Some(plan) = result.output.get("plan").and_then(|v| v.as_object()) {
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                format!("Plan active \"{title}\"")
+            } else {
+                "Plan active (none)".to_string()
+            }
+        }
+        _ => "Plan".to_string(),
+    }
+}
+
+/// Clean plan body for chat (markdown design doc preferred; never raw JSON dump).
+fn plan_body_content(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    if !result.ok {
+        if let Some(error) = result.output.get("error").and_then(|v| v.as_str()) {
+            return format!("Error: {error}\n");
+        }
+        return "Plan tool failed\n".into();
+    }
+
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "write" | "submit" | "create" | "update" | "get" | "active" => {
+            let mut out = String::new();
+
+            // Prefer the markdown design doc — this is the product surface of plan mode.
+            let body_md = result
+                .output
+                .get("body_markdown")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    result
+                        .output
+                        .get("plan")
+                        .and_then(|p| p.get("body_markdown"))
+                        .and_then(|v| v.as_str())
+                })
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            if let Some(md) = body_md {
+                out.push_str(md);
+                out.push('\n');
+                // Path footer for write/submit so the file location is still findable.
+                if matches!(action, "write" | "submit" | "create") {
+                    if let Some(path) = result.output.get("plan_file_path").and_then(|v| v.as_str())
+                    {
+                        out.push('\n');
+                        out.push_str(&format!("_File: {path}_\n"));
+                    }
+                    if action == "write" {
+                        out.push_str("\n_Call plan(action='submit') when ready for review._\n");
+                    }
+                }
+                return out;
+            }
+
+            // Fallback: short status + checklist (legacy / no body_markdown).
+            if let Some(msg) = result.output.get("message").and_then(|v| v.as_str()) {
+                // Avoid path-only messages when we have nothing better — still show them.
+                out.push_str(msg);
+                out.push('\n');
+            }
+            let plan_obj = result
+                .output
+                .get("plan")
+                .and_then(|v| v.as_object())
+                .or_else(|| result.output.as_object());
+            if let Some(plan) = plan_obj {
+                let title = plan.get("title").and_then(|v| v.as_str()).unwrap_or("Plan");
+                if !out.contains(title) {
+                    out.push_str(&format!("# {title}\n"));
+                }
+                if let Some(steps) = plan.get("steps").and_then(|v| v.as_array()) {
+                    out.push('\n');
+                    for (i, step) in steps.iter().enumerate() {
+                        let desc = step
+                            .get("description")
+                            .or_else(|| step.get("content"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("…");
+                        let done = step
+                            .get("completed")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        let mark = if done { "x" } else { " " };
+                        out.push_str(&format!("{}. [{}] {}\n", i + 1, mark, desc));
+                    }
+                }
+            }
+            if out.is_empty() {
+                out.push_str("Plan updated.\n");
+            }
+            out
+        }
+        "complete_step" => {
+            let desc = result
+                .output
+                .get("step_description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("step");
+            let done = result
+                .output
+                .get("completed_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let total = result
+                .output
+                .get("total_steps")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("✓ {desc}\nProgress: {done}/{total}\n")
+        }
+        "list" => {
+            let mut out = String::from("Plans:\n");
+            if let Some(plans) = result.output.get("plans").and_then(|v| v.as_array()) {
+                for p in plans {
+                    let title = p.get("title").and_then(|v| v.as_str()).unwrap_or("?");
+                    let status = p.get("status").and_then(|v| v.as_str()).unwrap_or("?");
+                    let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    out.push_str(&format!("- [{status}] {title} ({id})\n"));
+                }
+            }
+            out
+        }
+        _ => result
+            .output
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(|m| format!("{m}\n"))
+            .unwrap_or_else(|| "Plan.\n".into()),
+    }
+}
+
+fn init_session_summary(result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    if status == "initialized" {
+        let total = result
+            .output
+            .get("features_total")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        format!("Init session ({total} features)")
+    } else {
+        format!("Init session ({status})")
+    }
+}
+
+fn mark_feature_done_summary(result: &ToolResult) -> String {
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let fid = result
+        .output
+        .get("feature_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let passes = result
+        .output
+        .get("passes")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if passes {
+        format!("Mark done {fid} (all checks passed)")
+    } else {
+        format!("Mark done {fid} ({status})")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Interaction tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn question_summary(invocation: &ToolInvocation) -> String {
+    let question = invocation
+        .input
+        .get("question")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Question \"{}\"", truncate_for_summary(question, 50))
+}
+
+fn request_user_input_summary(invocation: &ToolInvocation) -> String {
+    let title = invocation
+        .input
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Request input \"{title}\"")
+}
+
+fn append_note_summary(result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("db_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("session notes");
+    format!("Append note to {}", display_path(path))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: Utility tools
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn current_time_summary(result: &ToolResult) -> String {
+    let iso = result
+        .output
+        .get("utc_iso")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Current time: {iso}")
+}
+
+fn sleep_summary(result: &ToolResult) -> String {
+    let secs = result
+        .output
+        .get("slept_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    format!("Sleep ({secs}s)")
+}
+
+fn set_goal_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let objective = invocation
+        .input
+        .get("objective")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("objective").and_then(|v| v.as_str()))
+        .unwrap_or("goal");
+    let budget = invocation
+        .input
+        .get("token_budget")
+        .and_then(|v| v.as_i64())
+        .or_else(|| result.output.get("token_budget").and_then(|v| v.as_i64()));
+    if let Some(budget) = budget {
+        format!(
+            "Set goal \"{}\" ({budget} tokens)",
+            truncate_for_summary(objective, 48)
+        )
+    } else {
+        format!("Set goal \"{}\"", truncate_for_summary(objective, 48))
+    }
+}
+
+fn wait_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let file = invocation
+        .input
+        .get("file_path")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("file_path").and_then(|v| v.as_str()));
+    let timeout = invocation
+        .input
+        .get("timeout_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(120);
+    let status = result
+        .output
+        .get("status")
+        .and_then(|v| v.as_str())
+        .or_else(|| result.output.get("message").and_then(|v| v.as_str()));
+    match (file, status) {
+        (Some(file), Some(status)) => {
+            format!("Wait {} ({})", display_path(file), one_line(status))
+        }
+        (Some(file), None) => format!("Wait {} (up to {timeout}s)", display_path(file)),
+        (None, Some(status)) => format!("Wait ({})", one_line(status)),
+        (None, None) => format!("Wait ({timeout}s)"),
+    }
+}
+
+fn context_remaining_summary(result: &ToolResult) -> String {
+    let remaining = result
+        .output
+        .get("remaining_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let window = result
+        .output
+        .get("context_window")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let pct = result
+        .output
+        .get("usage_percent")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?%");
+    format!("Context: {remaining} / {window} ({pct})")
+}
+
+fn view_image_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let path = result
+        .output
+        .get("path")
+        .or_else(|| invocation.input.get("path"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("image");
+    let format = result
+        .output
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let size = result
+        .output
+        .get("size_bytes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let attached = result
+        .output
+        .get("image_attached")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if attached {
+        format!(
+            "View image {} ({format}, {} bytes) — attached for model",
+            display_path(path),
+            size
+        )
+    } else {
+        format!(
+            "View image {} ({format}, {} bytes)",
+            display_path(path),
+            size
+        )
+    }
+}
+
+fn new_context_window_summary(result: &ToolResult) -> String {
+    let requested = result
+        .output
+        .get("new_context_requested")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if requested {
+        "New context window requested".to_string()
+    } else {
+        "New context window".to_string()
+    }
+}
+
+fn tool_search_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let query = invocation
+        .input
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    let count = result
+        .output
+        .get("count")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len() as u64)
+        })
+        .unwrap_or(0);
+    format!("Tool search \"{query}\" ({count} results)")
+}
+
+fn runtime_info_summary(result: &ToolResult) -> String {
+    let profile = result
+        .output
+        .get("harness_profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    format!("Runtime info: {profile} profile")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// New: History, Sandbox, Package Manager
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn history_ops_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "search" => {
+            let query = invocation
+                .input
+                .get("query")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let count = result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History search \"{query}\" ({count} results)")
+        }
+        "recent" => {
+            let count = result
+                .output
+                .get("results")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History recent ({count} events)")
+        }
+        "get" => "History get".to_string(),
+        "summaries" => {
+            let count = result
+                .output
+                .get("sessions")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            format!("History summaries ({count} sessions)")
+        }
+        _ => "History".to_string(),
+    }
+}
+
+fn sandbox_summary(invocation: &ToolInvocation, result: &ToolResult) -> String {
+    let action = invocation
+        .input
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+
+    match action {
+        "snapshot" => {
+            let files = result
+                .output
+                .get("files_snapshotted")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Sandbox snapshot ({files} files)")
+        }
+        "rollback" => {
+            let restored = result
+                .output
+                .get("files_restored")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let created = result
+                .output
+                .get("files_created_and_removed")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            format!("Sandbox rollback ({restored} restored, {created} removed)")
+        }
+        "status" => {
+            let has_changes = result
+                .output
+                .get("has_changes")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if has_changes {
+                "Sandbox status (changes detected)".to_string()
+            } else {
+                "Sandbox status (clean)".to_string()
+            }
+        }
+        "reset" => "Sandbox reset".to_string(),
+        _ => "Sandbox".to_string(),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Shared helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn humanize_tool_name(name: &str) -> String {
+    let mut chars = name.replace('_', " ").chars().collect::<Vec<_>>();
+    if let Some(first) = chars.first_mut() {
+        first.make_ascii_uppercase();
+    }
+    chars.into_iter().collect()
+}
+
+fn one_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Multi-line scripts, heredocs, or very long one-liners — never dump as a wall.
+fn command_is_bulky(command: &str) -> bool {
+    let lines = command.lines().count().max(1);
+    if lines > 2 {
+        return true;
+    }
+    if command.contains("<<") {
+        return true;
+    }
+    one_line(command).chars().count() > COMPACT_COMMAND_CHARS * 2
+}
+
+/// Body form of `$ command` for shell failure cards.
+///
+/// Multi-line / heredoc scripts stay as a short head + line count — never
+/// `one_line()` the whole payload (that produced unreadable walls of Python).
+fn format_command_for_body(command: &str) -> String {
+    let line_count = command.lines().filter(|l| !l.is_empty()).count().max(1);
+    if command_is_bulky(command) {
+        let first = command
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("command");
+        let head = if first.chars().count() > COMPACT_COMMAND_CHARS {
+            truncate_for_summary(first, COMPACT_COMMAND_CHARS)
+        } else {
+            first.to_string()
+        };
+        return format!("$ {head}\n  … ({line_count} lines)\n");
+    }
+    let flat = one_line(command);
+    if flat.chars().count() > COMPACT_COMMAND_CHARS {
+        format!("$ {}\n", compact_command(command))
+    } else {
+        format!("$ {flat}\n")
+    }
+}
+
+/// Sticky summary that only restates the exit code (already in the header).
+fn is_exit_only_failure_summary(summary: &str) -> bool {
+    let mut saw_line = false;
+    for line in summary.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        saw_line = true;
+        if !line.starts_with("Summary: exit ") {
+            return false;
+        }
+    }
+    saw_line
+}
+
+/// Compact shell command for one-line tool headers.
+///
+/// Prefers the head of long pipelines (`cmd1 && cmd2…`) so the primary command
+/// stays visible; full command is always available in the expanded body.
+fn compact_command(command: &str) -> String {
+    let flat = one_line(command);
+    if flat.chars().count() <= COMPACT_COMMAND_CHARS {
+        return flat;
+    }
+
+    // Prefer first pipeline segment when joined with && / || / ;
+    let head = flat
+        .split_once("&&")
+        .or_else(|| flat.split_once("||"))
+        .or_else(|| flat.split_once(';'))
+        .map(|(left, _)| left.trim())
+        .unwrap_or(flat.as_str());
+
+    if head.chars().count() <= COMPACT_COMMAND_CHARS && head.len() < flat.len() {
+        return format!("{head} …");
+    }
+    truncate_for_summary(&flat, COMPACT_COMMAND_CHARS)
+}
+
+/// Emit source lines with a fixed 4-wide line-number gutter (`  217|code`).
+///
+/// For single-line full-file reads starting at line 1 (the common short snippet),
+/// skip the gutter so tiny files stay as plain fenced source.
+fn append_numbered_source_lines(content: &mut String, text: &str, start_line: u32) {
+    let line_count = text.lines().count();
+    let start = start_line.max(1);
+    // Tiny whole-file snippets: keep the classic unnumbered fence body.
+    if start == 1 && line_count <= 3 {
+        content.push_str(text);
+        if !text.is_empty() && !text.ends_with('\n') {
+            content.push('\n');
+        }
+        return;
+    }
+
+    let mut num = start;
+    for line in text.lines() {
+        content.push_str(&format!("{num:>4}|{line}\n"));
+        num = num.saturating_add(1);
+    }
+    if text.ends_with('\n') && !content.ends_with('\n') {
+        content.push('\n');
+    }
+}
+
+/// One-line high-signal failure reason for compact tool headers.
+fn shell_failure_signal(output: &Value) -> Option<String> {
+    // Prefer multi-bit header fragments when available (counts + test + assert).
+    if let Some(bits) = shell_failure_header_bits(output) {
+        return Some(bits.join(" · "));
+    }
+
+    let obj = output.as_object()?;
+    if let Some(summary) = shell_failure_summary(obj) {
+        // First non-empty line of the sticky summary, flattened.
+        let line = summary
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .unwrap_or("");
+        if line.is_empty() {
+            return None;
+        }
+        // Prefer the failed test name when available.
+        if let Some(failed) = summary.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("Failed:")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        }) {
+            return Some(truncate_for_summary(failed, 56));
+        }
+        if let Some(assert) = summary.lines().find_map(|l| {
+            l.trim()
+                .strip_prefix("Assert:")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        }) {
+            return Some(truncate_for_summary(assert, 56));
+        }
+        let flat = one_line(line)
+            .trim_start_matches("Summary:")
+            .trim()
+            .to_string();
+        return Some(truncate_for_summary(&flat, 56));
+    }
+
+    let exit = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()))
+        .filter(|c| *c != 0)?;
+    Some(format!("exit {exit}"))
+}
+
+/// Multi-line sticky summary for shell/test failures (shown above stream body).
+fn shell_failure_summary(obj: &serde_json::Map<String, Value>) -> Option<String> {
+    let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+    let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+    let combined = if stderr.is_empty() {
+        stdout.to_string()
+    } else if stdout.is_empty() {
+        stderr.to_string()
+    } else {
+        format!("{stdout}\n{stderr}")
+    };
+    if combined.trim().is_empty() {
+        return None;
+    }
+
+    let mut out = String::new();
+
+    // cargo / rustc style: `test result: FAILED. 4 passed; 1 failed; …`
+    if let Some(result_line) = combined.lines().rev().find(|l| {
+        let t = l.trim();
+        t.starts_with("test result:") || t.starts_with("error: test failed")
+    }) {
+        let t = result_line.trim();
+        if t.starts_with("test result:") {
+            out.push_str(&format!(
+                "Summary: {}\n",
+                one_line(t.trim_start_matches("test result:").trim())
+            ));
+        } else {
+            out.push_str(&format!("Summary: {}\n", one_line(t)));
+        }
+    } else if let Some(code) = obj
+        .get("exit_code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| obj.get("status").and_then(|v| v.as_i64()))
+        .filter(|c| *c != 0)
+    {
+        out.push_str(&format!("Summary: exit {code}\n"));
+    }
+
+    // First failed test name: `test foo::bar ... FAILED`
+    if let Some(failed_test) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("test ")
+            && rest.contains("FAILED")
+        {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_end_matches("...");
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+        // `failures:` block list line
+        None
+    }) {
+        out.push_str(&format!("Failed: {failed_test}\n"));
+    } else if let Some(failed_test) = combined.lines().find_map(|line| {
+        // `---- foo::bar stdout ----`
+        let t = line.trim();
+        t.strip_prefix("---- ")
+            .and_then(|r| r.strip_suffix(" stdout ----"))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    }) {
+        out.push_str(&format!("Failed: {failed_test}\n"));
+    }
+
+    // Assertion / left-right pair — prefer the pair when both exist so we
+    // don't print a generic "assertion failed" plus left/right.
+    let mut left = None;
+    let mut right = None;
+    for line in combined.lines() {
+        let t = line.trim();
+        if let Some(v) = t.strip_prefix("left:") {
+            left = Some(v.trim().to_string());
+        } else if let Some(v) = t.strip_prefix("right:") {
+            right = Some(v.trim().to_string());
+        }
+    }
+    if let (Some(l), Some(r)) = (&left, &right) {
+        out.push_str(&format!("Assert: left {l} ≠ right {r}\n"));
+    } else if let Some(assert) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if t.contains("assertion") && t.contains("failed") {
+            Some(one_line(t))
+        } else {
+            None
+        }
+    }) {
+        out.push_str(&format!("Assert: {assert}\n"));
+    }
+
+    // panick location: `panicked at path:line:col:`
+    if let Some(at) = combined.lines().find_map(|line| {
+        let t = line.trim();
+        if let Some(idx) = t.find("panicked at ") {
+            let rest = &t[idx + "panicked at ".len()..];
+            let loc = rest.split_whitespace().next().unwrap_or(rest);
+            let loc = loc.trim_end_matches(':');
+            if !loc.is_empty() {
+                return Some(loc.to_string());
+            }
+        }
+        // `--> path:line:col` rustc style
+        if let Some(rest) = t.trim_start().strip_prefix("--> ") {
+            return Some(one_line(rest));
+        }
+        None
+    }) {
+        out.push_str(&format!("At: {at}\n"));
+    }
+
+    if out.is_empty() { None } else { Some(out) }
+}
+
+fn display_path(path: &str) -> String {
+    let path_ref = Path::new(path);
+    if path_ref.is_absolute()
+        && let Some(project_dir) = project_dir()
+        && let Ok(stripped) = path_ref.strip_prefix(project_dir)
+    {
+        return stripped.to_string_lossy().to_string();
+    }
+    path.to_string()
+}
+
+fn truncate_for_summary(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        let truncated: String = value.chars().take(max_chars.saturating_sub(1)).collect();
+        format!("{truncated}…")
+    }
+}
+
+fn project_dir() -> Option<&'static PathBuf> {
+    static PROJECT_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PROJECT_DIR
+        .get_or_init(|| std::env::current_dir().ok())
+        .as_ref()
+}
+
+fn count_changed_lines(content: &str) -> usize {
+    if content.is_empty() {
+        0
+    } else {
+        content.lines().count().max(1)
+    }
+}
+
+fn patch_edit_summaries(patch: &str) -> Vec<String> {
+    let mut summaries = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut added = 0usize;
+    let mut removed = 0usize;
+
+    for line in patch.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            flush_patch_summary(&mut summaries, &mut current_path, &mut added, &mut removed);
+            current_path = Some(path.to_string());
+            continue;
+        }
+        if current_path.is_none() {
+            if let Some(path) = line.strip_prefix("*** Update File: ") {
+                current_path = Some(path.to_string());
+                continue;
+            }
+            if let Some(path) = line.strip_prefix("*** Add File: ") {
+                current_path = Some(path.to_string());
+                continue;
+            }
+        }
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+    flush_patch_summary(&mut summaries, &mut current_path, &mut added, &mut removed);
+
+    summaries
+}
+
+fn flush_patch_summary(
+    summaries: &mut Vec<String>,
+    current_path: &mut Option<String>,
+    added: &mut usize,
+    removed: &mut usize,
+) {
+    if let Some(path) = current_path.take() {
+        summaries.push(format!("Edited {path} (+{} -{})", *added, *removed));
+        *added = 0;
+        *removed = 0;
+    }
+}
+
+fn language_for_path(path: &str) -> &'static str {
+    match path
+        .rsplit_once('.')
+        .map(|(_, ext)| ext)
+        .unwrap_or_default()
+    {
+        "rs" => "rust",
+        "toml" => "toml",
+        "json" => "json",
+        "js" | "mjs" | "cjs" => "javascript",
+        "ts" | "tsx" => "typescript",
+        "jsx" => "javascript",
+        "py" => "python",
+        "go" => "go",
+        "java" => "java",
+        "c" | "h" => "c",
+        "cc" | "cpp" | "hpp" => "cpp",
+        "sh" | "bash" => "bash",
+        "zsh" => "zsh",
+        "fish" => "fish",
+        "md" | "markdown" => "markdown",
+        "yaml" | "yml" => "yaml",
+        "html" => "html",
+        "css" => "css",
+        "xml" => "xml",
+        "sql" => "sql",
+        _ => "",
+    }
+}
+
+fn render_tree_entries(entries: &[serde_json::Value], content: &mut String, indent: usize) {
+    let prefix = "  ".repeat(indent);
+    for entry in entries {
+        let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("?");
+        let entry_type = entry.get("type").and_then(|v| v.as_str()).unwrap_or("file");
+        if entry_type == "dir" {
+            content.push_str(&format!("{prefix}{name}/\n"));
+            if let Some(children) = entry.get("entries").and_then(|v| v.as_array()) {
+                render_tree_entries(children, content, indent + 1);
+            }
+        } else {
+            let size = entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0);
+            content.push_str(&format!("{prefix}{name} ({size} bytes)\n"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn invocation(tool_name: &str, input: serde_json::Value) -> ToolInvocation {
+        ToolInvocation {
+            id: "tool-1".to_string(),
+            tool_name: tool_name.to_string(),
+            input,
+        }
+    }
+
+    fn ok_result(output: serde_json::Value) -> ToolResult {
+        ToolResult {
+            invocation_id: "tool-1".to_string(),
+            ok: true,
+            output,
+        }
+    }
+
+    fn err_result(output: serde_json::Value) -> ToolResult {
+        ToolResult {
+            invocation_id: "tool-1".to_string(),
+            ok: false,
+            output,
+        }
+    }
+
+    fn broad_input(tool_name: &str) -> serde_json::Value {
+        match tool_name {
+            "read" | "read_file" | "view_file" => json!({ "path": "src/lib.rs" }),
+            "write" | "write_file" => json!({ "path": "src/lib.rs", "content": "fn main() {}\n" }),
+            "apply_patch" => {
+                json!({ "patch": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch" })
+            }
+            "run" | "process" => json!({ "command": "echo hi" }),
+            "grep" => json!({ "pattern": "needle", "path": "src" }),
+            "search" | "fs_browser" => json!({ "action": "list", "path": "src" }),
+            "list_dir" => json!({ "directory": "src" }),
+            "glob" => json!({ "pattern": "*.rs" }),
+            "question" => json!({ "question": "Continue?", "options": ["yes", "no"] }),
+            "plan" => json!({ "action": "list" }),
+            "code" => json!({ "action": "overview", "path": "src" }),
+            "code_exec" => json!({ "ops": [{ "op": "trace-note", "note": "done" }] }),
+            "ast_search" | "tool_search" => json!({ "query": "Renderer" }),
+            "symbol_goto" | "symbol_references" => json!({ "name": "Renderer" }),
+            "test_discovery" => json!({ "paths": ["src/lib.rs"] }),
+            "subagent" => json!({ "prompt": "inspect renderer" }),
+            "request_user_input" => json!({ "title": "Need info", "description": "Provide info" }),
+            "set_goal" => json!({ "objective": "fix renderers", "token_budget": 10000 }),
+            "wait" => json!({ "file_path": "src/lib.rs", "timeout_seconds": 30 }),
+            "view_image" | "inspect_image" => json!({ "path": "image.png" }),
+            "verifier" => json!({ "action": "run", "command": "cargo test" }),
+            "history_ops" => json!({ "action": "recent" }),
+            "sandbox" => json!({ "action": "status" }),
+            _ => json!({}),
+        }
+    }
+
+    fn broad_output() -> serde_json::Value {
+        let mut output = serde_json::Map::new();
+        output.insert("path".to_string(), json!("src/lib.rs"));
+        output.insert("content".to_string(), json!("fn main() {}\n"));
+        output.insert("start_line".to_string(), json!(1));
+        output.insert("end_line".to_string(), json!(1));
+        output.insert("total_lines".to_string(), json!(1));
+        output.insert("files".to_string(), json!(["src/lib.rs"]));
+        output.insert(
+            "entries".to_string(),
+            json!([{ "name": "lib.rs", "type": "file", "size": 12 }]),
+        );
+        output.insert(
+            "matches".to_string(),
+            json!([{ "path": "src/lib.rs", "line": 1, "text": "needle" }]),
+        );
+        output.insert("stdout".to_string(), json!("hi\n"));
+        output.insert("stderr".to_string(), json!(""));
+        output.insert("exit_code".to_string(), json!(0));
+        output.insert("status".to_string(), json!("success"));
+        output.insert("summary".to_string(), json!("completed"));
+        output.insert("framework".to_string(), json!("cargo"));
+        output.insert("passed".to_string(), json!(1));
+        output.insert("failed".to_string(), json!(0));
+        output.insert("skipped".to_string(), json!(0));
+        output.insert("duration_ms".to_string(), json!(10));
+        output.insert("warnings".to_string(), json!([]));
+        output.insert("errors".to_string(), json!([]));
+        output.insert("symbols".to_string(), json!([]));
+        output.insert("files_scanned".to_string(), json!(1));
+        output.insert("references".to_string(), json!([]));
+        output.insert("edges".to_string(), json!([]));
+        output.insert("files_indexed".to_string(), json!(1));
+        output.insert("tests".to_string(), json!([]));
+        output.insert("churn".to_string(), json!([]));
+        output.insert("tasks".to_string(), json!([]));
+        output.insert("plans".to_string(), json!([]));
+        output.insert("features_total".to_string(), json!(1));
+        output.insert("feature_id".to_string(), json!("feature-1"));
+        output.insert("passes".to_string(), json!(true));
+        output.insert("utc_iso".to_string(), json!("2026-06-30T00:00:00Z"));
+        output.insert("slept_seconds".to_string(), json!(1));
+        output.insert("remaining_tokens".to_string(), json!(1000));
+        output.insert("context_window".to_string(), json!(2000));
+        output.insert("usage_percent".to_string(), json!("50%"));
+        output.insert("format".to_string(), json!("png"));
+        output.insert("size_bytes".to_string(), json!(12));
+        output.insert("new_context_requested".to_string(), json!(true));
+        output.insert("count".to_string(), json!(1));
+        output.insert("total".to_string(), json!(1));
+        output.insert("harness_profile".to_string(), json!("medium"));
+        output.insert("task".to_string(), json!("fix renderers"));
+        output.insert("hypotheses".to_string(), json!([]));
+        output.insert("results".to_string(), json!([]));
+        output.insert("has_changes".to_string(), json!(false));
+        output.insert("manager".to_string(), json!("cargo"));
+        output.insert("message".to_string(), json!("Goal set"));
+        output.insert("file_path".to_string(), json!("src/lib.rs"));
+        serde_json::Value::Object(output)
+    }
+
+    #[test]
+    fn known_builtin_tools_have_explicit_full_rendering() {
+        let builtin_names = [
+            "read",
+            "read_file",
+            "search",
+            "grep",
+            "fs_browser",
+            "list_dir",
+            "glob",
+            "write",
+            "write_file",
+            "apply_patch",
+            "run",
+            "process",
+            "question",
+            "plan",
+            "runtime_info",
+            "code",
+            "code_edit",
+            "code_exec",
+            "ast_search",
+            "symbol_goto",
+            "symbol_references",
+            "dependency_graph_query",
+            "test_discovery",
+            "ownership_churn_query",
+            "branch_race_start",
+            "init_session",
+            "mark_feature_done",
+            "append_note",
+            "history_ops",
+            "current_time",
+            "sleep",
+            "set_goal",
+            "get_context_remaining",
+            "request_user_input",
+            "sandbox",
+            "view_image",
+            "inspect_image",
+            "new_context_window",
+            "tool_search",
+            "verifier",
+            "wait",
+            "subagent",
+            "repo_explore",
+        ];
+
+        for name in builtin_names {
+            let content = tool_full_content(
+                &invocation(name, broad_input(name)),
+                &ok_result(broad_output()),
+            );
+            assert!(
+                !content.contains(&format!("{name} completed successfully")),
+                "{name} fell back to generic success renderer:\n{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_alias_uses_file_renderer() {
+        let content = tool_full_content(
+            &invocation("read", json!({ "path": "src/lib.rs" })),
+            &ok_result(json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {}\n",
+                "start_line": 1,
+                "end_line": 1,
+                "total_lines": 1
+            })),
+        );
+
+        assert!(content.contains("Read src/lib.rs"));
+        assert!(content.contains("```rust\nfn main() {}\n```"));
+        assert!(!content.contains("read completed successfully"));
+    }
+
+    #[test]
+    fn compact_renderer_covers_goal_and_wait() {
+        let goal = tool_compact_text(
+            &invocation(
+                "set_goal",
+                json!({ "objective": "fix every tool renderer", "token_budget": 10000 }),
+            ),
+            &ok_result(json!({ "message": "Goal set" })),
+        );
+        let wait = tool_compact_text(
+            &invocation(
+                "wait",
+                json!({ "file_path": "src/lib.rs", "timeout_seconds": 30 }),
+            ),
+            &ok_result(json!({ "status": "released", "file_path": "src/lib.rs" })),
+        );
+
+        assert_eq!(goal, "Set goal \"fix every tool renderer\" (10000 tokens)");
+        assert_eq!(wait, "Wait src/lib.rs (released)");
+    }
+
+    #[test]
+    fn search_alias_full_view_renders_files() {
+        let content = tool_full_content(
+            &invocation("list_dir", json!({ "directory": "src" })),
+            &ok_result(json!({
+                "path": "src",
+                "files": ["src/lib.rs", "src/main.rs"]
+            })),
+        );
+
+        assert!(content.contains("Directory entries:"));
+        assert!(content.contains("1  src/lib.rs"));
+        assert!(content.contains("2  src/main.rs"));
+        assert!(!content.contains("list_dir completed successfully"));
+    }
+
+    #[test]
+    fn tool_running_text_summarizes_bash_command() {
+        let inv = invocation("run", json!({ "command": "npm test -- --watch" }));
+        let label = tool_running_text(&inv);
+        assert!(label.starts_with("Run "), "{label}");
+        assert!(label.contains("npm test"), "{label}");
+    }
+
+    #[test]
+    fn compact_command_keeps_head_of_pipeline() {
+        let long = "cargo test -p copland --lib list -- --test-threads=4 && cargo test -p navi-tui --lib render -- --test-threads=4";
+        let compact = compact_command(long);
+        assert!(compact.contains("cargo test -p copland"), "{compact}");
+        assert!(
+            compact.contains('…') || compact.chars().count() <= COMPACT_COMMAND_CHARS + 2,
+            "should truncate: {compact}"
+        );
+        assert!(
+            !compact.contains("navi-tui") || compact.ends_with('…'),
+            "second segment should be elided: {compact}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_surfaces_sticky_test_summary() {
+        let stdout = "\
+running 5 tests
+test list::tests::ok_one ... ok
+test list::tests::scrollviewportclampstomaxoffset ... FAILED
+
+failures:
+
+---- list::tests::scrollviewportclampstomaxoffset stdout ----
+thread 'list::tests::scrollviewportclampstomaxoffset' panicked at crates/copland/src/list.rs:217:9:
+assertion `left == right` failed
+  left: 3
+ right: 6
+
+failures:
+    list::tests::scrollviewportclampstomaxoffset
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+";
+        let content = tool_body_content(
+            &invocation(
+                "run",
+                json!({
+                    "command": "cargo test -p copland --lib list -- --test-threads=4 && cargo test -p navi-tui --lib"
+                }),
+            ),
+            &err_result(json!({
+                "status": 101,
+                "stdout": stdout,
+                "stderr": ""
+            })),
+        );
+
+        assert!(
+            content.contains("Summary:"),
+            "expected sticky summary, got:\n{content}"
+        );
+        assert!(
+            content.contains("Failed: list::tests::scrollviewportclampstomaxoffset")
+                || content.contains("scrollviewportclampstomaxoffset"),
+            "expected failed test name, got:\n{content}"
+        );
+        assert!(
+            content.contains("left") && content.contains("right"),
+            "expected assert left/right, got:\n{content}"
+        );
+        assert!(
+            content.contains("crates/copland/src/list.rs:217") || content.contains("At:"),
+            "expected panic location, got:\n{content}"
+        );
+        // Generic wall-of-text chrome should not lead with "Error: Bash failed".
+        assert!(
+            !content.starts_with("Error: Bash failed"),
+            "generic bash failed should not lead body:\n{content}"
+        );
+        // Full command should be available when header truncates.
+        assert!(
+            content.contains("cargo test -p copland") || content.contains("$ cargo test"),
+            "expected command context, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_compact_header_prefers_failure_signal_over_generic_error() {
+        let text = tool_compact_text(
+            &invocation("run", json!({ "command": "cargo test -p copland" })),
+            &err_result(json!({
+                "status": 101,
+                "stdout": "test foo::bar ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n",
+                "stderr": ""
+            })),
+        );
+        assert!(text.starts_with("Run "), "{text}");
+        assert!(
+            text.contains("bar")
+                || text.contains("FAILED")
+                || text.contains("0p/1f")
+                || text.contains("exit"),
+            "header should carry a high-signal failure reason: {text}"
+        );
+        assert!(
+            !text.contains("error: Bash failed"),
+            "must not append generic Bash failed: {text}"
+        );
+        // Counts + leaf test name when available.
+        assert!(
+            text.contains("0p/1f") || text.contains("bar"),
+            "expected sticky bits in header: {text}"
+        );
+        assert_eq!(
+            text.matches("exit 101").count(),
+            1,
+            "exit code must appear once: {text}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_header_does_not_double_exit_chip() {
+        let text = tool_compact_text(
+            &invocation("run", json!({ "command": "false" })),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(text.starts_with("Run false"), "{text}");
+        assert!(text.contains("exit 1"), "{text}");
+        assert_eq!(
+            text.matches("exit 1").count(),
+            1,
+            "must not render exit twice: {text}"
+        );
+        assert!(
+            !text.contains("Bash failed") && !text.contains("error:"),
+            "generic bash failed must not appear: {text}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_sanitizes_multiline_script_command() {
+        let script = "cd /tmp && python3 <<'PY'\nfrom pathlib import Path\nPath('x').write_text('y' * 200)\nprint('done')\nPY";
+        let content = tool_body_content(
+            &invocation("run", json!({ "command": script })),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "SyntaxError: invalid syntax\n",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(
+            !content.contains("from pathlib import Path Path('x')"),
+            "must not flatten heredoc into a wall:\n{content}"
+        );
+        assert!(
+            content.contains("…") || content.contains("lines"),
+            "expected compact multi-line command form:\n{content}"
+        );
+        assert!(
+            content.contains("SyntaxError") || content.contains("invalid syntax"),
+            "stderr signal should remain:\n{content}"
+        );
+        assert!(
+            !content.contains("Error: Bash failed"),
+            "generic bash failed must not lead body:\n{content}"
+        );
+        assert!(
+            content.matches("exit 1").count() <= 1,
+            "exit should not spam:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_empty_streams_is_header_only() {
+        let content = tool_body_content(
+            &invocation(
+                "run",
+                json!({
+                    "command": "cd /home/enrell/projects/navi && python3 <<'PY'\nprint(1\nPY"
+                }),
+            ),
+            &err_result(json!({
+                "status": 1,
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "",
+                "error": "Bash failed"
+            })),
+        );
+        assert!(
+            content.trim().is_empty()
+                || (!content.contains("python3 <<") && !content.contains("print(1")),
+            "empty-stream failures must not dump the script wall:\n{content}"
+        );
+        assert!(
+            !content.contains("Error: Bash failed"),
+            "no generic error chrome:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_failure_body_collapses_cargo_compile_noise() {
+        let mut noisy = String::new();
+        for i in 0..20 {
+            noisy.push_str(&format!("   Compiling crate{i} v0.1.0\n"));
+        }
+        noisy.push_str("Blocking waiting for file lock on artifact directory\n");
+        noisy.push_str("test foo::bar ... FAILED\n");
+        noisy.push_str("assertion `left == right` failed\n");
+        noisy.push_str("  left: 1\n");
+        noisy.push_str(" right: 2\n");
+        noisy.push_str("test result: FAILED. 0 passed; 1 failed; 0 ignored\n");
+        // Pad so the body takes the "long stream" excerpt path.
+        for i in 0..40 {
+            noisy.push_str(&format!("padding line {i}\n"));
+        }
+
+        let content = tool_body_content(
+            &invocation("run", json!({ "command": "cargo test" })),
+            &err_result(json!({
+                "status": 101,
+                "stdout": noisy,
+                "stderr": ""
+            })),
+        );
+        assert!(
+            content.contains("Build log:") || content.contains("compile/lock"),
+            "expected cargo noise collapse, got:\n{content}"
+        );
+        assert!(
+            content.contains("foo::bar") || content.contains("Failed:"),
+            "expected failure signal retained, got:\n{content}"
+        );
+        assert!(
+            !content.contains("Compiling crate5") || content.contains("omitted"),
+            "raw compile spam should be reduced:\n{content}"
+        );
+    }
+
+    #[test]
+    fn read_file_body_numbers_source_lines_from_start() {
+        let content = tool_body_content(
+            &invocation(
+                "read_file",
+                json!({ "path": "crates/copland/src/list.rs", "start_line": 216, "end_line": 219 }),
+            ),
+            &ok_result(json!({
+                "path": "crates/copland/src/list.rs",
+                "start_line": 216,
+                "end_line": 219,
+                "total_lines": 300,
+                "content": "        Ok(())\n    }\n}\nfn extra() {}\n"
+            })),
+        );
+        assert!(
+            content.contains("View crates/copland/src/list.rs")
+                || content.contains("View list.rs")
+                || content.contains("list.rs"),
+            "path context missing:\n{content}"
+        );
+        assert!(
+            content.contains(" 216|") || content.contains("216|"),
+            "expected numbered gutter starting at 216:\n{content}"
+        );
+        assert!(
+            content.contains(" 219|") || content.contains("219|") || content.contains(" 218|"),
+            "expected subsequent numbered lines:\n{content}"
+        );
+    }
+
+    #[test]
+    fn bash_body_is_plain_streams_without_chrome() {
+        let content = tool_full_content(
+            &invocation("run", json!({ "command": "ls -la" })),
+            &ok_result(json!({
+                "exit_code": 0,
+                "stdout": "total 8\ndrwxr-xr-x  2 user user 4096 Jan 1 12:00 .\n",
+                "stderr": ""
+            })),
+        );
+
+        assert!(content.contains("total 8\n"));
+        assert!(content.contains("drwxr-xr-x"));
+        assert!(
+            !content.contains("Command completed"),
+            "unexpected chrome: {content}"
+        );
+        assert!(
+            !content.contains("Stdout:"),
+            "unexpected Stdout label: {content}"
+        );
+        assert!(
+            !content.contains("```"),
+            "should not fence shell output: {content}"
+        );
+    }
+
+    #[test]
+    fn bash_body_shows_exit_code_only_on_failure() {
+        let content = tool_full_content(
+            &invocation("run", json!({ "command": "false" })),
+            &ok_result(json!({
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "boom\n"
+            })),
+        );
+
+        assert!(content.contains("exit 1\n"));
+        assert!(content.contains("boom\n"));
+        assert!(!content.contains("Stderr:"));
+        assert!(!content.contains("Command completed"));
+    }
+
+    #[test]
+    fn process_full_view_renders_plain_stdout() {
+        let content = tool_full_content(
+            &invocation("process", json!({ "command": "printf hi" })),
+            &ok_result(json!({
+                "exit_code": 0,
+                "stdout": "hi\n",
+                "stderr": "",
+                "elapsed_ms": 12
+            })),
+        );
+
+        assert!(content.contains("hi\n"));
+        assert!(!content.contains("Stdout:"));
+        assert!(!content.contains("```"));
+        assert!(!content.contains("Exit code: 0"));
+    }
+
+    #[test]
+    fn verifier_body_renders_plain_stdout_not_json_escape() {
+        // Regression: verifier used to dump the whole VerifierResult as ```json
+        // with stdout as a single string full of literal `\n` escapes.
+        let content = tool_full_content(
+            &invocation(
+                "verifier",
+                json!({
+                    "action": "run",
+                    "verifier": "test",
+                    "command": "nimble test 2>&1 | tail -30"
+                }),
+            ),
+            &ok_result(json!({
+                "command": "nimble test 2>&1 | tail -30",
+                "duration_ms": 2138,
+                "exit_code": 0,
+                "key": "test:nimble test 2>&1 | tail -30",
+                "schema_version": 1,
+                "status": "pass",
+                "stderr": "",
+                "stdout": "   Info: using nim for compilation\n Compiling tests\n[OK] AST node construction\n[OK] JSON DSL parser\nExecution finished\n",
+                "summary": "nimble test 2>&1 | tail -30 passed (2138 ms)"
+            })),
+        );
+
+        // Header card still has the verify summary.
+        assert!(
+            content.contains("Verify") || content.contains("passed"),
+            "expected verify summary on card, got:\n{content}"
+        );
+        // Body must be real multi-line text, not a JSON blob.
+        assert!(
+            content.contains("[OK] AST node construction\n"),
+            "expected real newlines in stdout body, got:\n{content}"
+        );
+        assert!(
+            content.contains("Execution finished\n"),
+            "expected trailing stdout lines, got:\n{content}"
+        );
+        assert!(
+            !content.contains("```json"),
+            "verifier body must not dump ```json, got:\n{content}"
+        );
+        assert!(
+            !content.contains("\\n Compiling") && !content.contains("\"stdout\":"),
+            "stdout must not appear as a JSON-escaped string, got:\n{content}"
+        );
+        assert!(
+            !content.contains("schema_version") && !content.contains("\"duration_ms\""),
+            "metadata chrome belongs out of the body, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn unknown_tool_full_view_includes_input_and_output_json() {
+        let content = tool_full_content(
+            &invocation("plugin__demo__lookup", json!({ "query": "abc" })),
+            &ok_result(json!({
+                "items": [{ "title": "Result" }],
+                "count": 1
+            })),
+        );
+
+        // Humanized name + key fields first; nested payload stays under Details.
+        assert!(content.contains("completed successfully"));
+        assert!(content.contains("count: 1"));
+        assert!(content.contains("Details:\n```json"));
+        assert!(content.contains("\"count\": 1"));
+        assert!(content.contains("\"title\": \"Result\""));
+    }
+
+    #[test]
+    fn non_bash_error_humanizes_structured_fields_without_json_dump() {
+        let content = tool_full_content(
+            &invocation("process", json!({ "action": "status" })),
+            &err_result(json!({
+                "error": "test command failed",
+                "error_code": "test_failed",
+                "framework": "cargo",
+                "stdout": "running 1 test"
+            })),
+        );
+
+        assert!(content.contains("Error: test command failed"));
+        assert!(content.contains("Code: test_failed"));
+        assert!(content.contains("framework: cargo"));
+        assert!(content.contains("running 1 test"));
+        // Must not dump the whole error envelope as raw JSON.
+        assert!(
+            !content.contains("Output:\n```json"),
+            "error envelope must not be dumped as JSON, got:\n{content}"
+        );
+        assert!(
+            !content.contains("\"error_code\""),
+            "raw error_code JSON field must not appear, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn edit_error_with_hint_renders_professionally() {
+        // Regression: invalid_path used to dump {error, error_code, hint, recoverable}
+        // as a ```json block under "Output:".
+        let content = tool_body_content(
+            &invocation(
+                "edit",
+                json!({
+                    "path": "/tmp/x.rs",
+                    "old_string": "a",
+                    "new_string": "b"
+                }),
+            ),
+            &err_result(json!({
+                "error": "path must stay inside the project: /tmp/x.rs",
+                "error_code": "invalid_path",
+                "hint": "Use a project-relative path, or an absolute path.",
+                "recoverable": true
+            })),
+        );
+
+        assert!(content.contains("Code: invalid_path"), "{content}");
+        assert!(
+            content.contains("Hint: Use a project-relative path"),
+            "{content}"
+        );
+        // Header already has the message — body should not dump JSON.
+        assert!(!content.contains("```json"), "got:\n{content}");
+        assert!(!content.contains("\"recoverable\""), "got:\n{content}");
+        assert!(
+            !content.contains("Error: path must stay"),
+            "do not double-print error when only envelope fields: {content:?}"
+        );
+    }
+
+    #[test]
+    fn message_only_error_contract_surfaces_in_compact_header() {
+        // helpers::tool_error historically used `message` without `error`.
+        let text = tool_compact_text(
+            &invocation("plan", json!({ "action": "create" })),
+            &err_result(json!({
+                "error_code": "empty_steps",
+                "message": "Plan steps must not be empty",
+                "hint": "Provide at least one step."
+            })),
+        );
+        assert!(
+            text.contains("error: Plan steps must not be empty"),
+            "compact header must read message when error is absent: {text}"
+        );
+    }
+
+    #[test]
+    fn error_only_tool_body_does_not_repeat_header_message() {
+        // Compact header already includes `· error: …`. Body should stay empty
+        // when there is no stream/detail/code/hint payload (avoids the double-error UI).
+        let content = tool_body_content(
+            &invocation("run", json!({ "command": "sleep 1" })),
+            &err_result(json!({
+                "error": "command timed out: deadline has elapsed",
+                "stdout": "",
+                "stderr": ""
+            })),
+        );
+        assert!(
+            !content.contains("Error: command timed out"),
+            "body should not repeat the header error: {content:?}"
+        );
+        assert!(content.trim().is_empty() || !content.contains("deadline has elapsed"));
+    }
+
+    #[test]
+    fn full_apply_patch_output_includes_patch_body() {
+        let patch = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-old\n+new\n*** End Patch";
+        let content = tool_full_content(
+            &invocation("apply_patch", json!({ "patch": patch })),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 1,
+                "files_patched": 1
+            })),
+        );
+
+        // Clean body: fenced diff only — no "Patch:" chrome, no Begin/End protocol.
+        assert!(content.contains("```diff\n"));
+        assert!(!content.contains("Patch:"));
+        assert!(!content.contains("*** Begin Patch"));
+        assert!(!content.contains("*** End Patch"));
+        // Path chrome is on the tool card only — not repeated in the body.
+        assert!(
+            !content.contains("*** Update File:"),
+            "body must not show *** Update File chrome, got:\n{content}"
+        );
+        assert!(
+            content.contains("-old\n+new") || content.contains("-old") && content.contains("+new")
+        );
+        // Bare @@ has no line numbers — body must not invent a gutter.
+        assert!(!content.contains("|old"));
+        assert!(content.contains("```"));
+        // Summary lives in the header only, not repeated as body chrome.
+        let body_start = content.find("```diff").unwrap_or(0);
+        assert!(
+            !content[body_start..].contains("Edited src/lib.rs"),
+            "body should not repeat Edited summary"
+        );
+    }
+
+    #[test]
+    fn numbered_hunk_headers_render_line_number_gutter() {
+        let patch = "*** Begin Patch\n*** Update File: docs/adr/0009.md\n\
+@@ -37,6 +37,6 @@\n \
+#### Registry Protocol\n \
+\n\
+-Default registry: old\n\
++Default registry: new\n \
+- Supports https\n\
+*** End Patch";
+        let content = tool_full_content(
+            &invocation("apply_patch", json!({ "patch": patch })),
+            &ok_result(json!({})),
+        );
+
+        assert!(content.contains("```diff\n"));
+        // No raw @@ chrome in the body.
+        assert!(!content.contains("@@ -37"));
+        // Line-number gutter: `{sign}{num:>4}|{content}`
+        assert!(
+            content.contains("  37|#### Registry Protocol")
+                || content.contains("  37| #### Registry Protocol"),
+            "expected line 37 context, got:\n{content}"
+        );
+        assert!(
+            content.contains("-  39|Default registry: old"),
+            "expected numbered delete, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  39|Default registry: new"),
+            "expected numbered add, got:\n{content}"
+        );
+        assert!(
+            content.contains("  40|- Supports https") || content.contains("  40| - Supports https"),
+            "expected line 40 context, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn normalize_diff_for_display_strips_begin_end_and_numbers_hunks() {
+        let raw = "*** Begin Patch\n*** Update File: a.rs\n@@ -10,3 +10,4 @@\n \
+ctx\n\
+-old\n\
++new\n\
++added\n*** End Patch\n";
+        let out = normalize_diff_for_display(raw);
+        assert!(!out.contains("*** Begin Patch"));
+        assert!(!out.contains("*** End Patch"));
+        assert!(!out.contains("@@ -10"));
+        assert!(
+            !out.contains("*** Update File:"),
+            "normalized body must not keep Update File chrome, got:\n{out}"
+        );
+        assert!(out.contains("  10|ctx\n") || out.contains("  10| ctx\n"));
+        assert!(out.contains("-  11|old\n"));
+        assert!(out.contains("+  11|new\n"));
+        assert!(out.contains("+  12|added\n"));
+    }
+
+    #[test]
+    fn full_write_patch_output_includes_multiple_patch_bodies() {
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "patches": [
+                        "*** Begin Patch\n*** Add File: one.txt\n+one\n*** End Patch",
+                        "*** Begin Patch\n*** Add File: two.txt\n+two\n*** End Patch"
+                    ]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 2,
+                "files_patched": 2
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        assert!(!content.contains("Patch 1:"));
+        assert!(!content.contains("Patch 2:"));
+        assert!(!content.contains("*** Begin Patch"));
+        // Protocol path chrome is stripped; multi-file may keep bare path labels.
+        assert!(!content.contains("*** Add File:"));
+        assert!(!content.contains("*** Update File:"));
+        assert!(
+            content.contains("one.txt") || content.contains("+one") || content.contains("|one")
+        );
+        assert!(
+            content.contains("two.txt") || content.contains("+two") || content.contains("|two")
+        );
+        assert!(
+            content.contains("+   1|one") || content.contains("+one"),
+            "expected first file body, got:\n{content}"
+        );
+        assert!(
+            content.contains("+   1|two") || content.contains("+two"),
+            "expected second file body, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn full_direct_write_output_includes_diff_body() {
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "path": "src/main.rs",
+                    "content": "fn main() {}\n"
+                }),
+            ),
+            &ok_result(json!({
+                "path": "src/main.rs",
+                "bytes": 13,
+                "lines_added": 1,
+                "lines_removed": 0,
+                "diff": "*** Add File: src/main.rs\n+fn main() {}\n"
+            })),
+        );
+
+        assert!(content.contains("Write src/main.rs (+1 -0 lines)"));
+        assert!(!content.contains("Edited src/main.rs"));
+        assert!(content.contains("```diff\n"));
+        assert!(
+            !content.contains("*** Add File:"),
+            "path chrome belongs on the card only, got:\n{content}"
+        );
+        // Add File numbers from line 1 (diff gutter).
+        assert!(
+            content.contains("+   1|fn main() {}"),
+            "expected numbered add line, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn direct_write_synthesizes_diff_from_content_when_missing() {
+        let content = tool_full_content(
+            &invocation(
+                "write_file",
+                json!({
+                    "path": "hello.txt",
+                    "content": "a\nb\n"
+                }),
+            ),
+            &ok_result(json!({
+                "path": "hello.txt",
+                "lines_added": 2,
+                "lines_removed": 0
+            })),
+        );
+
+        assert!(content.contains("Write hello.txt (+2 -0 lines)"));
+        assert!(!content.contains("Edited hello.txt"));
+        assert!(content.contains("```diff\n"));
+        assert!(
+            !content.contains("*** Add File:"),
+            "path chrome belongs on the card only, got:\n{content}"
+        );
+        assert!(
+            content.contains("+   1|a\n+   2|b\n"),
+            "expected numbered add lines, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn write_edits_render_as_diff_body() {
+        // Without engine `diff`, fall back to synthesised bare search/replace body.
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "edits": [{
+                        "path": "lib.rs",
+                        "search": "fn old() {}",
+                        "replace": "fn new() {}"
+                    }]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "search_replace",
+                "files_changed": ["lib.rs"],
+                "edits_applied": 1
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        assert!(
+            !content.contains("*** Update File:"),
+            "path chrome belongs on the card, got:\n{content}"
+        );
+        assert!(content.contains("-fn old() {}"));
+        assert!(content.contains("+fn new() {}"));
+    }
+
+    #[test]
+    fn write_edits_prefer_engine_numbered_display_diff() {
+        // Engine attaches a real-line-number display diff after applying edits.
+        let content = tool_full_content(
+            &invocation(
+                "write",
+                json!({
+                    "edits": [{
+                        "path": "AGENTS.md",
+                        "search": "Pedido",
+                        "replace": "Primary"
+                    }]
+                }),
+            ),
+            &ok_result(json!({
+                "method": "search_replace",
+                "files_changed": ["AGENTS.md"],
+                "edits_applied": 1,
+                "lines_added": 2,
+                "lines_removed": 2,
+                "diff": "*** Update File: AGENTS.md\n\
+            @@ -46,2 +46,2 @@\n\
+            -1. **Pedido e Intenção Primária** – all explicit user requests\n\
+            -2. **Conceitos Técnicos-Chave** – technologies and frameworks discussed\n\
+            +1. **Primary Request and Intent** – all explicit user requests\n\
+            +2. **Key Technical Concepts** – technologies and frameworks discussed\n"
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        assert!(
+            !content.contains("*** Update File:"),
+            "path chrome belongs on the card, got:\n{content}"
+        );
+        // Diff gutter: `{sign}{num:>4}|{content}`
+        assert!(
+            content.contains("-  46|1. **Pedido e Intenção Primária**"),
+            "expected numbered delete line 46, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  46|1. **Primary Request and Intent**"),
+            "expected numbered add line 46, got:\n{content}"
+        );
+        assert!(
+            content.contains("-  47|2. **Conceitos Técnicos-Chave**"),
+            "expected numbered delete line 47, got:\n{content}"
+        );
+        assert!(
+            content.contains("+  47|2. **Key Technical Concepts**"),
+            "expected numbered add line 47, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn apply_patch_prefers_engine_numbered_display_diff() {
+        let content = tool_full_content(
+            &invocation(
+                "apply_patch",
+                json!({
+                    "patch": "*** Begin Patch\n*** Update File: a.rs\n@@\n-old\n+new\n*** End Patch"
+                }),
+            ),
+            &ok_result(json!({
+                "method": "structured",
+                "patches_applied": 1,
+                "files_patched": 1,
+                "lines_added": 1,
+                "lines_removed": 1,
+                "diff": "*** Update File: a.rs\n@@ -10,1 +10,1 @@\n-old line\n+new line\n"
+            })),
+        );
+
+        assert!(content.contains("```diff\n"));
+        // Prefer engine display diff (numbered) over bare model patch.
+        assert!(
+            content.contains("-  10|old line") && content.contains("+  10|new line"),
+            "expected engine-numbered body, got:\n{content}"
+        );
+        assert!(
+            !content.contains("-old\n+new") || content.contains("|old line"),
+            "should not fall back to bare unnumbered model patch when diff is present"
+        );
+    }
+
+    #[test]
+    fn plan_create_body_is_checklist_not_json() {
+        let inv = invocation(
+            "plan",
+            json!({
+                "action": "create",
+                "title": "Ship vault",
+                "steps": ["Build UI", "Wire API"]
+            }),
+        );
+        let res = ok_result(json!({
+            "plan_id": "plan-1",
+            "title": "Ship vault",
+            "steps": [
+                {"description": "Build UI", "completed": false, "notes": ""},
+                {"description": "Wire API", "completed": false, "notes": ""}
+            ],
+            "steps_count": 2,
+            "needs_review": true,
+            "message": "Plan 'Ship vault' created with 2 steps. Awaiting user review."
+        }));
+        let content = tool_full_content(&inv, &res);
+        assert!(
+            content.contains("awaiting review") || content.contains("Ship vault"),
+            "summary should mention plan: {content}"
+        );
+        assert!(
+            content.contains("Build UI") && content.contains("Wire API"),
+            "body should list steps: {content}"
+        );
+        assert!(
+            !content.contains("\"steps_count\"") && !content.contains("```json"),
+            "plan body must not be raw JSON: {content}"
+        );
+    }
+
+    #[test]
+    fn plan_create_does_not_auto_expand() {
+        use super::super::tool_policy::tool_auto_expand;
+        let inv = invocation("plan", json!({ "action": "create", "title": "T" }));
+        let res = ok_result(json!({
+            "title": "T",
+            "steps_count": 1,
+            "needs_review": true
+        }));
+        assert!(!tool_auto_expand(&inv, &res));
+    }
+
+    #[test]
+    fn plan_write_auto_expands_and_shows_markdown_not_only_path() {
+        use super::super::tool_policy::tool_auto_expand;
+        let inv = invocation("plan", json!({ "action": "write" }));
+        let md = "# Coverage gate\n\n## Context\nCI has no coverage.\n\n## Approach\nAdd llvm-cov job.\n";
+        let res = ok_result(json!({
+            "title": "Coverage gate",
+            "body_markdown": md,
+            "body_chars": md.chars().count(),
+            "plan_file_path": "/home/enrell/.local/share/navi/plans/sess/plan.md",
+            "needs_review": false,
+            "message": "Plan markdown written (99 chars). Call plan(action='submit') when ready for review.\nFile: /home/enrell/.local/share/navi/plans/sess/plan.md"
+        }));
+        assert!(
+            tool_auto_expand(&inv, &res),
+            "plan write must expand so users see the design doc"
+        );
+        let content = tool_full_content(&inv, &res);
+        assert!(
+            content.contains("## Context") && content.contains("Add llvm-cov job"),
+            "chat body must show markdown sections, got:\n{content}"
+        );
+        assert!(
+            content.contains("Coverage gate"),
+            "title from markdown should appear: {content}"
+        );
+        // Path may appear as footer, but must not be the only content.
+        let without_path = content.replace("/home/enrell/.local/share/navi/plans/sess/plan.md", "");
+        assert!(
+            without_path.contains("## Approach") || without_path.contains("llvm-cov"),
+            "body must remain meaningful without the path string: {content}"
+        );
+        assert!(
+            !content.contains("\"body_markdown\"") && !content.contains("```json"),
+            "must not dump raw JSON: {content}"
+        );
+        let summary = tool_compact_text(&inv, &res);
+        assert!(
+            summary.contains("write") && summary.contains("Coverage gate"),
+            "header should say plan write + title: {summary}"
+        );
+    }
+}

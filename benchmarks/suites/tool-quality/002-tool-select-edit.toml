@@ -1,0 +1,34 @@
+version = 1
+id = "tq-tool-select-edit"
+title = "Tool quality: find config bug via search, edit correct file"
+category = "tool_quality"
+fixture = "benchmarks/fixtures/tool-select-edit"
+task = """
+A unit test fails because of a wrong constant in this small multi-file crate.
+
+Use tools carefully:
+- discover which file owns the wrong constant (grep/read)
+- edit only that definition
+- re-run tests
+
+Do not invent new modules or change the public API surface.
+"""
+max_turns = 10
+max_tool_calls = 50
+timeout_ms = 600000
+tags = ["tool-quality", "search", "edit", "rust"]
+
+[metadata]
+difficulty = "easy-medium"
+focus = "tool selection: search → targeted edit → verify"
+eval_axis = "tool_selection"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

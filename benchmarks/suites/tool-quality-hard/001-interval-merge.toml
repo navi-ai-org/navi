@@ -1,0 +1,36 @@
+version = 1
+id = "hard-interval-merge"
+title = "Hard: merge intervals with sorting and touch semantics"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-interval-merge"
+task = """
+Fix `merge_intervals` so all unit tests pass.
+
+This is intentionally multi-bug:
+- sorting key
+- adjacency / touching intervals
+- covered length / negatives
+
+Read the tests carefully before editing. Prefer a correct algorithm over
+piecemeal patches that pass one test and break another.
+Run `cargo test` until green.
+"""
+max_turns = 20
+max_tool_calls = 100
+timeout_ms = 600000
+tags = ["tool-quality", "hard", "algorithms"]
+
+[metadata]
+difficulty = "hard"
+focus = "multi-bug algorithm repair"
+eval_axis = "multi_bug_reasoning"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

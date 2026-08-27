@@ -1,0 +1,283 @@
+use crate::TuiApp;
+use crate::chat::submit_message;
+use crate::input::{
+    chat_input_ref, delete_input_next_char, delete_input_next_hump, delete_input_previous_char,
+    delete_input_previous_hump, delete_input_previous_space_word, insert_input_char,
+    move_input_next_char, move_input_next_control_stop, move_input_next_hump,
+    move_input_previous_char, move_input_previous_control_stop, move_input_previous_hump,
+    move_input_visual_line, select_all_input,
+};
+use crate::state::ModalKind;
+use crossterm::event::{KeyCode, KeyModifiers};
+
+pub(crate) fn handle_normal_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    if matches!(app.chat_view, crate::state::ChatView::Subagent { .. })
+        && modifiers.is_empty()
+        && handle_subagent_view_key(app, code)
+    {
+        return false;
+    }
+
+    // Block selection (empty prompt only): j/k navigate, y copy, Enter activate,
+    // Esc clears. Up/Down must NOT select blocks — many terminals deliver mouse
+    // wheel as arrow keys, and users expect natural line scroll either way.
+    if app.input.is_empty() && modifiers.is_empty() && handle_block_selection_key(app, code) {
+        return false;
+    }
+
+    if modifiers.contains(KeyModifiers::CONTROL) {
+        // Windows reports AltGr (Right Alt) as Ctrl+Alt. When both modifiers
+        // are present, skip the Ctrl shortcut block entirely and fall through
+        // to the ALT / character-insertion path below. This lets compose-key
+        // sequences (e.g. Alt+, → ç on US International) work instead of being
+        // silently swallowed by the unmatched Ctrl shortcut fallthrough.
+        if modifiers.contains(KeyModifiers::ALT) {
+            // Fall through to ALT handling / character insertion below.
+        } else {
+            // Ctrl+Shift+C: copy selected chat cell (full block), even while typing.
+            if super::global::is_copy_selection_key(code, modifiers)
+                && app.selected_chat_source.is_some()
+            {
+                crate::chat_blocks::copy_selected_block(app);
+                return false;
+            }
+            match code {
+                KeyCode::Left | KeyCode::Char('b') => move_input_previous_control_stop(app),
+                KeyCode::Right | KeyCode::Char('f') => move_input_next_control_stop(app),
+                KeyCode::Backspace
+                | KeyCode::Char('h')
+                | KeyCode::Char('w')
+                | KeyCode::Char('\u{7f}') => delete_input_previous_hump(app),
+                KeyCode::Delete => delete_input_next_hump(app),
+                // Jump to last message (also works while typing).
+                KeyCode::End | KeyCode::Down => crate::view::chat::jump_to_latest(app),
+                KeyCode::Char('a') => select_all_input(app),
+                KeyCode::Char('e') => {
+                    app.input_cursor = app.input.len();
+                    app.input_selection = None;
+                }
+                // Ctrl+J (and ASCII LF) insert a newline. Do NOT treat Ctrl+M /
+                // ASCII CR (`\r`) as newline — that chord is the model picker
+                // (see global::is_ctrl_chord) and must not be swallowed here.
+                KeyCode::Char('j') | KeyCode::Char('\n') => insert_input_char(app, '\n'),
+                KeyCode::Char('u') => {
+                    app.input.drain(..app.input_cursor);
+                    app.input_cursor = 0;
+                    app.input_selection = None;
+                }
+                KeyCode::Char('k') => {
+                    chat_input_ref(app).delete_to_end();
+                    app.input_selection = None;
+                }
+                _ => return false,
+            }
+            return false;
+        }
+    }
+
+    if modifiers.contains(KeyModifiers::ALT) {
+        // When CONTROL is also held (Windows AltGr encoding), skip all Alt
+        // shortcut handling — the key is a compose sequence, not a chord.
+        // Fall straight through to character insertion below.
+        if !modifiers.contains(KeyModifiers::CONTROL) {
+            let mut handled_as_shortcut = true;
+            match code {
+                KeyCode::Left | KeyCode::Char('b') => move_input_previous_hump(app),
+                KeyCode::Right | KeyCode::Char('f') => move_input_next_hump(app),
+                KeyCode::Backspace | KeyCode::Char('h') | KeyCode::Char('\u{7f}') => {
+                    delete_input_previous_space_word(app)
+                }
+                KeyCode::Delete | KeyCode::Char('d') => delete_input_next_hump(app),
+                // Alt+T is a global toggle for thinking visibility — leave it
+                // for route_global_key rather than treating it as text input.
+                KeyCode::Char('t') | KeyCode::Char('T') => return false,
+                // Alt+punctuation/symbols may be compose-key sequences (e.g.
+                // Alt+, → ç on US International). Fall through to character
+                // insertion instead of consuming the key as a shortcut.
+                KeyCode::Char(_) => handled_as_shortcut = false,
+                _ => return false,
+            }
+            if handled_as_shortcut {
+                return false;
+            }
+        }
+    }
+
+    match code {
+        KeyCode::Char('/') if app.input.is_empty() => {
+            super::commands::open_command_palette(app);
+        }
+        KeyCode::Char('?') if app.input.is_empty() => {
+            crate::view::help::open_help(app);
+        }
+        KeyCode::Char('@') => {
+            insert_input_char(app, '@');
+            // Open path palette for a fresh `@` token at the cursor.
+            if let Some((at, query)) =
+                crate::path_mentions::active_mention_query(&app.input, app.input_cursor)
+            {
+                crate::path_mentions::open_path_mentions(app, at);
+                app.path_filter = query;
+            }
+        }
+        // Shift+G with empty prompt + scrolled history → go to bottom
+        // (must be before the generic Char insert arm).
+        KeyCode::Char('G')
+            if modifiers.contains(KeyModifiers::SHIFT)
+                && app.input.is_empty()
+                && app.scroll_offset > 0 =>
+        {
+            crate::view::chat::jump_to_latest(app);
+        }
+        KeyCode::Char(ch) => insert_input_char(app, ch),
+        KeyCode::Backspace => {
+            if app.input.is_empty() && !app.pending_images.is_empty() {
+                app.pending_images.pop();
+            } else if crate::paste_compact::try_delete_paste_before_cursor(app) {
+                // Whole paste chip removed.
+            } else {
+                delete_input_previous_char(app);
+            }
+        }
+        KeyCode::Delete => {
+            delete_input_next_char(app);
+        }
+        KeyCode::Left => {
+            move_input_previous_char(app);
+        }
+        KeyCode::Right => {
+            move_input_next_char(app);
+        }
+        KeyCode::Home => {
+            app.input_cursor = 0;
+            app.input_selection = None;
+        }
+        KeyCode::End => {
+            app.input_cursor = app.input.len();
+            app.input_selection = None;
+        }
+        KeyCode::Up if !move_input_visual_line(app, -1) => {
+            // Viewport line scroll (same unit as mouse wheel). Clear block
+            // focus so wheel-as-keys cannot leave the composer collapsed.
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_add(2);
+        }
+        KeyCode::Down if !move_input_visual_line(app, 1) => {
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_sub(2);
+        }
+        KeyCode::PageUp => {
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_add(15);
+        }
+        KeyCode::PageDown => {
+            clear_scrollback_focus_for_viewport_scroll(app);
+            app.scroll_offset = app.scroll_offset.saturating_sub(15);
+        }
+        KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
+            insert_input_char(app, '\n');
+        }
+        KeyCode::Enter => {
+            if !app.pending_questions.is_empty() {
+                super::replace_modal(app, ModalKind::Question);
+            } else if crate::paste_compact::try_expand_paste_at_cursor(app) {
+                // Cursor was on a paste chip — expand for editing.
+            } else if !app.input.trim().is_empty() || !app.pending_images.is_empty() {
+                submit_message(app);
+            }
+        }
+        KeyCode::Esc => {
+            if app.selected_chat_source.is_some() {
+                crate::chat_blocks::clear_selected_block(app);
+            } else {
+                app.scroll_offset = 0;
+            }
+        }
+        _ => {}
+    }
+
+    false
+}
+
+/// Block-level scrollback selection (empty prompt only).
+///
+/// Intentionally excludes Up/Down. Arrow keys are viewport scroll (and the
+/// fallback encoding for mouse wheel on many terminals). Block navigation is
+/// j/k after a click (or j/k to enter selection from the nearest block).
+fn handle_block_selection_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Char('k') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::select_adjacent_block(app, -1);
+            true
+        }
+        KeyCode::Char('j') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::select_adjacent_block(app, 1);
+            true
+        }
+        // Enter block selection with j/k when nothing is selected yet.
+        KeyCode::Char('k')
+            if app.selected_chat_source.is_none()
+                && !crate::chat_blocks::chat_blocks(app).is_empty() =>
+        {
+            crate::chat_blocks::select_adjacent_block(app, -1);
+            true
+        }
+        KeyCode::Char('j')
+            if app.selected_chat_source.is_none()
+                && !crate::chat_blocks::chat_blocks(app).is_empty() =>
+        {
+            crate::chat_blocks::select_adjacent_block(app, 1);
+            true
+        }
+        KeyCode::Char('y') if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::copy_selected_block(app);
+            true
+        }
+        KeyCode::Enter if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::activate_selected_block(app);
+            true
+        }
+        KeyCode::Esc if app.selected_chat_source.is_some() => {
+            crate::chat_blocks::clear_selected_block(app);
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Viewport scrolling is not block navigation. Drop scrollback focus so the
+/// composer expands again and wheel-as-keys cannot hop selection highlights.
+fn clear_scrollback_focus_for_viewport_scroll(app: &mut TuiApp) {
+    app.selection = None;
+    crate::chat_blocks::clear_selected_block(app);
+}
+
+fn handle_subagent_view_key(app: &mut TuiApp, code: KeyCode) -> bool {
+    match code {
+        KeyCode::Up | KeyCode::Esc => {
+            app.close_subagent_view();
+            true
+        }
+        KeyCode::Left => {
+            app.select_adjacent_subagent(-1);
+            true
+        }
+        KeyCode::Right => {
+            app.select_adjacent_subagent(1);
+            true
+        }
+        KeyCode::PageUp => {
+            app.scroll_offset = app.scroll_offset.saturating_add(15);
+            true
+        }
+        KeyCode::PageDown | KeyCode::Down => {
+            app.scroll_offset = app.scroll_offset.saturating_sub(15);
+            true
+        }
+        KeyCode::Char('G') | KeyCode::End => {
+            crate::view::chat::jump_to_latest(app);
+            true
+        }
+        _ => false,
+    }
+}

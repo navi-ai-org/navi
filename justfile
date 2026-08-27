@@ -1,0 +1,370 @@
+# NAVI development tasks — https://github.com/casey/just
+# First time: `just setup-tools`
+
+# Uses bash on all platforms. On Windows, install Git Bash or MSYS2 so
+# `bash` is on PATH. Recipes with heavy bash-isms use #!/usr/bin/env bash
+# shebangs for clarity; simple recipes inherit this shell setting.
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+default:
+    @just --list
+
+# Default test parallelism. On low-RAM machines override:
+#   CARGO_BUILD_JOBS=2 CARGO_TEST_THREADS=2 just test
+# Do NOT hard-cap CARGO_BUILD_JOBS here — that made every local/CI build 2–4× slower.
+test_threads := env_var_or_default("CARGO_TEST_THREADS", "8")
+coverage_lcov := "coverage/lcov.info"
+
+# Product crates (shipping binary path). Bindings excluded for fast loops.
+# navi-voice tested with --no-default-features elsewhere; omit here so onnx
+# is not feature-unified into the product graph. navi-cli omitted (bin-only).
+product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api -p navi-plugin-broker -p navi-plugin-manifest -p navi-plugin-orchestrator -p navi-plugin-runtime -p copland"
+
+# ─── Build ───────────────────────────────────────────────────────────────────
+
+# Main build: the shipping `navi` binary and its dependency closure only.
+# Node/Dart bindings, the web server, and the standalone demo are non-essential
+# to the CLI and are excluded from the default path (build them explicitly).
+build:
+    cargo build -p navi-cli
+
+# Everything in the workspace, including Node/Dart bindings and the web server.
+build-all:
+    cargo build --workspace
+
+# Optimized binary without full release LTO cost (see [profile.release-fast] in Cargo.toml).
+build-fast:
+    cargo build -p navi-cli --profile release-fast
+
+build-fast-all:
+    cargo build --workspace --profile release-fast
+
+build-release:
+    cargo build -p navi-cli --release
+
+build-release-all:
+    cargo build --workspace --release
+
+# Node (napi-rs) and Dart FFI bindings — excluded from the main build path.
+build-napi:
+    cargo build -p navi-napi
+
+build-dart:
+    cargo build -p navi-dart
+
+# Build the Svelte web frontend for navi-server (embeds into the binary via rust-embed).
+build-web:
+    cd crates/navi-server/web && bun install && bun run build
+
+# Build the web frontend then build navi-server (self-contained binary with embedded UI).
+build-server: build-web
+    cargo build -p navi-server
+
+# Install the latest prebuilt release binary (curl installer — preferred for users).
+install-bin:
+    curl -fsSL https://github.com/navi-ai-org/navi/raw/refs/heads/main/scripts/install.sh | sh
+
+# Build from this checkout and install into cargo's bin dir (dev).
+install:
+    cargo install --path crates/navi-cli
+
+# Build from this checkout in release mode and install (dev).
+install-release:
+    cargo install --path crates/navi-cli --release
+
+check:
+    cargo check --workspace --lib --bins --exclude navi-napi --exclude navi-dart
+
+# Verify SDK ↔ N-API binding parity (no drift between surfaces).
+parity-check:
+    cargo test -p navi-sdk --lib engine_api::tests::napi_binding_covers_all -- --test-threads={{test_threads}}
+
+fmt:
+    cargo fmt --all
+
+fmt-check:
+    cargo fmt --all -- --check
+
+# ─── Tests ───────────────────────────────────────────────────────────────────
+
+# Full product suite including integration binaries (CARGO_BIN_EXE, TUI scenarios).
+# Prefer `just test-fast` for the default local loop; use this before PRs that
+# touch CLI/TUI integration paths. Matches CI `test-full` job (main / dispatch).
+test *args:
+    cargo test --workspace --exclude navi-napi --exclude navi-dart --exclude navi-server -- --test-threads={{test_threads}} {{args}}
+
+# PR CI default: unit/bin tests for the shipping path only (no integration harnesses).
+# Matches the primary GitHub Actions `Test` job (lib+bins product packages).
+test-fast *args:
+    cargo test --locked --lib --bins {{product_packages}} -- --test-threads={{test_threads}} {{args}}
+
+# Selective integration smoke used alongside test-fast (screenshots + PTY).
+# Scenarios / event_loop / terminal_corruption / plugin_install stay on `just test`.
+test-smoke *args:
+    cargo test --locked -p navi-tui --test screenshots -- --test-threads=4 {{args}}
+    cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1 {{args}}
+
+# Full monorepo including bindings (slow — needs Node for napi).
+test-all *args:
+    cargo test --workspace -- --test-threads={{test_threads}} {{args}}
+
+test-crate crate *args:
+    cargo test -p {{crate}} -- --test-threads={{test_threads}} {{args}}
+
+harness-replay:
+    cargo run -p navi-cli -- eval run evals/suites/b0
+    cargo run -p navi-cli -- eval run evals/suites/beyond
+
+# Run the full agentic benchmark corpus with the baseline benchmark model.
+bench suite="benchmarks/suites" output="benchmarks/runs/benchmark-latest.json" provider="opencode" model="deepseek-v4-flash-free":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{output}}")"
+    status=0
+    cargo run -p navi-cli -- bench run "{{suite}}" --auto-approve --provider "{{provider}}" --model "{{model}}" --output "{{output}}" || status=$?
+    node benchmarks/site/generate-runs-index.mjs
+    echo "Wrote {{output}}"
+    exit $status
+
+# Run only the smoke benchmark suite.
+bench-smoke output="benchmarks/runs/smoke-latest.json" provider="opencode" model="deepseek-v4-flash-free":
+    @just bench benchmarks/suites/smoke "{{output}}" "{{provider}}" "{{model}}"
+
+# ─── Multi-agent tool-quality comparison ─────────────────────────────────────
+# Agents: navi · opencode · claude-code (cc-proxy) · optional grok (manual).
+# Baseline model: DeepSeek V4 Flash free (OpenCode Zen) / flash via Command Code.
+
+# Full multi-agent tool-quality suite (token-consuming).
+bench-tool-quality out="benchmarks/runs/agent-compare/latest.json" agents="navi,opencode,claude-code":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality \
+      --agents "{{agents}}" \
+      --out "{{out}}"
+
+# Fast iteration: navi only, first two cases.
+bench-tool-quality-smoke out="benchmarks/runs/agent-compare/smoke.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality \
+      --agents navi \
+      --cases tq-smoke-fix,tq-tool-select-edit \
+      --out "{{out}}"
+
+# Navi-only full tool-quality suite via native bench runner.
+bench-tool-quality-navi output="benchmarks/runs/tool-quality-navi.json" provider="opencode" model="deepseek-v4-flash-free":
+    @just bench benchmarks/suites/tool-quality "{{output}}" "{{provider}}" "{{model}}"
+
+# Hard multi-bug tool-quality suite (all agents). Expect model failures.
+bench-tool-quality-hard out="benchmarks/runs/agent-compare/hard-latest.json" agents="navi,opencode,claude-code":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality-hard \
+      --agents "{{agents}}" \
+      --out "{{out}}"
+
+# Hard suite, navi only, with LLM metrics proxy (cache hit rate + prefix breaks).
+bench-tool-quality-hard-navi-proxy out="benchmarks/runs/agent-compare/hard-navi-proxy.json":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{out}}")"
+    python3 benchmarks/scripts/run_agent_comparison.py \
+      --suite benchmarks/suites/tool-quality-hard \
+      --agents navi \
+      --metrics-proxy \
+      --out "{{out}}"
+
+# Lean tool + memory dream + cache blame (low RAM). Uses existing binary — no cargo.
+# Do NOT cargo build -j default on 8GB hosts; release link alone can exceed 2GB.
+# Note: just forbids nested indent beyond the recipe indent; keep shell control flow flat.
+bench-tool-cache-audit out="benchmarks/runs/agent-compare/tool-cache-audit.json" provider="opencode" model="deepseek-v4-flash-free":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p "$(dirname "{{out}}")"
+    bin="${NAVI_BIN:-}"
+    if [ -z "$bin" ]; then if [ -x target/release/navi ]; then bin=target/release/navi; elif [ -x target/debug/navi ]; then bin=target/debug/navi; else bin=navi; fi; fi
+    CARGO_BUILD_JOBS=1 NAVI_BIN="$bin" python3 benchmarks/scripts/run_tool_cache_audit.py --out "{{out}}" --provider "{{provider}}" --model "{{model}}"
+
+# Print the local benchmark report path.
+bench-index:
+    node benchmarks/site/generate-runs-index.mjs
+
+# Generate the local benchmark index and print the report path.
+bench-report: bench-index
+    @echo "Open benchmarks/site/index.html"
+
+# Regenerate the TUI golden snapshots in crates/navi-tui/tests/snapshots/.
+# Run this after an intentional rendering change is reviewed by hand.
+snapshot-update:
+    UPDATE_SNAPSHOTS=1 cargo test -p navi-tui --test screenshots
+    @echo "Updated TUI goldens in crates/navi-tui/tests/snapshots/."
+
+# ─── Coverage (cargo-llvm-cov) ───────────────────────────────────────────────
+
+coverage_core_lcov := "coverage/lcov-core.info"
+# Test threads for coverage jobs (CI uses 4; keep local default modest too).
+coverage_test_threads := env_var_or_default("CARGO_TEST_THREADS", "4")
+
+_require-llvm-cov:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v cargo-llvm-cov >/dev/null || {
+      echo "Missing cargo-llvm-cov. Install: cargo install cargo-llvm-cov --locked"
+      echo "Also: rustup component add llvm-tools-preview"
+      exit 1
+    }
+
+coverage: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p coverage
+    cargo llvm-cov --workspace --lcov --output-path {{coverage_lcov}} -- --test-threads={{test_threads}}
+    echo "Wrote {{coverage_lcov}}"
+
+coverage-summary: _require-llvm-cov
+    cargo llvm-cov --workspace --summary-only -- --test-threads={{test_threads}}
+
+coverage-html: _require-llvm-cov
+    cargo llvm-cov --workspace --html -- --test-threads={{test_threads}}
+    @echo "Open target/llvm-cov/html/index.html"
+
+# Package-scoped coverage + critical-path gate (mirrors CI `coverage` job).
+# Requires: cargo install cargo-llvm-cov --locked && rustup component add llvm-tools-preview
+# --ignore-run-fail: still emit lcov when unrelated/flaky tests fail; the Test job
+# is the pass/fail source of truth for the suite. This job gates critical paths only.
+coverage-core: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p coverage
+    cargo llvm-cov -p navi-core --lib --lcov --output-path {{coverage_core_lcov}} \
+      --ignore-run-fail \
+      -- --test-threads={{coverage_test_threads}}
+    echo "Wrote {{coverage_core_lcov}}"
+    python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
+
+# Re-check floors against an existing lcov (no re-run of tests).
+coverage-core-check:
+    python3 scripts/check-critical-coverage.py {{coverage_core_lcov}}
+
+# Tool-specific coverage gate: runs cargo-llvm-cov on tool crates
+# (navi-core + navi-os-windows) and checks per-file floors + critical
+# function hits via scripts/check-critical-coverage.py.
+# See AGENTS.md "Tool testing requirements" for the three-layer test policy.
+coverage_tools_lcov := "coverage/lcov-tools.info"
+coverage-tools: _require-llvm-cov
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p coverage
+    cargo llvm-cov -p navi-core -p navi-os-windows --lib --lcov \
+      --output-path {{coverage_tools_lcov}} \
+      --ignore-run-fail \
+      -- --test-threads={{coverage_test_threads}}
+    echo "Wrote {{coverage_tools_lcov}}"
+    python3 scripts/check-critical-coverage.py {{coverage_tools_lcov}}
+
+# Re-check tool floors against an existing lcov (no re-run of tests).
+coverage-tools-check:
+    python3 scripts/check-critical-coverage.py {{coverage_tools_lcov}}
+
+# ─── Rust tooling (direct cargo) ─────────────────────────────────────────────
+
+# Product-path clippy (matches CI). Full-workspace style -D is too slow/noisy.
+clippy:
+    cargo clippy --workspace --lib --bins \
+      --exclude navi-napi --exclude navi-dart --exclude navi-server \
+      -- -D clippy::correctness -D clippy::suspicious -D clippy::perf \
+      -W clippy::style -A clippy::too_many_arguments -A clippy::collapsible_if
+
+# ─── Dart ──────────────────────────────────────────────────────────────────
+
+# Build the navi-dart native library (debug).
+dart-build:
+    cargo build -p navi-dart
+
+# Build the navi-dart native library (release).
+dart-build-release:
+    cargo build -p navi-dart --release
+
+# Run navi-dart Rust tests.
+dart-test:
+    cargo test -p navi-dart -- --test-threads=1
+
+# ─── Registry ────────────────────────────────────────────────────────────────
+
+# Update the pinned commit of navi-ai-org/navi-registry used by navi-core/build.rs.
+# After running this, rebuild navi to embed the updated registry.
+# Releases do not need this; they set NAVI_REGISTRY_REF=refs/heads/main.
+update-registry-lock:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Fetching latest navi-registry commit..."
+    commit="$(git ls-remote https://github.com/navi-ai-org/navi-registry.git refs/heads/main | awk '{print $1}')"
+    lock="crates/navi-core/registry.lock"
+    {
+      echo "# Pinned commit of https://github.com/navi-ai-org/navi-registry."
+      echo "# Update with: just update-registry-lock"
+      echo "$commit"
+    } > "$lock"
+    echo "Updated $lock to $commit"
+    echo "  cargo check -p navi-core"
+
+# Fetch the registry snapshot to a local directory for offline builds.
+# Set NAVI_REGISTRY_DIR to the printed path when running cargo.
+fetch-registry:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    lock="crates/navi-core/registry.lock"
+    commit="$(grep -v '^#' "$lock" | head -n1 | tr -d '[:space:]')"
+    if [[ -z "$commit" ]]; then
+        echo "error: no commit found in $lock" >&2
+        exit 1
+    fi
+    echo "Fetching navi-registry commit $commit..."
+    curl -fsSL "https://codeload.github.com/navi-ai-org/navi-registry/tar.gz/$commit" \
+        | tar -xz -C "$tmp"
+    src="$(find "$tmp" -maxdepth 1 -type d -name 'navi-registry-*' | head -n1)"
+    if [[ -z "$src" || ! -f "$src/manifest.json" ]]; then
+        echo "error: registry tarball missing manifest.json" >&2
+        exit 1
+    fi
+    cache_dir="${NAVI_REGISTRY_CACHE:-$HOME/.cache/navi/registry/local}"
+    rm -rf "$cache_dir"
+    mkdir -p "$cache_dir"
+    cp -a "$src/." "$cache_dir/"
+    echo "Registry fetched to: $cache_dir"
+    echo "Build offline with: NAVI_REGISTRY_DIR=$cache_dir cargo check -p navi-core"
+
+# Build navi-core against the latest navi-registry main snapshot.
+# This mirrors how release binaries are built.
+check-latest-registry:
+    NAVI_REGISTRY_REF=refs/heads/main cargo check -p navi-core
+
+# ─── Brand / demo GIF ─────────────────────────────────────────────────────────
+
+# Record the real NAVI TUI (VHS PTY) and composite floating mouse + focus zoom.
+# Requires: vhs, ffmpeg, pillow; uses NAVI_BIN (default ~/.local/bin/navi).
+record-demo:
+    bash scripts/record-demo.sh
+
+# ─── Aggregates ────────────────────────────────────────────────────────────────
+
+# Fast local gate: format, compile, unit tests (mirrors PR CI Test job core).
+# Use `just test` or `just test-smoke` before PRs that touch CLI/TUI integration.
+verify: fmt-check check test-fast
+
+# Pre-PR: verify + clippy
+ci: verify clippy
+
+# Install common cargo tooling used by coverage/CI helpers
+setup-tools:
+    @echo "Installing cargo tools..."
+    cargo install cargo-llvm-cov cargo-nextest cargo-audit cargo-deny cargo-hack --locked
+    @rustup component add rustfmt clippy 2>/dev/null || true

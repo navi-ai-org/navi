@@ -1,0 +1,121 @@
+pub mod auto_dream;
+pub mod auto_memory;
+pub mod checkpoint_writer;
+pub mod embedding;
+pub mod extract;
+pub mod global_memory;
+pub mod history_store;
+pub mod maintenance;
+pub mod memory_store;
+pub mod rebuild_context;
+pub mod schemas;
+
+#[cfg(test)]
+pub mod tests;
+
+pub use auto_dream::AutoDreamState;
+pub use auto_memory::{
+    AutoMemoryStore, ConsolidationReport, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
+    configure_connection, cosine_similarity, new_entry, sanitize_id,
+};
+pub use checkpoint_writer::run_checkpoint_writer;
+pub use embedding::{
+    DEFAULT_MODEL_FILE, DEFAULT_MODEL_REPO, DEFAULT_TOKENIZER_FILE, DEFAULT_TOKENIZER_REPO,
+    EMBED_DIM, Embedder, EmbeddingConfig, NoEmbedder, create_embedder, embeddings_available,
+};
+pub use global_memory::GlobalMemoryStore;
+pub use history_store::{HistoryEvent, HistoryStore, SessionSummary};
+pub use maintenance::{
+    DreamOptions, DreamResult, run_distill_maintenance, run_dream_maintenance,
+    run_dream_maintenance_with_options,
+};
+pub use memory_store::{MemoryStore, write_atomic};
+pub use rebuild_context::build_rebuild_context;
+pub use schemas::SessionCheckpoint;
+
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+
+/// Orchestrates the memory system components (SQLite stores + history).
+#[derive(Debug, Clone)]
+pub struct MemoryManager {
+    pub store: MemoryStore,
+    pub history: HistoryStore,
+    pub auto_memory: AutoMemoryStore,
+    pub global_memory: GlobalMemoryStore,
+}
+
+impl MemoryManager {
+    /// Constructs and initializes a new `MemoryManager` from the configuration.
+    pub fn new(
+        project_dir: PathBuf,
+        data_dir: PathBuf,
+        config: &crate::config::MemoryConfig,
+    ) -> Result<Self> {
+        Self::new_scoped(
+            project_dir,
+            data_dir,
+            crate::app_scope::AppScope::none(),
+            config,
+        )
+    }
+
+    /// Constructs and initializes a new `MemoryManager`, app-scoped (ADR 0019).
+    ///
+    /// When `app_scope` is active, memory artifacts are stored under
+    /// `{data_dir}/apps/<app-id>/memory/`.
+    pub fn new_scoped(
+        project_dir: PathBuf,
+        data_dir: PathBuf,
+        app_scope: crate::app_scope::AppScope,
+        config: &crate::config::MemoryConfig,
+    ) -> Result<Self> {
+        let (store, memory_base) = if app_scope.is_active() {
+            // Scoped: resolve relative root config under the app's memory dir.
+            let scoped_memory_base = app_scope.memory_dir(&data_dir);
+            let store = MemoryStore::new_with_base(
+                project_dir,
+                data_dir.clone(),
+                scoped_memory_base.clone(),
+                &config.root,
+            );
+            (store, scoped_memory_base)
+        } else {
+            // Unscoped: use the original resolution (root config relative to data_dir).
+            let store = MemoryStore::new(project_dir, data_dir.clone(), &config.root);
+            (store, data_dir.join("memory"))
+        };
+        store
+            .ensure_initialized()
+            .context("Failed to initialize memory store")?;
+
+        let resolved_sqlite_path =
+            memory_store::resolve_memory_path(&config.history.sqlite_path, &store.memory_root);
+        let history = HistoryStore::new(&resolved_sqlite_path).with_context(|| {
+            format!("Failed to open history store at {:?}", resolved_sqlite_path)
+        })?;
+
+        let auto_memory_db = store.memory_root.join("memories.db");
+        let auto_memory = AutoMemoryStore::open(&auto_memory_db).with_context(|| {
+            format!(
+                "Failed to open auto-memory database at {:?}",
+                auto_memory_db
+            )
+        })?;
+
+        let global_memory_db = memory_base.join("global-memory.db");
+        let global_memory = GlobalMemoryStore::open(&global_memory_db).with_context(|| {
+            format!(
+                "Failed to open global memory database at {:?}",
+                global_memory_db
+            )
+        })?;
+
+        Ok(Self {
+            store,
+            history,
+            auto_memory,
+            global_memory,
+        })
+    }
+}

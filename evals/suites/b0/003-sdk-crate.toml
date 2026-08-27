@@ -1,0 +1,12 @@
+version = 1
+id = "b0-sdk-crate"
+title = "navi-sdk crate exists"
+category = "simple_repo_task"
+task = "Verify that the SDK crate is present."
+tags = ["b0", "repo-structure", "sdk"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-sdk/Cargo.toml"
+required = true
+

@@ -1,0 +1,36 @@
+version = 1
+id = "hard-priority-queue"
+title = "Hard: min-heap with decrease-key index map"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-priority-queue"
+task = """
+Fix the binary heap PriorityQueue.
+
+It must be a **min-heap** by priority with:
+- correct sift_up / sift_down
+- correct decrease/increase key direction
+- index map kept consistent on swaps
+- push with existing id updates priority
+
+Several heap invariants are inverted. Fix until `cargo test` is fully green.
+Do not replace the whole structure with BTreeMap unless tests still pass with the same public API.
+"""
+max_turns = 22
+max_tool_calls = 110
+timeout_ms = 720000
+tags = ["tool-quality", "hard", "heap"]
+
+[metadata]
+difficulty = "hard"
+focus = "heap invariants + index map"
+eval_axis = "data_structure_repair"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

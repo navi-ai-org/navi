@@ -1,0 +1,31 @@
+# Source & build artifacts
+src/
+build.rs
+Cargo.toml
+Cargo.lock
+target/
+
+# Tests
+test/
+
+# Build script (not needed by consumers)
+scripts/build-native.mjs
+scripts/postinstall.mjs
+
+# Native binaries are included per-platform via npm/ packages;
+# the package directory binaries are for local dev only.
+navi.*.node
+navi.node
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# npm
+node_modules/
+npm-debug.log
+.npmrc

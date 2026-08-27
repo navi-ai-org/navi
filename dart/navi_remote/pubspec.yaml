@@ -1,0 +1,18 @@
+name: navi_remote
+description: >-
+  Remote client for NAVI server. Connects to a navi-server instance
+  over HTTP/WebSocket (e.g. via Tailscale) and provides the same
+  API surface as the local navi_agent package.
+version: 0.1.0
+homepage: https://github.com/navi-ai-org/navi
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  http: ^1.2.0
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  test: ^1.24.0
+  lints: ^4.0.0

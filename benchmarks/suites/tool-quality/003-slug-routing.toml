@@ -1,0 +1,34 @@
+version = 1
+id = "tq-slug-routing"
+title = "Tool quality: multi-file slug routing fix"
+category = "tool_quality"
+fixture = "benchmarks/fixtures/rust-slug-routing"
+task = """
+Fix product slug normalization and lookup across the crate.
+
+Tool-use expectations:
+- explore with search/read before large edits
+- keep the public API
+- run targeted tests
+
+Prefer precise edits over rewriting the whole package.
+"""
+timeout_ms = 600000
+max_turns = 16
+max_tool_calls = 80
+tags = ["tool-quality", "medium", "multi-file"]
+
+[metadata]
+difficulty = "medium"
+focus = "multi-file debugging with disciplined tools"
+eval_axis = "multi_file_tools"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

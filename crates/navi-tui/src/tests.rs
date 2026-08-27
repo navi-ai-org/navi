@@ -1,0 +1,5568 @@
+use crate::TuiApp;
+use crate::chat::{
+    active_assistant_message, ensure_tail_model_response, finalize_active_assistant,
+    fork_from_user_message, remove_active_tool_placeholder, revert_to_user_message, submit_message,
+    update_active_assistant_status,
+};
+use crate::commands::CommandAction;
+use crate::commands::filtered_commands;
+use crate::dispatch::{AsyncEvent, handle_async_event};
+use crate::errors::handle_model_error;
+use crate::input::insert_input_char;
+use crate::keybindings::{
+    handle_command_key, handle_help_key, handle_key, handle_model_key, handle_normal_key,
+    handle_settings_key, open_modal, open_model_picker, run_selected_command, sync_models_tui,
+};
+use crate::mouse::{finish_selection, handle_mouse, selected_text};
+use crate::notifications::expire_notification;
+use crate::providers::{
+    ListRow, build_model_rows, first_model_index, model_is_available_for_selection,
+    selected_model_in_rows, sync_scroll_to_selection,
+};
+use crate::render::command_scroll_offset;
+use crate::render::markdown::is_empty_tool_placeholder;
+use crate::render::tool::tool_full_content;
+use crate::state::{
+    ChatLineSource, ChatMessage, ChatRole, ModalKind, Mode, Notification, PendingImage,
+    SelectionState,
+};
+use crate::theme::NOTIFICATION_TTL;
+use crate::tools::record_tool_requested;
+use crate::ui::interaction::HitAction;
+use crate::ui::{
+    floor_char_boundary, next_char_boundary, next_hump_boundary, previous_char_boundary,
+    previous_hump_boundary,
+};
+use crate::view::build_chat_lines;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use navi_core::PermissionMode;
+use navi_sdk::{
+    AgentEvent, BackgroundCommandSnapshot, BackgroundTaskStatus, ContentPart, LoadedConfig,
+    ModelMessage, ModelOption, SessionId, SessionSnapshot, SessionSnapshotInfo,
+    SubagentTranscriptItem, SubagentTranscriptKind, ToolInvocation, ToolResult,
+};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+use ratatui::prelude::Line;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+/// Isolated data dir for unit tests (avoids shared `/tmp/navi-test` races).
+fn test_data_dir() -> PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "navi-unit-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Build a lightweight test app with [`crate::testing::MockEngine`] (no real
+/// `NaviEngine` / full runtime). Prefer this for pure UI unit tests.
+pub(crate) fn test_app(input: &str) -> TuiApp {
+    let mut config = navi_sdk::NaviConfig::default();
+    config.updates.check_enabled = false;
+    config.registry.update_enabled = false;
+    let data_dir = test_data_dir();
+    let engine = Arc::new(crate::testing::MockEngine::new());
+    let mut app = TuiApp::new_with_engine(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir,
+            app_scope: navi_core::app_scope::AppScope::none(),
+            global_config_mtime: None,
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+        Vec::new(),
+        engine,
+    )
+    .expect("test app");
+    // UI unit tests assume a configured provider (matches Harness default).
+    app.provider_configured = true;
+    app.input = input.to_string();
+    app.input_cursor = app.input.len();
+    app.mode = Mode::Normal;
+    app
+}
+
+fn sample_background_command(task_id: &str) -> BackgroundCommandSnapshot {
+    BackgroundCommandSnapshot {
+        task_id: task_id.to_string(),
+        command: "cargo test".to_string(),
+        description: Some("tests".to_string()),
+        status: BackgroundTaskStatus::Running,
+        elapsed_ms: 1200,
+        timeout_ms: 60000,
+        exit_code: None,
+        stdout: "running tests\nstill running".to_string(),
+        stderr: String::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        error: None,
+    }
+}
+
+fn app_with_missing_provider_key() -> TuiApp {
+    let mut config = navi_sdk::NaviConfig::default();
+    config.model.provider = "test-provider".to_string();
+    config.model.name = "test-large".to_string();
+    config.providers = vec![navi_sdk::ProviderConfig {
+        id: "test-provider".to_string(),
+        label: "Test Provider".to_string(),
+        description: "test provider".to_string(),
+        kind: navi_sdk::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "NAVI_TEST_MISSING_PROVIDER_KEY".to_string(),
+        base_url: Some("https://example.com/v1".to_string()),
+        models: vec![navi_sdk::ProviderModelConfig {
+            name: "test-large".to_string(),
+            task_size: Some(navi_sdk::ModelTaskSize::Large),
+            context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        }],
+        ..Default::default()
+    }];
+
+    config.updates.check_enabled = false;
+    config.registry.update_enabled = false;
+    let engine = Arc::new(crate::testing::MockEngine::new());
+    TuiApp::new_with_engine(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: test_data_dir(),
+            app_scope: navi_core::app_scope::AppScope::none(),
+            global_config_mtime: None,
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+        Vec::new(),
+        engine,
+    )
+    .expect("test app")
+}
+
+fn line_text(line: &Line<'_>) -> String {
+    line.spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>()
+}
+
+fn seed_chat_cache(app: &mut TuiApp, lines: &[&str]) {
+    let mut cache = app.chat_render_cache.borrow_mut();
+    cache.lines = lines
+        .iter()
+        .map(|line| Line::from((*line).to_string()))
+        .collect();
+    cache.chat_rect = Some(Rect::new(0, 0, 80, lines.len() as u16));
+}
+
+fn terminal_buffer_text(terminal: &Terminal<TestBackend>) -> String {
+    let buffer = terminal.backend().buffer();
+    let area = buffer.area;
+    let mut out = String::new();
+    for y in 0..area.height {
+        for x in 0..area.width {
+            if let Some(cell) = buffer.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out.push('\n');
+    }
+    out
+}
+
+#[test]
+fn root_render_keeps_header_inside_viewport_margin() {
+    let mut app = test_app("");
+    app.git_branch = Some("main".to_string());
+    app.compact_state.context_window = 200_000;
+
+    let backend = TestBackend::new(40, 12);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let buffer = terminal.backend().buffer();
+    assert_eq!(buffer.cell((39, 0)).expect("cell").symbol(), " ");
+}
+
+#[test]
+fn root_render_shows_permission_mode_in_composer_footer() {
+    let mut app = test_app("");
+    app.loaded_config.config.security.permission_mode = PermissionMode::AcceptEdits;
+
+    let mut terminal = Terminal::new(TestBackend::new(96, 24)).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let screen = terminal_buffer_text(&terminal);
+
+    assert!(!screen.lines().next().unwrap_or_default().contains("mode "));
+    assert!(
+        screen.contains("accept-edits"),
+        "permission mode should render in composer footer:\n{screen}"
+    );
+}
+
+#[test]
+fn finalize_active_assistant_tracks_response_as_pending_context() {
+    let mut app = test_app("");
+    app.compact_state.update_usage(2_000);
+    app.messages.push(ChatMessage {
+        status: Some("receiving".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, "final response".to_string())
+    });
+
+    finalize_active_assistant(&mut app, 100, "");
+
+    assert_eq!(
+        app.compact_state.estimated_unsent_bytes,
+        "final response".len()
+    );
+    assert_eq!(
+        app.compact_state.total_estimated_tokens(0),
+        2_000 + ("final response".len() as u64).div_ceil(4)
+    );
+}
+
+#[test]
+fn finalize_active_assistant_preserves_streamed_text_when_turn_text_is_empty() {
+    let mut app = test_app("");
+    // Simulate: model streamed text (deltas), then made tool calls.
+    // The model response message has content from deltas.
+    app.messages.push(ChatMessage {
+        status: Some("receiving".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, "Here is my analysis".to_string())
+    });
+    // Then a tool result message was pushed (not a model response).
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "test-1".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({}),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "test-1".to_string(),
+            ok: true,
+            output: serde_json::json!({}),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    // Turn completes with empty final text (model only did tool calls).
+    finalize_active_assistant(&mut app, 100, "");
+
+    // The streamed text should be preserved, not replaced with "No response."
+    let has_streamed_text = app
+        .messages
+        .iter()
+        .any(|m| m.content == "Here is my analysis");
+    assert!(
+        has_streamed_text,
+        "streamed text should be preserved when turn text is empty"
+    );
+    let has_no_response = app.messages.iter().any(|m| m.content == "No response.");
+    assert!(
+        !has_no_response,
+        "should not show 'No response.' when prior model response has content"
+    );
+}
+
+#[test]
+fn finalize_active_assistant_promotes_thinking_when_content_empty() {
+    let mut app = test_app("");
+    app.loaded_config.config.model.provider = "charm-hyper".into();
+    app.loaded_config.config.model.name = "glm-5.2".into();
+    let mut msg = ChatMessage::new(ChatRole::Assistant, String::new());
+    msg.status = Some("thinking".to_string());
+    msg.thinking_content = "I should rewrite the layout without flex.".into();
+    app.messages.push(msg);
+
+    finalize_active_assistant(&mut app, 50, "");
+
+    let last = app.messages.last().expect("assistant message");
+    assert_eq!(
+        last.content, "I should rewrite the layout without flex.",
+        "thinking-only streams must surface as content, got: {}",
+        last.content
+    );
+    assert!(
+        last.thinking_content.is_empty(),
+        "thinking should be promoted out of the private channel"
+    );
+    assert!(
+        !last.content.contains("No response"),
+        "must not paint No response when thinking had text"
+    );
+}
+
+#[test]
+fn finalize_active_assistant_uses_turn_text_when_deltas_were_not_seen() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    finalize_active_assistant(&mut app, 100, "final answer");
+
+    assert_eq!(
+        app.messages.last().map(|message| message.content.as_str()),
+        Some("final answer")
+    );
+    assert!(app.events.iter().any(|event| matches!(
+        event,
+        AgentEvent::ModelOutput { text, .. } if text == "final answer"
+    )));
+}
+
+#[test]
+fn selected_text_extracts_multiline_text_from_chat_cache() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world", "second line"]);
+    app.selection = Some(SelectionState {
+        start: (0, 6),
+        end: (1, 6),
+        active: false,
+        bound_source: None,
+    });
+
+    assert_eq!(selected_text(&app).as_deref(), Some("world\nsecond"));
+}
+
+#[test]
+fn zero_width_mouse_selection_does_not_copy_text() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 3),
+        end: (0, 3),
+        active: true,
+        bound_source: None,
+    });
+
+    assert!(!finish_selection(&mut app, None));
+    assert_eq!(selected_text(&app), None);
+}
+
+#[test]
+fn mouse_up_outside_chat_finishes_existing_selection() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 5),
+        active: true,
+        bound_source: None,
+    });
+
+    assert!(finish_selection(&mut app, None));
+    assert_eq!(selected_text(&app).as_deref(), Some("hello"));
+    assert!(!app.selection.as_ref().unwrap().active);
+}
+
+#[test]
+fn ctrl_shift_c_copies_selection_from_lowercase_shift_key_event() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 5),
+        active: false,
+        bound_source: None,
+    });
+
+    let should_quit = handle_key(
+        &mut app,
+        KeyCode::Char('c'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+
+    assert!(!should_quit);
+    let notification = app.notification().expect("clipboard notification");
+    assert_eq!(notification.title, "Clipboard");
+}
+
+#[test]
+fn ctrl_shift_c_reaches_global_shortcut_from_question_mode() {
+    let mut app = test_app("");
+    seed_chat_cache(&mut app, &["hello world"]);
+    app.mode = Mode::Question;
+    app.selection = Some(SelectionState {
+        start: (0, 6),
+        end: (0, 11),
+        active: false,
+        bound_source: None,
+    });
+
+    let should_quit = handle_key(&mut app, KeyCode::Char('C'), KeyModifiers::CONTROL);
+
+    assert!(!should_quit);
+    let notification = app.notification().expect("clipboard notification");
+    assert_eq!(notification.title, "Clipboard");
+}
+
+#[test]
+fn text_drag_selection_stays_inside_selected_block() {
+    let mut app = test_app("");
+    // Two message blocks with sources so drag cannot bleed across them.
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "alpha".to_string()));
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "beta line".to_string(),
+    ));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = vec![
+            ratatui::text::Line::from("alpha"),
+            ratatui::text::Line::from("beta line"),
+        ];
+        cache.line_sources = vec![ChatLineSource::Message(0), ChatLineSource::Message(1)];
+        cache.chat_rect = Some(Rect::new(0, 0, 20, 4));
+        cache.width = 20;
+        cache.signature_hash = 1;
+    }
+
+    app.selection = Some(SelectionState {
+        start: (0, 0),
+        end: (0, 0),
+        active: true,
+        bound_source: Some(ChatLineSource::Message(0)),
+    });
+    let clamped =
+        crate::chat_blocks::clamp_line_to_block(&app, 1, &Some(ChatLineSource::Message(0)));
+    assert_eq!(clamped, 0, "drag must not enter the next block");
+}
+
+#[test]
+fn mouse_down_on_user_chat_message_selects_block() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "change this".to_string()));
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    // First click selects the block .
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(0)));
+    assert!(app.message_action_target.is_none());
+
+    // Second click on the same user block opens message actions.
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert_eq!(app.mode, Mode::MessageActions);
+    assert_eq!(app.message_action_target, Some(0));
+    assert_eq!(app.selected_message_action, 0);
+}
+
+#[test]
+fn mouse_down_outside_chat_clears_selected_block() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "keep me".to_string()));
+    app.selected_chat_source = Some(ChatLineSource::Message(0));
+    // No hits registered, no chat_rect → click is "outside".
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 50,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(
+        app.selected_chat_source.is_none(),
+        "click outside must deselect the chat block"
+    );
+}
+
+#[test]
+fn output_since_user_message_includes_following_assistant_only() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first question".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "first answer".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "second question".into()));
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "second answer".into(),
+    ));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "more detail".into()));
+
+    let since_first = crate::keybindings::output_since_user_message(&app, 0);
+    assert!(since_first.contains("first answer"));
+    assert!(!since_first.contains("second question"));
+    assert!(!since_first.contains("second answer"));
+
+    let since_second = crate::keybindings::output_since_user_message(&app, 2);
+    assert!(since_second.contains("second answer"));
+    assert!(since_second.contains("more detail"));
+    assert!(!since_second.contains("first answer"));
+}
+
+#[test]
+fn session_transcript_includes_user_and_assistant_blocks() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hello".into()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "world".into()));
+
+    let transcript = crate::keybindings::session_transcript(&app);
+    assert!(transcript.contains("User:\nhello"));
+    assert!(transcript.contains("Assistant:\nworld"));
+}
+
+#[test]
+fn message_actions_include_copy_response_and_session() {
+    use crate::state::MessageAction;
+    let labels: Vec<_> = MessageAction::ALL.iter().map(|a| a.label()).collect();
+    assert!(labels.contains(&"Copy response"));
+    assert!(labels.contains(&"Copy session"));
+    assert!(labels.contains(&"Copy text"));
+}
+
+#[test]
+fn message_actions_remember_last_choice() {
+    use crate::state::MessageAction;
+
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hello".into()));
+    // Prefer Copy session (index 2).
+    let copy_session = MessageAction::CopySession.index();
+    app.loaded_config.config.tui.last_message_action =
+        MessageAction::CopySession.config_key().to_string();
+
+    crate::mouse::open_message_actions(&mut app, 0);
+    assert_eq!(app.mode, Mode::MessageActions);
+    assert_eq!(app.selected_message_action, copy_session);
+
+    // Running another action updates the remembered preference.
+    app.selected_message_action = MessageAction::Copy.index();
+    crate::mouse::run_message_action(&mut app, MessageAction::Copy.index());
+    assert_eq!(
+        app.loaded_config.config.tui.last_message_action,
+        MessageAction::Copy.config_key()
+    );
+
+    // Next open lands on Copy text.
+    crate::mouse::open_message_actions(&mut app, 0);
+    assert_eq!(app.selected_message_action, MessageAction::Copy.index());
+}
+
+#[test]
+fn message_action_config_key_roundtrips() {
+    use crate::state::MessageAction;
+    for action in MessageAction::ALL {
+        let restored =
+            MessageAction::from_config_key(action.config_key()).expect("config key must roundtrip");
+        assert_eq!(restored, action);
+    }
+}
+
+#[test]
+fn command_palette_has_copy_session_and_last_response() {
+    let mut app = test_app("");
+    app.command_hub = Some(crate::commands::CommandHub::Session);
+    let rows = crate::commands::command_rows(&app);
+    let actions: Vec<_> = rows
+        .iter()
+        .filter_map(|row| match row {
+            crate::commands::CommandRow::Item(item) => Some(item.action),
+            _ => None,
+        })
+        .collect();
+    assert!(actions.contains(&CommandAction::CopySession));
+    assert!(actions.contains(&CommandAction::CopyLastResponse));
+    assert!(actions.contains(&CommandAction::Rewind));
+
+    // Also discoverable via search.
+    app.command_hub = None;
+    app.command_filter = "copy".into();
+    let search_rows = crate::commands::command_rows(&app);
+    let search_actions: Vec<_> = search_rows
+        .iter()
+        .filter_map(|row| match row {
+            crate::commands::CommandRow::Item(item) => Some(item.action),
+            _ => None,
+        })
+        .collect();
+    assert!(search_actions.contains(&CommandAction::CopySession));
+    assert!(search_actions.contains(&CommandAction::CopyLastResponse));
+}
+
+#[test]
+fn command_palette_rewind_opens_checkpoint_modal() {
+    let mut app = test_app("");
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer".to_string()),
+        ChatMessage::new(ChatRole::User, "second prompt".to_string()),
+    ];
+    app.command_hub = None;
+    app.command_filter = "rewind".into();
+    let rows = crate::commands::command_rows(&app);
+    let rewind_row = rows.iter().position(|row| {
+        matches!(
+            row,
+            crate::commands::CommandRow::Item(item) if item.action == CommandAction::Rewind
+        )
+    });
+    assert!(rewind_row.is_some(), "Rewind should be searchable");
+    app.selected_command = rewind_row.unwrap();
+    crate::keybindings::run_selected_command(&mut app);
+    assert_eq!(app.mode, Mode::Rewind);
+    let checkpoints = crate::chat::rewind_checkpoints(&app);
+    assert_eq!(checkpoints.len(), 2);
+    assert_eq!(checkpoints[0].1, "first prompt");
+    assert_eq!(checkpoints[1].1, "second prompt");
+    // Default selection is the latest checkpoint.
+    assert_eq!(app.selected_rewind, 1);
+}
+
+#[test]
+fn empty_prompt_arrow_keys_scroll_by_lines_not_blocks() {
+    // Mouse wheel is often encoded as Up/Down when mouse capture is partial or
+    // the terminal falls back to classic cursor keys. Empty-prompt arrows must
+    // never hop chat blocks.
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "second".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "third".to_string()));
+    // Populate block list via render-cache line sources.
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = (0..20).map(|i| Line::from(format!("line {i}"))).collect();
+        cache.line_sources = vec![
+            ChatLineSource::Message(0),
+            ChatLineSource::Message(0),
+            ChatLineSource::Message(1),
+            ChatLineSource::Message(1),
+            ChatLineSource::Message(2),
+            ChatLineSource::Message(2),
+        ];
+        while cache.line_sources.len() < cache.lines.len() {
+            cache.line_sources.push(ChatLineSource::None);
+        }
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 5));
+    }
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 2, "Up scrolls 2 lines");
+    assert!(
+        app.selected_chat_source.is_none(),
+        "Up must not select a chat block"
+    );
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 4);
+    assert!(app.selected_chat_source.is_none());
+
+    handle_normal_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    assert_eq!(app.scroll_offset, 2);
+    assert!(app.selected_chat_source.is_none());
+}
+
+#[test]
+fn empty_prompt_jk_still_selects_chat_blocks() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "first".to_string()));
+    app.messages
+        .push(ChatMessage::new(ChatRole::Assistant, "second".to_string()));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = vec![Line::from("a"), Line::from("b")];
+        cache.line_sources = vec![ChatLineSource::Message(0), ChatLineSource::Message(1)];
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 5));
+    }
+
+    // j with no selection starts from the top and moves forward.
+    handle_normal_key(&mut app, KeyCode::Char('j'), KeyModifiers::NONE);
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(1)));
+
+    handle_normal_key(&mut app, KeyCode::Char('k'), KeyModifiers::NONE);
+    assert_eq!(app.selected_chat_source, Some(ChatLineSource::Message(0)));
+}
+
+#[test]
+fn empty_prompt_arrows_clear_existing_block_selection() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "keep".to_string()));
+    app.selected_chat_source = Some(ChatLineSource::Message(0));
+    {
+        let mut cache = app.chat_render_cache.borrow_mut();
+        cache.lines = (0..10).map(|i| Line::from(format!("l{i}"))).collect();
+        cache.line_sources = vec![ChatLineSource::Message(0); 10];
+        cache.chat_rect = Some(Rect::new(0, 0, 40, 4));
+    }
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert!(app.selected_chat_source.is_none());
+    assert_eq!(app.scroll_offset, 2);
+    assert!(crate::view::input::composer_is_focused(&app));
+}
+
+#[test]
+fn mouse_move_on_chat_hit_tracks_hovered_interactive_block() {
+    let mut app = test_app("");
+    app.messages
+        .push(ChatMessage::new(ChatRole::User, "hover me".to_string()));
+    app.register_hit(
+        Rect::new(0, 0, 20, 1),
+        5,
+        "user message",
+        HitAction::ChatMessage(0),
+    );
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    assert_eq!(app.hovered_chat_source, Some(ChatLineSource::Message(0)));
+
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 40,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+
+    assert_eq!(app.hovered_chat_source, None);
+}
+
+#[test]
+fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
+    let mut app = test_app("");
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer one".to_string()),
+        ChatMessage::new(ChatRole::User, "second".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer two".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("first"),
+        ModelMessage::assistant("answer one"),
+        ModelMessage::user("second"),
+        ModelMessage::assistant("answer two"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "first".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+        AgentEvent::ModelOutput {
+            text: "answer one".to_string(),
+            thinking: None,
+        },
+        AgentEvent::UserTaskSubmitted {
+            text: "second".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+        AgentEvent::ModelOutput {
+            text: "answer two".to_string(),
+            thinking: None,
+        },
+    ];
+
+    revert_to_user_message(&mut app, 2).expect("revert");
+
+    assert_eq!(app.input, "second");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation_history.len(), 3);
+    assert_eq!(app.events.len(), 2);
+    assert_eq!(app.conversation_history[1].content, "first");
+    assert_eq!(app.conversation_history[2].content, "answer one");
+}
+
+#[test]
+fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "first".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "answer one".to_string()),
+        ChatMessage::new(ChatRole::User, "second".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("first"),
+        ModelMessage::assistant("answer one"),
+        ModelMessage::user("second"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "first".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+        AgentEvent::ModelOutput {
+            text: "answer one".to_string(),
+            thinking: None,
+        },
+        AgentEvent::UserTaskSubmitted {
+            text: "second".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+    ];
+
+    fork_from_user_message(&mut app, 2).expect("fork");
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert_eq!(app.input, "second");
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.conversation_history.len(), 3);
+    assert_eq!(app.events.len(), 2);
+}
+
+#[test]
+fn ctrl_n_starts_clean_session_without_old_events_or_context() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "old prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "old answer".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("old prompt"),
+        ModelMessage::assistant("old answer"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "old prompt".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+        AgentEvent::ModelOutput {
+            text: "old answer".to_string(),
+            thinking: None,
+        },
+    ];
+    app.compact_state.add_unsent_bytes(1024);
+    app.session_title = Some("Old session".to_string());
+    app.running_tools.insert(
+        "call-1".to_string(),
+        ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "run".to_string(),
+            input: serde_json::json!({"command": "echo old"}),
+        },
+    );
+
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert!(app.messages.is_empty());
+    assert!(app.events.is_empty());
+    assert_eq!(app.conversation_history.len(), 1);
+    assert!(
+        app.conversation_history
+            .first()
+            .is_some_and(|message| matches!(&message.role, navi_sdk::ModelRole::System))
+    );
+    assert_eq!(app.compact_state.estimated_unsent_bytes, 0);
+    assert!(app.compact_state.last_input_tokens.is_none());
+    assert!(app.session_title.is_none());
+    assert!(app.running_tools.is_empty());
+    assert!(app.tool_invocations.is_empty());
+}
+
+#[test]
+fn command_palette_new_session_uses_full_session_reset() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("old-session".to_string());
+    let system = app.conversation_history[0].clone();
+    app.messages = vec![
+        ChatMessage::new(ChatRole::User, "old prompt".to_string()),
+        ChatMessage::new(ChatRole::Assistant, "old answer".to_string()),
+    ];
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("old prompt"),
+        ModelMessage::assistant("old answer"),
+    ];
+    app.events = vec![
+        AgentEvent::UserTaskSubmitted {
+            text: "old prompt".to_string(),
+            content_parts: vec![],
+            submitted_at: None,
+        },
+        AgentEvent::ModelOutput {
+            text: "old answer".to_string(),
+            thinking: None,
+        },
+    ];
+    app.compact_state.context_window = 60_000;
+    app.compact_state.last_input_tokens = Some(60_000);
+    app.compact_state.add_unsent_bytes(1024);
+    app.session_title = Some("Old session".to_string());
+    app.running_tools.insert(
+        "call-1".to_string(),
+        ToolInvocation {
+            id: "call-1".to_string(),
+            tool_name: "run".to_string(),
+            input: serde_json::json!({"command": "echo old"}),
+        },
+    );
+    app.mode = Mode::Commands;
+    app.command_filter = "new session".into();
+    app.selected_command = 0;
+    assert!(
+        filtered_commands(&app)
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::NewSession))
+    );
+
+    run_selected_command(&mut app);
+
+    assert_ne!(app.session_id.as_str(), "old-session");
+    assert!(app.messages.is_empty());
+    assert!(app.events.is_empty());
+    assert_eq!(app.conversation_history.len(), 1);
+    assert_eq!(
+        app.compact_state.context_window,
+        navi_sdk::effective_context_window(&app.loaded_config.config)
+    );
+    assert_eq!(app.compact_state.estimated_unsent_bytes, 0);
+    assert!(app.compact_state.last_input_tokens.is_none());
+    assert!(app.session_title.is_none());
+    assert!(app.running_tools.is_empty());
+    assert!(app.tool_invocations.is_empty());
+}
+
+#[test]
+fn command_palette_compact_does_not_inject_tool_prompt() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "compact".to_string();
+    app.selected_command = 0;
+    app.provider_configured = true;
+    app.compact_state.context_window = 200_000;
+    app.compact_state.last_input_tokens = Some(10_000);
+    // Enough history to allow compact.
+    app.conversation_history
+        .push(navi_sdk::ModelMessage::user("first"));
+    app.conversation_history
+        .push(navi_sdk::ModelMessage::assistant("second"));
+
+    assert!(!run_selected_command(&mut app));
+
+    // Manual compact is a direct engine call (session model), not a chat prompt
+    // that asks the model to call new_context_window. Without a Tokio runtime
+    // the spawn is skipped, but we must never inject the old tool prompt.
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.input.is_empty());
+    assert!(
+        !app.messages
+            .iter()
+            .any(|m| m.content.contains("new_context_window")),
+        "compact must not inject a tool-call prompt into chat"
+    );
+}
+
+#[test]
+fn stale_stream_events_do_not_mutate_new_session() {
+    let mut app = test_app("");
+    let current_session = app.session_id.as_str().to_string();
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::AgentForSession {
+            session_id: "old-session".to_string(),
+            event: AgentEvent::ModelDelta {
+                text: "stale".to_string(),
+            },
+        },
+    );
+
+    assert!(app.messages.is_empty());
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::AgentForSession {
+            session_id: current_session,
+            event: AgentEvent::ModelDelta {
+                text: "current".to_string(),
+            },
+        },
+    );
+
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "current");
+}
+
+#[test]
+fn loading_saved_session_restores_snapshot_session_id() {
+    let mut app = test_app("");
+    app.session_id = SessionId::new("transient-session".to_string());
+    let snapshot = SessionSnapshot {
+        version: SessionSnapshot::CURRENT_VERSION,
+        id: SessionId::new("saved-session".to_string()),
+        title: Some("Saved".to_string()),
+        project: PathBuf::from("/tmp/test-project"),
+        created_at: 1,
+        updated_at: 2,
+        events: vec![AgentEvent::UserTaskSubmitted {
+            text: "saved prompt".to_string(),
+            content_parts: vec![],
+            submitted_at: Some(1_704_067_200),
+        }],
+        memory: None,
+        goal: None,
+        usage: None,
+    };
+
+    crate::persistence::load_session(&mut app, &snapshot);
+
+    assert_eq!(app.session_id.as_str(), "saved-session");
+    assert_eq!(app.session_title.as_deref(), Some("Saved"));
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].content, "saved prompt");
+    assert_eq!(
+        app.messages[0].sent_at,
+        Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_704_067_200)),
+        "submitted_at must restore wall-clock stamp on reload"
+    );
+    assert_eq!(app.conversation_history.len(), 2);
+}
+
+#[test]
+fn checkpoint_session_now_persists_user_prompt_before_turn() {
+    let mut app = test_app("");
+    let sid = SessionId::new("checkpoint-now-session".to_string());
+    app.session_id = sid.clone();
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: "persist me before tools run".to_string(),
+        content_parts: vec![],
+        submitted_at: Some(1),
+    });
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::User,
+        "persist me before tools run".to_string(),
+    ));
+
+    crate::persistence::checkpoint_session_now(&mut app);
+    assert!(app.session_checkpoint_due.is_none());
+
+    let loaded = app
+        .session_store
+        .load(sid.as_str())
+        .expect("checkpoint must write session file");
+    assert_eq!(loaded.events.len(), 1);
+    match &loaded.events[0] {
+        AgentEvent::UserTaskSubmitted { text, .. } => {
+            assert_eq!(text, "persist me before tools run");
+        }
+        other => panic!("expected UserTaskSubmitted, got {other:?}"),
+    }
+}
+
+#[test]
+fn schedule_session_checkpoint_flushes_when_due() {
+    let mut app = test_app("");
+    let sid = SessionId::new("checkpoint-debounce-session".to_string());
+    app.session_id = sid.clone();
+    app.events.push(AgentEvent::UserTaskSubmitted {
+        text: "debounced".to_string(),
+        content_parts: vec![],
+        submitted_at: Some(1),
+    });
+    app.messages.push(crate::state::ChatMessage::new(
+        crate::state::ChatRole::User,
+        "debounced".to_string(),
+    ));
+
+    crate::persistence::schedule_session_checkpoint(&mut app);
+    assert!(app.session_checkpoint_due.is_some());
+    // Not due yet — file should not exist (or still lack this session).
+    assert!(
+        app.session_store.load(sid.as_str()).is_err(),
+        "debounce must not write immediately"
+    );
+
+    // Force due and flush.
+    app.session_checkpoint_due =
+        Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    crate::persistence::flush_session_checkpoint_if_due(&mut app);
+    assert!(app.session_checkpoint_due.is_none());
+    let loaded = app
+        .session_store
+        .load(sid.as_str())
+        .expect("due flush writes");
+    assert_eq!(loaded.events.len(), 1);
+}
+
+#[test]
+fn filtered_sessions_prioritizes_current_project_sessions() {
+    fn snapshot(id: &str, title: &str, project: &str, updated_at: u64) -> SessionSnapshotInfo {
+        SessionSnapshotInfo {
+            id: SessionId::new(id.to_string()),
+            title: Some(title.to_string()),
+            project: PathBuf::from(project),
+            created_at: updated_at.saturating_sub(10),
+            updated_at,
+        }
+    }
+
+    let mut app = test_app("");
+    app.project_dir = PathBuf::from("/tmp/test-project");
+    app.saved_sessions = vec![
+        snapshot("external-new", "External New", "/tmp/other-project", 400),
+        snapshot("current-old", "Current Old", "/tmp/test-project", 100),
+        snapshot("current-new", "Current New", "/tmp/test-project/.", 300),
+        snapshot("external-old", "External Old", "/tmp/another-project", 200),
+    ];
+
+    let sessions = app.filtered_sessions();
+    let ids = sessions
+        .iter()
+        .map(|snapshot| snapshot.id.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ids,
+        vec!["current-new", "current-old", "external-new", "external-old"]
+    );
+}
+
+#[test]
+fn model_delta_after_tool_result_creates_visible_response() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "content": "readme" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let message = ensure_tail_model_response(&mut app);
+    message.content.push_str("final answer");
+
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(
+        app.messages.last().map(|message| message.content.as_str()),
+        Some("final answer")
+    );
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Read README.md"));
+    assert!(text.contains("final answer"));
+}
+
+#[test]
+fn update_status_after_tool_result_does_not_rewrite_tool_row() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "content": "readme" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    update_active_assistant_status(&mut app);
+
+    assert_eq!(
+        app.messages
+            .first()
+            .and_then(|message| message.status.as_deref()),
+        Some("tool result")
+    );
+    assert_eq!(
+        app.messages
+            .last()
+            .and_then(|message| message.status.as_deref()),
+        Some("thinking")
+    );
+    assert!(is_empty_tool_placeholder(app.messages.last().unwrap()));
+}
+
+#[test]
+fn consecutive_tool_requests_share_one_assistant_history_message() {
+    let mut app = test_app("");
+    let active = ensure_tail_model_response(&mut app);
+    active.content = "I need project files.".to_string();
+    active.thinking_content = "hidden reasoning".to_string();
+
+    let first = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "fs_browser".to_string(),
+        input: serde_json::json!({"action": "list"}),
+    };
+    let second = ToolInvocation {
+        id: "call-2".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+
+    record_tool_requested(&mut app, first);
+    record_tool_requested(&mut app, second);
+
+    assert_eq!(app.conversation_history.len(), 2);
+    let assistant = app
+        .conversation_history
+        .last()
+        .expect("assistant tool call");
+    assert_eq!(assistant.content, "I need project files.");
+    assert_eq!(
+        assistant.thinking_content.as_deref(),
+        Some("hidden reasoning")
+    );
+    assert_eq!(assistant.tool_calls.len(), 2);
+    assert_eq!(assistant.tool_calls[0].id, "call-1");
+    assert_eq!(assistant.tool_calls[1].id, "call-2");
+}
+
+#[test]
+fn camel_hump_next_boundary_splits_identifiers_and_words() {
+    let value = "fooBar_bazQUX99 alpha";
+
+    assert_eq!(next_hump_boundary(value, 0), 3);
+    assert_eq!(next_hump_boundary(value, 3), 6);
+    assert_eq!(next_hump_boundary(value, 7), 10);
+    assert_eq!(next_hump_boundary(value, 10), 13);
+    assert_eq!(next_hump_boundary(value, 13), 15);
+    assert_eq!(next_hump_boundary(value, 15), value.len());
+}
+
+#[test]
+fn camel_hump_previous_boundary_splits_identifiers_and_words() {
+    let value = "fooBar_bazQUX99 alpha";
+
+    assert_eq!(previous_hump_boundary(value, value.len()), 16);
+    assert_eq!(previous_hump_boundary(value, 16), 13);
+    assert_eq!(previous_hump_boundary(value, 13), 10);
+    assert_eq!(previous_hump_boundary(value, 10), 7);
+    assert_eq!(previous_hump_boundary(value, 7), 3);
+    assert_eq!(previous_hump_boundary(value, 3), 0);
+}
+
+#[test]
+fn char_boundary_helpers_handle_multibyte_input() {
+    let value = "abçDef";
+    let after_cedilla = "abç".len();
+
+    assert_eq!(next_hump_boundary(value, 0), after_cedilla);
+    assert_eq!(next_char_boundary(value, 2), Some(after_cedilla));
+    assert_eq!(previous_char_boundary(value, after_cedilla), Some(2));
+    assert_eq!(floor_char_boundary(value, after_cedilla - 1), 2);
+}
+
+#[test]
+fn control_backspace_aliases_delete_previous_camel_hump() {
+    for code in [
+        KeyCode::Backspace,
+        KeyCode::Char('h'),
+        KeyCode::Char('w'),
+        KeyCode::Char('\u{7f}'),
+    ] {
+        let mut app = test_app("cargo test -p navi_tui");
+        handle_normal_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(app.input, "cargo test -p navi_");
+        assert_eq!(app.input_cursor, "cargo test -p navi_".len());
+
+        handle_normal_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(app.input, "cargo test -p ");
+        assert_eq!(app.input_cursor, "cargo test -p ".len());
+    }
+}
+
+#[test]
+fn alt_backspace_deletes_until_previous_space_not_separator() {
+    for code in [
+        KeyCode::Backspace,
+        KeyCode::Char('h'),
+        KeyCode::Char('\u{7f}'),
+    ] {
+        let mut app = test_app("cargo test -p navi_tui");
+        handle_normal_key(&mut app, code, KeyModifiers::ALT);
+        assert_eq!(app.input, "cargo test -p ");
+        assert_eq!(app.input_cursor, "cargo test -p ".len());
+
+        handle_normal_key(&mut app, code, KeyModifiers::ALT);
+        assert_eq!(app.input, "cargo test ");
+        assert_eq!(app.input_cursor, "cargo test ".len());
+    }
+}
+
+#[test]
+fn alt_arrows_and_letters_move_by_camel_humps() {
+    let mut app = test_app("fooBar");
+
+    // Alt+Left and Alt+b still navigate by camel humps.
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::ALT);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::ALT);
+    assert_eq!(app.input_cursor, 6);
+
+    let mut app2 = test_app("fooBar");
+    handle_normal_key(&mut app2, KeyCode::Char('b'), KeyModifiers::ALT);
+    assert_eq!(app2.input_cursor, 3);
+
+    handle_normal_key(&mut app2, KeyCode::Char('f'), KeyModifiers::ALT);
+    assert_eq!(app2.input_cursor, 6);
+}
+
+#[test]
+fn alt_punctuation_inserts_character_not_shortcut() {
+    // Alt+punctuation must fall through to character insertion so that
+    // compose-key sequences (e.g. Alt+, → ç on US International) work.
+    let mut app = test_app("");
+
+    handle_normal_key(&mut app, KeyCode::Char(','), KeyModifiers::ALT);
+    assert_eq!(app.input, ",");
+    assert_eq!(app.input_cursor, 1);
+
+    handle_normal_key(&mut app, KeyCode::Char('.'), KeyModifiers::ALT);
+    assert_eq!(app.input, ",.");
+    assert_eq!(app.input_cursor, 2);
+
+    // Composed characters (sent by the OS with ALT modifier still set)
+    // must also be inserted, not consumed.
+    let mut app2 = test_app("");
+    handle_normal_key(&mut app2, KeyCode::Char('ç'), KeyModifiers::ALT);
+    assert_eq!(app2.input, "ç");
+}
+
+#[test]
+fn altgr_compose_inserts_character_not_swallowed_by_ctrl_fallthrough() {
+    // Windows reports AltGr (Right Alt) as Ctrl+Alt. When both modifiers are
+    // present, the key is a compose sequence (e.g. Alt+, → ç on US
+    // International) and must fall through to character insertion — not be
+    // swallowed by the unmatched Ctrl shortcut fallthrough.
+    let mut app = test_app("");
+
+    // AltGr+, → ç: terminal may send either the composed char or the base
+    // char. Both must insert, not be consumed.
+    handle_normal_key(
+        &mut app,
+        KeyCode::Char('ç'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    assert_eq!(app.input, "ç");
+    // ç is 2 bytes in UTF-8; input_cursor is byte-based
+    assert_eq!(app.input_cursor, 2);
+
+    // AltGr+, → , (if terminal sends base char with Ctrl+Alt)
+    let mut app2 = test_app("");
+    handle_normal_key(
+        &mut app2,
+        KeyCode::Char(','),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    assert_eq!(app2.input, ",");
+    assert_eq!(app2.input_cursor, 1);
+}
+
+#[test]
+fn altgr_letter_inserts_character_not_treated_as_alt_shortcut() {
+    // AltGr+b on some layouts produces a composed character. When Ctrl+Alt
+    // is present, Alt shortcut handling (Alt+B = previous hump) must be
+    // skipped so the character is inserted.
+    let mut app = test_app("hello");
+
+    // AltGr+b with Ctrl+Alt — should insert 'b', not jump to previous hump
+    handle_normal_key(
+        &mut app,
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    assert_eq!(app.input, "hellob");
+    assert_eq!(app.input_cursor, 6);
+}
+
+#[test]
+fn altgr_backspace_does_not_delete_word() {
+    // AltGr+Backspace with Ctrl+Alt should NOT trigger Alt+Backspace word
+    // deletion. It should fall through to the normal Backspace handler.
+    let mut app = test_app("hello world");
+    app.input_cursor = 11;
+
+    let cursor_before = app.input_cursor;
+    handle_normal_key(
+        &mut app,
+        KeyCode::Backspace,
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
+    // Should delete one char (normal Backspace), not a whole word
+    assert_eq!(app.input, "hello worl");
+    assert_eq!(app.input_cursor, cursor_before - 1);
+}
+
+#[test]
+fn control_arrows_stop_at_camel_humps_and_special_characters() {
+    let mut app = test_app("fooBar_baz");
+    app.input_cursor = 0;
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 6);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 7);
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 10);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 7);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 6);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 3);
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::CONTROL);
+    assert_eq!(app.input_cursor, 0);
+}
+
+#[test]
+fn submit_without_provider_adds_error_message() {
+    let mut app = test_app("hello");
+    app.provider_configured = false;
+    submit_message(&mut app);
+    assert_eq!(app.messages.len(), 2); // user + error
+    assert_eq!(app.messages[0].role, ChatRole::User);
+    assert_eq!(app.messages[1].role, ChatRole::Assistant);
+    assert!(app.messages[1].content.contains("No API key"));
+}
+
+#[test]
+fn missing_api_key_does_not_open_prompt_on_startup() {
+    let app = app_with_missing_provider_key();
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!app.provider_configured);
+    assert!(app.pending_model_selection.is_none());
+}
+
+#[test]
+fn selecting_model_without_provider_key_opens_key_prompt() {
+    let mut app = app_with_missing_provider_key();
+    app.mode = Mode::Models;
+
+    // Models from unauthenticated providers (except free/public ones) are
+    // hidden in the picker. The selected test-provider model is filtered out,
+    // so Enter is a no-op and mode stays Models.
+    handle_model_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Models);
+    // Verify the test-provider model is not in the visible rows
+    let rows = build_model_rows(&app);
+    assert!(!rows.iter().any(|row| match row {
+        ListRow::Model { index } => app.models[*index].provider_id == "test-provider",
+        _ => false,
+    }));
+}
+
+#[test]
+fn model_picker_filters_by_model_and_provider_text() {
+    let mut app = test_app("");
+    app.models.push(ModelOption {
+        name: "DeepSeek V4 Flash Free".to_string(),
+        provider_id: "opencode".to_string(),
+        provider_label: "OpenCode Zen".to_string(),
+        provider_description: "Free public models".to_string(),
+        task_size: Some(navi_sdk::ModelTaskSize::Small),
+        context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
+    });
+    open_model_picker(&mut app);
+
+    // Filter by a provider that requires an API key the test app doesn't have.
+    // "google-gemini" models should only appear if the Gemini API key is set.
+    app.model_filter = "google-gemini".to_string();
+    let rows = build_model_rows(&app);
+    // If the Gemini provider has no API key, its models should not appear.
+    if !app.authenticated_providers.contains("google-gemini") {
+        assert!(!rows.iter().any(|row| match row {
+            ListRow::Header { label, .. } => label.contains("Gemini"),
+            ListRow::Spacer | ListRow::Model { .. } => false,
+        }));
+        assert!(!rows.iter().any(|row| match row {
+            ListRow::Model { index } => app.models[*index].provider_id.contains("google-gemini"),
+            ListRow::Header { .. } | ListRow::Spacer => false,
+        }));
+    }
+
+    // Free models should still appear
+    app.model_filter = "free".to_string();
+    let rows = build_model_rows(&app);
+    assert!(rows.iter().any(|row| {
+        match row {
+            ListRow::Model { index } => app.models[*index]
+                .name
+                .to_ascii_lowercase()
+                .contains("free"),
+            ListRow::Header { .. } | ListRow::Spacer => false,
+        }
+    }));
+}
+
+#[test]
+fn model_picker_clips_long_rows_inside_modal_border() {
+    // Build with a mock that reports credentials present so the synthetic
+    // provider stays selectable after `open_model_picker` refreshes auth state.
+    let mock = Arc::new(crate::testing::MockEngine::new());
+    mock.set_credentials_configured(true);
+    let mut config = navi_sdk::NaviConfig::default();
+    config.updates.check_enabled = false;
+    config.registry.update_enabled = false;
+    // Register the synthetic provider in the config so
+    // `refresh_authenticated_providers` (called by `open_model_picker`)
+    // can find it in the catalog and keep it authenticated.
+    config.providers.push(navi_sdk::ProviderConfig {
+        id: "verbose-provider".to_string(),
+        label: "Extremely Verbose Provider Label That Should Never Spill Past The Modal Border"
+            .to_string(),
+        description: "provider used for clipping tests".to_string(),
+        kind: navi_sdk::ProviderKind::OpenAiChatCompletions,
+        api_key_env: "VERBOSE_PROVIDER_API_KEY".to_string(),
+        base_url: Some("https://example.com/v1".to_string()),
+        models: vec![navi_sdk::ProviderModelConfig {
+            name: "provider-family/this-is-an-intentionally-overlong-model-name-with-many-segments"
+                .to_string(),
+            task_size: Some(navi_sdk::ModelTaskSize::Large),
+            context_window_tokens: None,
+            max_output_tokens: None,
+            recommended_temperature: None,
+            supports_thinking: None,
+            supports_images: None,
+            supports_audio: None,
+            supports_video: None,
+            supports_documents: None,
+            tool_prompt_manifest: None,
+            pricing_input_per_1m: None,
+            pricing_output_per_1m: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        }],
+        ..Default::default()
+    });
+    let mut app = TuiApp::new_with_engine(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: test_data_dir(),
+            app_scope: navi_core::app_scope::AppScope::none(),
+            global_config_mtime: None,
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+        Vec::new(),
+        mock,
+    )
+    .expect("test app");
+    app.provider_configured = true;
+    app.models.clear();
+    app.authenticated_providers
+        .insert("verbose-provider".to_string());
+    app.models.push(ModelOption {
+        name: "provider-family/this-is-an-intentionally-overlong-model-name-with-many-segments"
+            .to_string(),
+        provider_id: "verbose-provider".to_string(),
+        provider_label:
+            "Extremely Verbose Provider Label That Should Never Spill Past The Modal Border"
+                .to_string(),
+        provider_description: "provider used for clipping tests".to_string(),
+        task_size: Some(navi_sdk::ModelTaskSize::Large),
+        context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
+    });
+    app.loaded_config.config.model.provider = "verbose-provider".to_string();
+    app.loaded_config.config.model.name = app.models[0].name.clone();
+    app.loaded_config.config.tui.recent_model_ids =
+        vec![format!("verbose-provider:{}", app.models[0].name)];
+    open_model_picker(&mut app);
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let modal = crate::render::modal_rect(Rect::new(0, 0, 80, 24), 72, 22);
+    let right_x = modal.right().saturating_sub(1);
+    let buffer = terminal.backend().buffer();
+    for y in modal.top()..modal.bottom() {
+        let symbol = buffer[(right_x, y)].symbol();
+        assert!(
+            matches!(symbol, "│" | "╮" | "╯"),
+            "modal right border was overwritten at y={y}: {symbol:?}\n{}",
+            terminal_buffer_text(&terminal)
+        );
+    }
+    // Content must stay inside the modal: right border intact (checked above)
+    // and the tail of the long provider label must be clipped away.
+    let screen = terminal_buffer_text(&terminal);
+    assert!(
+        !screen.contains("The Modal Border"),
+        "long provider label was not clipped (tail still visible):\n{screen}"
+    );
+    assert!(
+        screen.contains("Extremely Verbose") || screen.contains("…"),
+        "expected clipped long label on screen:\n{screen}"
+    );
+}
+
+#[test]
+fn model_picker_renders_search_separators_and_footer_hints() {
+    let mut app = test_app("");
+    app.models.clear();
+    app.loaded_config.config.tui.recent_model_ids.clear();
+    app.models.push(ModelOption {
+        name: "kimi-k2.6".to_string(),
+        provider_id: "charm-hyper".to_string(),
+        provider_label: "Charm Hyper".to_string(),
+        provider_description: "provider used for model picker layout tests".to_string(),
+        task_size: Some(navi_sdk::ModelTaskSize::Large),
+        context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
+    });
+    open_model_picker(&mut app);
+    app.authenticated_providers
+        .insert("charm-hyper".to_string());
+
+    let backend = TestBackend::new(92, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+
+    let screen = terminal_buffer_text(&terminal);
+    assert!(
+        screen.contains("> Choose a model or provider"),
+        "search prompt did not render with the expected visual:\n{screen}"
+    );
+    assert!(
+        screen.contains("Charm Hyper ─"),
+        "provider separator did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("↑/↓ choose"),
+        "footer choose hint did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("connect provider ctrl+e"),
+        "footer connect provider hint did not render:\n{screen}"
+    );
+    assert!(
+        screen.contains("favorite ctrl+f"),
+        "footer favorite hint did not render:\n{screen}"
+    );
+}
+
+#[test]
+fn model_scroll_sync_does_not_underflow_near_top() {
+    let mut app = test_app("");
+    // Synthetic authenticated models so row index ≥ 13 exists without relying
+    // on free catalog size or open_model_picker auth refresh.
+    app.authenticated_providers
+        .insert(navi_sdk::canonical_provider_id("scroll-provider").to_string());
+    app.models.clear();
+    for i in 0..20 {
+        app.models.push(ModelOption {
+            name: format!("scroll-model-{i}"),
+            provider_id: "scroll-provider".to_string(),
+            provider_label: "Scroll Provider".to_string(),
+            provider_description: "synthetic models for scroll tests".to_string(),
+            task_size: Some(navi_sdk::ModelTaskSize::Small),
+            context_window_tokens: None,
+            supports_thinking: None,
+            reasoning_levels: Vec::new(),
+            default_reasoning_effort: None,
+        });
+    }
+    app.mode = Mode::Models;
+    let rows = build_model_rows(&app);
+    let (selected_row, selected_model) = rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            ListRow::Model { index } if row >= 13 => Some((row, *index)),
+            _ => None,
+        })
+        .expect("model near viewport edge");
+    app.selected_model = selected_model;
+    app.model_scroll = 0;
+
+    sync_scroll_to_selection(&mut app, &rows, 14);
+
+    assert!(app.model_scroll <= selected_row);
+}
+
+#[test]
+fn model_scroll_sync_clamps_large_scroll_values() {
+    let mut app = test_app("");
+    open_model_picker(&mut app);
+    let rows = build_model_rows(&app);
+    app.selected_model = first_model_index(&rows).expect("model");
+    app.model_scroll = usize::MAX;
+
+    sync_scroll_to_selection(&mut app, &rows, 14);
+
+    assert!(app.model_scroll <= rows.len().saturating_sub(14));
+}
+
+#[test]
+fn enter_sends_shift_enter_and_ctrl_j_insert_newlines() {
+    let mut app = test_app("one");
+    app.provider_configured = false;
+
+    handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.messages[0].content, "one");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("one");
+    insert_input_char(&mut app, 't');
+    insert_input_char(&mut app, 'w');
+    insert_input_char(&mut app, 'o');
+    handle_normal_key(&mut app, KeyCode::Enter, KeyModifiers::SHIFT);
+    insert_input_char(&mut app, 't');
+    insert_input_char(&mut app, 'h');
+    insert_input_char(&mut app, 'r');
+    insert_input_char(&mut app, 'e');
+    insert_input_char(&mut app, 'e');
+
+    assert_eq!(app.input, "onetwo\nthree");
+    assert_eq!(app.input_cursor, app.input.len());
+
+    handle_normal_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+    assert_eq!(app.input, "onetwo\nthree\n");
+}
+
+#[test]
+fn ctrl_enter_sends_non_empty_message() {
+    let mut app = test_app("one");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(app.messages[0].content, "one");
+    assert!(app.input.is_empty());
+
+    let mut app = test_app("two");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('j'), KeyModifiers::CONTROL);
+    assert_eq!(app.input, "two\n");
+    assert!(app.messages.is_empty());
+
+    let mut app = test_app("three");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::CONTROL);
+    assert_eq!(app.input, "three\n");
+    assert!(app.messages.is_empty());
+
+    // Char('\r')+CONTROL is Ctrl+M (model picker), not a newline insert.
+    let mut app = test_app("four");
+    app.provider_configured = false;
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+    assert_eq!(app.input, "four", "composer must be unchanged");
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn ctrl_a_selects_entire_input_and_typing_replaces_it() {
+    let mut app = test_app("replace me");
+
+    handle_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.input_selection, Some((0, "replace me".len())));
+
+    handle_normal_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert_eq!(app.input, "x");
+    assert_eq!(app.input_cursor, 1);
+    assert!(app.input_selection.is_none());
+}
+
+#[test]
+fn empty_ctrl_enter_opens_models_as_ctrl_m() {
+    // Empty Ctrl+Enter is a common terminal encoding for Ctrl+M (model picker).
+    // Non-empty Ctrl+Enter inserts a newline (see ctrl_enter_inserts_newline_when_draft).
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::Models);
+    assert!(app.messages.is_empty());
+}
+
+#[test]
+fn ctrl_o_toggles_full_tool_view() {
+    let mut app = test_app("");
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(app.full_tool_view);
+    assert!(app.notification().is_some());
+
+    handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn alt_t_toggles_thinking_visibility() {
+    let mut app = test_app("");
+    app.show_thinking = true;
+
+    handle_key(&mut app, KeyCode::Char('t'), KeyModifiers::ALT);
+    assert!(!app.show_thinking);
+    assert!(app.notification().is_some());
+
+    handle_key(&mut app, KeyCode::Char('T'), KeyModifiers::ALT);
+    assert!(app.show_thinking);
+}
+
+#[test]
+fn ctrl_o_in_provider_modal_does_not_toggle_full_tool_view() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(!app.full_tool_view);
+    app.provider_filter = "anthropic".to_string();
+    app.selected_provider_setting = 0;
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(
+        !app.full_tool_view,
+        "Ctrl+O in Providers must start OAuth, not toggle tool expand"
+    );
+
+    handle_key(&mut app, KeyCode::Char('O'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Providers);
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn ctrl_o_in_oauth_modal_does_not_toggle_full_tool_view() {
+    let mut app = test_app("");
+    app.mode = Mode::OAuth;
+    app.oauth_state = Some(crate::state::OAuthUiState {
+        provider_id: "xai".into(),
+        verification_uri: "https://accounts.x.ai/oauth2/device?user_code=AB12-CD34".into(),
+        user_code: "AB12-CD34".into(),
+        paste_slot: None,
+        paste_status: None,
+    });
+    assert!(!app.full_tool_view);
+
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::OAuth);
+    assert!(
+        !app.full_tool_view,
+        "Ctrl+O in OAuth modal must reopen browser, not toggle tool expand"
+    );
+}
+
+#[test]
+fn ctrl_o_on_provider_header_resolves_xai_for_oauth() {
+    use navi_sdk::{provider_catalog, provider_supports_device_oauth};
+
+    assert!(
+        provider_supports_device_oauth("xai"),
+        "xAI must support device/browser OAuth"
+    );
+
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+
+    // Filter to xAI; cursor often lands on a section header (index 0).
+    app.provider_filter = "xai".to_string();
+    app.selected_provider_setting = 0;
+    let rows = app.filtered_providers();
+    assert!(
+        !rows.is_empty(),
+        "filtering providers by 'xai' should yield rows"
+    );
+
+    // Even with selection on a header, a provider row must be resolvable.
+    let catalog = provider_catalog(&app.loaded_config.config);
+    let has_xai = catalog.iter().any(|p| p.id == "xai");
+    assert!(has_xai, "catalog must include xai provider");
+    let resolved = rows.iter().find_map(|row| match row {
+        crate::providers::ProviderListRow::Provider { index } => catalog.get(*index),
+        crate::providers::ProviderListRow::Account { provider_index, .. } => {
+            catalog.get(*provider_index)
+        }
+        crate::providers::ProviderListRow::Header { .. } => None,
+    });
+    assert_eq!(resolved.map(|p| p.id.as_str()), Some("xai"));
+
+    // Drive Ctrl+O under a Tokio runtime so spawn does not panic.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let _guard = runtime.enter();
+    handle_key(&mut app, KeyCode::Char('o'), KeyModifiers::CONTROL);
+    assert!(!app.full_tool_view);
+    assert!(
+        app.is_loading || app.notification().is_some(),
+        "Ctrl+O on xAI should start OAuth or show a status notification"
+    );
+}
+
+#[test]
+fn slash_opens_commands_and_question_mark_opens_help() {
+    let mut app = test_app("");
+    assert_eq!(app.mode, Mode::Normal);
+
+    // '?' with empty input opens shortcuts help
+    handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Help);
+
+    handle_help_key(&mut app, KeyCode::Char('?'));
+    assert_eq!(app.mode, Mode::Normal);
+
+    // Esc goes back to normal
+    app.mode = Mode::Normal;
+
+    // '/' with empty input opens command palette
+    handle_key(&mut app, KeyCode::Char('/'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Commands);
+
+    // Escape goes back to normal
+    app.mode = Mode::Normal;
+
+    // Pressing '?' when input is NOT empty inserts it as text
+    app.input = "hello".to_string();
+    app.input_cursor = 5;
+    handle_key(&mut app, KeyCode::Char('?'), KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.input, "hello?");
+}
+
+#[test]
+fn ctrl_p_opens_commands_and_tab_is_ignored_in_composer() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('p'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Commands);
+    assert!(app.command_filter.is_empty());
+    assert_eq!(app.selected_command, 0);
+
+    app.mode = Mode::Normal;
+    app.input = "draft".to_string();
+    app.input_cursor = app.input.len();
+    handle_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.input, "draft");
+}
+
+#[test]
+fn ctrl_m_opens_model_picker_case_insensitive() {
+    let mut app = test_app("");
+
+    // Lowercase Ctrl+m
+    handle_key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+
+    // Uppercase Ctrl+M (common terminal encoding)
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    handle_key(&mut app, KeyCode::Char('M'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+
+    // ASCII CR (0x0D) — what many terminals emit for Ctrl+M
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::CONTROL);
+    assert_eq!(
+        app.mode,
+        Mode::Models,
+        "Ctrl+M as Char('\\r') must open models, not insert a newline"
+    );
+
+    // Enter+CONTROL with empty composer (another common Ctrl+M encoding)
+    app.mode = Mode::Normal;
+    crate::keybindings::close_all_modals(&mut app);
+    app.input.clear();
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(
+        app.mode,
+        Mode::Models,
+        "empty Ctrl+Enter must open models (Ctrl+M compatibility)"
+    );
+
+    // Works even from another modal
+    app.mode = Mode::Settings;
+    app.modal_stack.open(ModalKind::Settings);
+    handle_key(&mut app, KeyCode::Char('m'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Models);
+}
+
+#[test]
+fn global_ctrl_shortcuts_open_from_normal_mode() {
+    // Regression: only ctrl+s appeared to work when terminals remapped chords.
+    // Every documented global shortcut must fire from Normal mode.
+    let cases: &[(KeyCode, Mode)] = &[
+        (KeyCode::Char('p'), Mode::Commands),
+        (KeyCode::Char('m'), Mode::Models),
+        (KeyCode::Char('s'), Mode::Sessions),
+        (KeyCode::Char('d'), Mode::Debug),
+        (KeyCode::Char('t'), Mode::BackgroundCommands),
+        (KeyCode::Char('b'), Mode::ModelRouting),
+        (KeyCode::Char('q'), Mode::MessageQueue),
+        (KeyCode::Char('.'), Mode::Help),
+        (KeyCode::Char('x'), Mode::Help), // classic-control fallback for Ctrl+.
+        (KeyCode::Char(','), Mode::Settings),
+    ];
+    for &(code, expected) in cases {
+        let mut app = test_app("");
+        handle_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(
+            app.mode, expected,
+            "Ctrl+{code:?} should open {expected:?}, got {:?}",
+            app.mode
+        );
+    }
+
+    // Ctrl+N starts a new session and returns to Normal (closes modals).
+    let mut app = test_app("draft");
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.input.is_empty(), "new session clears the composer");
+}
+
+#[test]
+fn global_ctrl_shortcuts_work_while_composer_has_text() {
+    let cases: &[(KeyCode, Mode)] = &[
+        (KeyCode::Char('p'), Mode::Commands),
+        (KeyCode::Char('m'), Mode::Models),
+        (KeyCode::Char('s'), Mode::Sessions),
+        (KeyCode::Char('d'), Mode::Debug),
+        (KeyCode::Char('t'), Mode::BackgroundCommands),
+        (KeyCode::Char('b'), Mode::ModelRouting),
+        (KeyCode::Char('q'), Mode::MessageQueue),
+        (KeyCode::Char('.'), Mode::Help),
+        (KeyCode::Char('x'), Mode::Help),
+        (KeyCode::Char(','), Mode::Settings),
+    ];
+    for &(code, expected) in cases {
+        let mut app = test_app("draft text still here");
+        app.input_cursor = app.input.len();
+        handle_key(&mut app, code, KeyModifiers::CONTROL);
+        assert_eq!(
+            app.mode, expected,
+            "Ctrl+{code:?} with non-empty composer should open {expected:?}, got {:?}",
+            app.mode
+        );
+        assert_eq!(app.input, "draft text still here");
+    }
+}
+
+#[test]
+fn bare_ascii_control_bytes_open_global_shortcuts() {
+    let cases: &[(char, Mode)] = &[
+        ('\u{10}', Mode::Commands),           // Ctrl+P
+        ('\u{13}', Mode::Sessions),           // Ctrl+S
+        ('\u{04}', Mode::Debug),              // Ctrl+D
+        ('\u{14}', Mode::BackgroundCommands), // Ctrl+T
+        ('\u{02}', Mode::ModelRouting),       // Ctrl+B
+        ('\u{11}', Mode::MessageQueue),       // Ctrl+Q
+        ('\u{18}', Mode::Help),               // Ctrl+X fallback
+    ];
+    for &(ch, expected) in cases {
+        let mut app = test_app("typing…");
+        app.input_cursor = app.input.len();
+        handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+        assert_eq!(
+            app.mode, expected,
+            "bare control U+{:02X} should open {expected:?}, got {:?}",
+            ch as u32, app.mode
+        );
+        assert_eq!(app.input, "typing…");
+    }
+
+    let mut app = test_app("keep");
+    handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::NONE);
+    assert_ne!(app.mode, Mode::Models, "bare CR must not open models");
+}
+
+#[test]
+fn wants_mouse_free_motion_with_pending_image() {
+    use crate::event_loop::wants_mouse_free_motion;
+    use crate::state::PendingImage;
+
+    let mut app = test_app("");
+    assert!(!wants_mouse_free_motion(&app));
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".into(),
+        data: "AAAA".into(),
+        width: None,
+        height: None,
+    });
+    assert!(wants_mouse_free_motion(&app));
+}
+
+#[test]
+fn ctrl_t_opens_background_tasks_and_ctrl_b_opens_model_routing() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::BackgroundCommands);
+
+    app.mode = Mode::Normal;
+    handle_key(&mut app, KeyCode::Char('b'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::ModelRouting);
+}
+
+#[test]
+fn background_bash_result_is_listed_immediately() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-bg".to_string(),
+        tool_name: "run".to_string(),
+        input: serde_json::json!({
+            "command": "cargo test",
+            "background": true,
+        }),
+    };
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(invocation)),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "call-bg".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "command": "cargo test",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 250,
+                "timeout_ms": 60000,
+                "stdout": "running tests",
+                "stderr": "",
+            }),
+        })),
+    );
+
+    assert_eq!(app.background_commands.len(), 1);
+    assert_eq!(app.background_commands[0].task_id, "bg_1");
+    assert_eq!(app.background_commands[0].stdout, "running tests");
+}
+
+#[test]
+fn background_task_enter_and_click_open_output_modal() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
+    assert!(app.bg_command_output_follow);
+
+    app.mode = Mode::BackgroundCommands;
+    app.register_hit(
+        Rect::new(2, 2, 20, 1),
+        20,
+        "open background task bg_1",
+        HitAction::BackgroundCommandOpen(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
+}
+
+#[test]
+fn background_task_click_cancel_keeps_list_modal() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+    assert!(app.background_commands[0].is_running());
+
+    app.register_hit(
+        Rect::new(40, 2, 2, 1),
+        50,
+        "cancel background task bg_1",
+        HitAction::BackgroundCommandCancel(0),
+    );
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 40,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    // Cancel is fire-and-forget against the engine; list modal stays open.
+    assert_eq!(app.mode, Mode::BackgroundCommands);
+    assert_eq!(app.bg_command_selected, 0);
+}
+
+#[test]
+fn background_task_right_arrow_opens_output() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.background_commands = vec![sample_background_command("bg_1")];
+
+    handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::BackgroundCommandOutput);
+}
+
+#[test]
+fn composer_does_not_show_permanent_keyboard_hints() {
+    let mut app = test_app("typed text");
+    let backend = TestBackend::new(100, 28);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw normal");
+
+    let frame = terminal_buffer_text(&terminal);
+    // no sticky shortcut footer — discover via Help.
+    assert!(
+        !frame.contains("ctrl+p commands"),
+        "permanent keyboard hints should be gone:\n{frame}"
+    );
+    assert!(!frame.contains("ctrl+t background tasks"));
+    assert!(!frame.contains("ctrl+b background agents"));
+}
+
+#[test]
+fn ctrl_dot_and_ctrl_s_open_help_and_sessions() {
+    let mut app = test_app("");
+
+    handle_key(&mut app, KeyCode::Char('.'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Help);
+
+    // Global shortcuts still work from Help (don't trap ctrl+s inside the modal).
+    handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Sessions);
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+
+    handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Sessions);
+}
+
+#[test]
+fn command_palette_opens_providers() {
+    let mut app = test_app("");
+
+    app.mode = Mode::Commands;
+    app.command_filter = "providers".to_string();
+    app.selected_command = 0;
+    let provider_commands = filtered_commands(&app);
+    assert!(
+        provider_commands
+            .iter()
+            .any(|command| matches!(command.action, CommandAction::Providers))
+    );
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Providers);
+    // The picker now lands on the first non-header (Provider) row instead of
+    // the section divider.
+    let rows = app.filtered_providers();
+    let first_provider_pos = rows
+        .iter()
+        .position(|r| matches!(r, crate::providers::ProviderListRow::Provider { .. }))
+        .expect("at least one provider row");
+    assert_eq!(app.selected_provider_setting, first_provider_pos);
+    assert_eq!(app.provider_settings_scroll, 0);
+}
+
+fn sample_question_request() -> navi_sdk::QuestionRequest {
+    navi_sdk::QuestionRequest {
+        id: "question-1".to_string(),
+        question: "Which direction should NAVI take?".to_string(),
+        options: vec![
+            navi_sdk::QuestionOption {
+                label: "Fast".to_string(),
+                description: Some("Smallest implementation".to_string()),
+            },
+            navi_sdk::QuestionOption {
+                label: "Thorough".to_string(),
+                description: Some("More validation".to_string()),
+            },
+        ],
+        multiple: false,
+        allow_custom: false,
+    }
+}
+
+async fn wait_for_question_resolution(engine: &crate::testing::MockEngine) {
+    use crate::testing::EngineCall;
+
+    for _ in 0..50 {
+        if engine
+            .calls()
+            .iter()
+            .any(|call| matches!(call, EngineCall::ResolveQuestion { .. }))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+#[test]
+fn question_request_opens_modal() {
+    let mut app = test_app("");
+
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+
+    assert_eq!(app.mode, Mode::Question);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].request.id, "question-1");
+}
+
+#[test]
+fn question_escape_closes_without_resolving_and_ctrl_enter_reopens() {
+    use crate::testing::MockEngine;
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+
+    handle_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+    assert!(engine.calls().is_empty());
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::Question);
+    assert_eq!(app.pending_questions.len(), 1);
+    assert_eq!(app.pending_questions[0].custom_answer, "x");
+}
+
+#[tokio::test]
+async fn question_enter_resolves_selected_answer() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.pending_questions.is_empty());
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["Thorough".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn question_number_key_selects_option() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Char('2'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["Thorough".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn question_can_be_denied_explicitly() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Char('n'), KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.pending_questions.is_empty());
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Dismissed { id },
+            } if resolved_session_id == &session_id && id == "question-1"
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn question_accepts_plain_text_answer() {
+    use crate::testing::{EngineCall, MockEngine};
+
+    let mut app = test_app("");
+    let engine = Arc::new(MockEngine::new());
+    app.set_engine(engine.clone());
+    crate::dispatch::handle_async_event(
+        &mut app,
+        crate::dispatch::AsyncEvent::Agent(
+            AgentEvent::QuestionRequested(sample_question_request()),
+        ),
+    );
+    let session_id = app.session_id.as_str().to_string();
+
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    for ch in "plain answer".chars() {
+        handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+    }
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    wait_for_question_resolution(&engine).await;
+
+    let calls = engine.calls();
+    assert!(
+        calls.iter().any(|call| matches!(
+            call,
+            EngineCall::ResolveQuestion {
+                session_id: resolved_session_id,
+                response: navi_sdk::QuestionResponse::Answered { id, answers },
+            } if resolved_session_id == &session_id && id == "question-1" && answers == &vec!["plain answer".to_string()]
+        )),
+        "calls: {calls:?}"
+    );
+}
+
+#[test]
+fn command_palette_scroll_offset_keeps_selection_visible() {
+    assert_eq!(command_scroll_offset(0, 6), 0);
+    assert_eq!(command_scroll_offset(5, 6), 0);
+    assert_eq!(command_scroll_offset(6, 6), 1);
+    assert_eq!(command_scroll_offset(11, 6), 6);
+
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.selected_command =
+        crate::commands::first_selectable_command_row(&crate::commands::command_rows(&app));
+    let rows = crate::commands::command_rows(&app);
+    let selectable: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.is_selectable().then_some(i))
+        .collect();
+    assert!(!selectable.is_empty());
+    for _ in 0..selectable.len() {
+        handle_command_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
+    }
+    assert_eq!(app.selected_command, *selectable.last().unwrap());
+
+    handle_command_key(&mut app, KeyCode::PageUp, KeyModifiers::NONE);
+    // PageUp moves up ~8 selectable steps from the last item.
+    let last = selectable.len().saturating_sub(1);
+    let expected_idx = selectable[last.saturating_sub(8)];
+    assert_eq!(app.selected_command, expected_idx);
+}
+
+#[test]
+fn submit_sends_raw_input_text() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.input = "check this change".to_string();
+    app.input_cursor = app.input.len();
+
+    submit_message(&mut app);
+
+    assert_eq!(app.messages[0].content, "check this change");
+    assert!(matches!(
+        app.conversation_history.last(),
+        Some(ModelMessage { content, .. }) if content == "check this change"
+    ));
+
+    app.input = "/literal inspect first".to_string();
+    app.input_cursor = app.input.len();
+    submit_message(&mut app);
+
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.content == "/literal inspect first")
+    );
+}
+
+#[test]
+fn submit_queues_input_while_turn_is_active() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.input = "second task".to_string();
+    app.input_cursor = app.input.len();
+
+    submit_message(&mut app);
+
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "second task");
+    assert!(app.input.is_empty());
+    assert_eq!(app.input_cursor, 0);
+    assert!(
+        app.messages
+            .iter()
+            .all(|message| message.content != "second task")
+    );
+    assert!(
+        app.conversation_history
+            .iter()
+            .all(|message| message.content != "second task")
+    );
+}
+
+#[test]
+fn queued_input_preserves_pending_images() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.input = "look [Image 1]".to_string();
+    app.input_cursor = app.input.len();
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".to_string(),
+        data: "abc123".to_string(),
+        width: Some(10),
+        height: Some(20),
+    });
+
+    submit_message(&mut app);
+
+    assert!(app.pending_images.is_empty());
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "look [Image 1]");
+    assert_eq!(app.queued_user_messages[0].images.len(), 1);
+}
+
+#[test]
+fn ctrl_q_opens_message_queue_modal() {
+    let mut app = test_app("");
+    handle_key(&mut app, KeyCode::Char('q'), KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::MessageQueue);
+}
+
+#[test]
+fn queued_message_modal_edits_and_removes_items() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "first queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "second queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::QueuedMessageEdit);
+    assert_eq!(app.queued_edit_text, "first queued task");
+
+    handle_key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+    assert_eq!(app.mode, Mode::MessageQueue);
+    assert_eq!(app.queued_user_messages[0].text, "first queued task!");
+
+    handle_key(&mut app, KeyCode::Delete, KeyModifiers::NONE);
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "second queued task");
+}
+
+#[test]
+fn queued_message_can_be_removed_with_d_key() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "keep me".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "remove me".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+    app.queued_message_selected = 1;
+
+    handle_key(&mut app, KeyCode::Char('d'), KeyModifiers::NONE);
+
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert_eq!(app.queued_user_messages[0].text, "keep me");
+    assert_eq!(app.mode, Mode::MessageQueue);
+}
+
+#[test]
+fn queued_message_clear_all_with_shift_d() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "a".to_string(),
+            images: Vec::new(),
+        });
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "b".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Char('D'), KeyModifiers::SHIFT);
+
+    assert!(app.queued_user_messages.is_empty());
+}
+
+#[test]
+fn queued_message_remove_via_helper_closes_when_empty() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "only".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    crate::keybindings::modals::remove_queued_message_at(&mut app, 0);
+
+    assert!(app.queued_user_messages.is_empty());
+}
+
+#[test]
+fn queued_message_editor_saves_terminal_newline_enter_variant() {
+    let mut app = test_app("");
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "queued task".to_string(),
+            images: Vec::new(),
+        });
+    app.mode = Mode::MessageQueue;
+    app.modal_stack.open(ModalKind::MessageQueue);
+
+    handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::QueuedMessageEdit);
+
+    handle_key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
+    handle_key(&mut app, KeyCode::Char('\n'), KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::MessageQueue);
+    assert_eq!(app.queued_user_messages[0].text, "queued task!");
+}
+
+#[test]
+fn esc_while_loading_opens_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.queued_user_messages
+        .push_back(crate::state::QueuedUserMessage {
+            text: "queued".to_string(),
+            images: Vec::new(),
+        });
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
+    assert_eq!(app.queued_user_messages.len(), 1);
+}
+
+#[test]
+fn large_paste_is_compacted_to_chip() {
+    let mut app = test_app("");
+    app.mode = Mode::Normal;
+    // 4 lines → 3 newlines → compact
+    crate::event_loop::handle_paste(&mut app, "a\nb\nc\nd");
+    assert!(
+        app.input.contains("[Pasted text #1"),
+        "expected paste chip, got {:?}",
+        app.input
+    );
+    assert!(
+        app.input.contains("+4 lines"),
+        "expected line count in chip, got {:?}",
+        app.input
+    );
+    assert_eq!(app.pending_pastes.len(), 1);
+    assert_eq!(app.pending_pastes[0].text, "a\nb\nc\nd");
+    assert_eq!(app.pending_pastes[0].line_count, 4);
+
+    // Pre-submit expansion (same path submit_message uses).
+    crate::paste_compact::expand_composer_pastes(&mut app);
+    assert_eq!(app.input, "a\nb\nc\nd");
+    assert!(app.pending_pastes.is_empty());
+}
+
+#[test]
+fn small_paste_stays_raw() {
+    let mut app = test_app("");
+    app.mode = Mode::Normal;
+    // 3 lines → 2 newlines → raw
+    crate::event_loop::handle_paste(&mut app, "a\nb\nc");
+    assert_eq!(app.input, "a\nb\nc");
+    assert!(app.pending_pastes.is_empty());
+}
+
+#[test]
+fn paste_text_and_image_tags_work_while_streaming() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.mode = Mode::Normal;
+
+    // Bracketed paste of plain text must land in the composer mid-stream.
+    crate::event_loop::handle_paste(&mut app, "follow-up while streaming");
+    assert_eq!(app.input, "follow-up while streaming");
+    assert!(app.is_loading, "paste must not cancel the active turn");
+
+    // Stage an image attachment while streaming (submit will queue it).
+    app.pending_images.push(PendingImage {
+        data: "iVBORw0KGgo=".to_string(),
+        media_type: "image/png".to_string(),
+        width: Some(1),
+        height: Some(1),
+    });
+    crate::input::insert_input_text(&mut app, " [Image 1]");
+    assert!(app.input.contains("[Image 1]"));
+    assert_eq!(app.pending_images.len(), 1);
+
+    submit_message(&mut app);
+    assert!(
+        app.is_loading,
+        "submit while streaming must queue, not drop loading"
+    );
+    assert_eq!(app.queued_user_messages.len(), 1);
+    assert!(
+        app.queued_user_messages[0]
+            .text
+            .contains("follow-up while streaming")
+    );
+    assert_eq!(app.queued_user_messages[0].images.len(), 1);
+    assert!(app.input.is_empty());
+    assert!(app.pending_images.is_empty());
+}
+
+#[test]
+fn esc_soon_after_mouse_event_does_not_open_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    // Simulate a recent mouse event (double-click residue).
+    app.last_mouse_event = Some(std::time::Instant::now());
+
+    // The event_loop swallows Esc within 150ms of a mouse event before
+    // handle_key is called. Replicate that guard here so the regression is
+    // unit-testable without driving the full terminal loop.
+    let should_swallow = app
+        .last_mouse_event
+        .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(150));
+    assert!(should_swallow);
+
+    if !should_swallow {
+        handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    }
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.is_loading);
+}
+
+#[test]
+fn esc_without_recent_mouse_event_still_opens_cancel_confirmation() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.last_mouse_event = None;
+
+    handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
+    assert!(app.is_loading);
+}
+
+#[test]
+fn submit_with_pending_image_handles_utf8_before_tag() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.input = "ação [Image 1]".to_string();
+    app.input_cursor = app.input.len();
+    app.pending_images.push(PendingImage {
+        media_type: "image/png".to_string(),
+        data: "abc123".to_string(),
+        width: Some(10),
+        height: Some(20),
+    });
+
+    submit_message(&mut app);
+
+    let message = app.conversation_history.last().unwrap();
+    assert_eq!(message.content, "ação [Image 1]");
+    assert_eq!(
+        message.content_parts,
+        vec![
+            ContentPart::Text {
+                text: "ação ".to_string()
+            },
+            ContentPart::Image {
+                media_type: "image/png".to_string(),
+                data: "abc123".to_string()
+            },
+        ]
+    );
+}
+
+#[test]
+fn yolo_toggle_uses_notification_not_chat() {
+    let mut app = test_app("");
+    let message_count = app.messages.len();
+
+    handle_key(&mut app, KeyCode::Char('g'), KeyModifiers::CONTROL);
+
+    assert!(app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Yolo
+    );
+    assert_eq!(app.messages.len(), message_count);
+    let notification = app.notification().expect("notification");
+    assert_eq!(notification.title, "Permissions");
+    assert!(notification.message.contains("yolo"));
+}
+
+#[test]
+fn shift_tab_cycles_permission_modes() {
+    let mut app = test_app("");
+
+    // Restricted -> AcceptEdits
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::AcceptEdits
+    );
+
+    // AcceptEdits -> Auto
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Auto
+    );
+
+    // Auto -> Yolo
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Yolo
+    );
+
+    // Yolo -> Restricted
+    handle_key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
+    assert!(!app.yolo_mode);
+    assert_eq!(
+        app.loaded_config.config.security.permission_mode,
+        PermissionMode::Restricted
+    );
+}
+
+#[test]
+fn notification_expires_after_ttl() {
+    let mut app = test_app("");
+    app.set_notification(Notification {
+        title: "Tools".to_string(),
+        message: "YOLO mode enabled.".to_string(),
+        created_at: Instant::now() - NOTIFICATION_TTL - Duration::from_millis(1),
+        ttl: NOTIFICATION_TTL,
+    });
+
+    assert!(expire_notification(&mut app));
+
+    assert!(app.notification().is_none());
+}
+
+#[test]
+fn settings_toggles_thinking_visibility() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
+    assert!(app.show_thinking);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert!(!app.show_thinking);
+    assert!(!app.loaded_config.config.tui.show_thinking);
+    assert!(app.notification().is_some());
+}
+
+#[test]
+fn settings_toggles_desktop_notifications() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    assert!(app.loaded_config.config.tui.desktop_notifications);
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::DesktopNotifications);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert!(!app.loaded_config.config.tui.desktop_notifications);
+    assert!(app.notification().is_some());
+}
+
+#[test]
+fn tui_preferences_load_from_config() {
+    let mut config = navi_sdk::NaviConfig::default();
+    config.tui.theme = "ember".to_string();
+    config.tui.show_thinking = false;
+    config.tui.full_tool_view = true;
+    config.tui.compact_tool_visible_limit = 8;
+    config.tui.thinking_level = "low".to_string();
+    config.tui.yolo_mode = true;
+    config.skills.active = vec!["demo-skill".to_string()];
+    config.updates.check_enabled = false;
+    config.registry.update_enabled = false;
+
+    let app = TuiApp::new_with_engine(
+        LoadedConfig {
+            config,
+            global_config_path: None,
+            project_config_path: None,
+            data_dir: test_data_dir(),
+            app_scope: navi_core::app_scope::AppScope::none(),
+            global_config_mtime: None,
+        },
+        PathBuf::from("/tmp/test-project"),
+        None,
+        Vec::new(),
+        Arc::new(crate::testing::MockEngine::new()),
+    )
+    .expect("test app");
+
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Ember);
+    assert!(!app.show_thinking);
+    assert!(app.full_tool_view);
+    assert_eq!(app.compact_tool_visible_limit, 8);
+    assert_eq!(app.thinking_level, crate::state::ThinkingLevel::Low);
+    assert!(app.yolo_mode);
+    // config.skills.active controls catalog visibility, NOT session activation.
+    // The TUI must not seed app.active_skills from it — otherwise merely
+    // installing a harness-flagged skill locks the session and blocks core
+    // tools like `edit`.
+    assert_eq!(app.active_skills, Vec::<String>::new());
+}
+
+#[test]
+fn settings_does_not_open_provider_accounts() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::ShowReasoning);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::Settings);
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn settings_opens_theme_picker() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting = crate::settings::index_of_action(crate::settings::SettingAction::Theme);
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::ThemePicker);
+    assert_eq!(app.theme_id, crate::theme::ThemeId::Default);
+}
+
+#[test]
+fn settings_opens_providers_from_accounts_section() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.selected_setting =
+        crate::settings::index_of_action(crate::settings::SettingAction::Providers);
+
+    handle_settings_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.mode, Mode::Providers);
+}
+
+#[test]
+fn command_palette_root_is_short_hub_menu() {
+    let app = test_app("");
+    let rows = crate::commands::command_rows(&app);
+    // Root is a short hub menu (hot actions + hubs), not the full catalog.
+    assert!(
+        rows.len() <= 12,
+        "root menu should stay short, got {}",
+        rows.len()
+    );
+    assert!(rows.iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::SwitchModel
+    )));
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i)
+                if matches!(i.action, CommandAction::OpenHub(_))
+        )),
+        "root should include hubs"
+    );
+    // Deep actions live in hubs / search, not root.
+    assert!(!rows.iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
+    )));
+}
+
+#[test]
+fn command_palette_search_finds_nested_commands() {
+    let mut app = test_app("");
+    // YOLO lives under Tools hub, not on root.
+    assert!(
+        !crate::commands::command_rows(&app).iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
+        ))
+    );
+    app.command_filter = "yolo".into();
+    let rows = crate::commands::command_rows(&app);
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::ToggleYolo
+        )),
+        "global search must find hub actions"
+    );
+
+    app.command_filter = "skills".into();
+    let rows = crate::commands::command_rows(&app);
+    assert!(
+        rows.iter().any(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i) if i.action == CommandAction::Skills
+        )),
+        "search finds Extensions actions"
+    );
+}
+
+#[test]
+fn command_palette_hub_enter_and_esc_back() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    app.command_hub = None;
+    // Select first hub row (Session →) — find OpenHub Session
+    let rows = crate::commands::command_rows(&app);
+    let hub_idx = rows
+        .iter()
+        .position(|r| matches!(
+            r,
+            crate::commands::CommandRow::Item(i)
+                if matches!(i.action, CommandAction::OpenHub(crate::commands::CommandHub::Session))
+        ))
+        .expect("Session hub");
+    app.selected_command = hub_idx;
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.command_hub, Some(crate::commands::CommandHub::Session));
+    assert!(crate::commands::command_rows(&app).iter().any(|r| matches!(
+        r,
+        crate::commands::CommandRow::Item(i) if i.action == CommandAction::Compact
+    )));
+
+    // Esc returns to root
+    handle_command_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert_eq!(app.command_hub, None);
+    assert_eq!(app.mode, Mode::Commands);
+}
+
+#[test]
+fn esc_closes_modal_without_canceling_active_model() {
+    let mut app = test_app("");
+    app.mode = Mode::Settings;
+    app.is_loading = true;
+
+    assert!(!handle_key(&mut app, KeyCode::Esc, KeyModifiers::empty()));
+
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.is_loading);
+}
+
+#[test]
+fn ctrl_d_opens_debug_modal() {
+    let mut app = test_app("");
+
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char('d'),
+        KeyModifiers::CONTROL
+    ));
+
+    assert_eq!(app.mode, Mode::Debug);
+    assert!(app.log_path().ends_with("logs/navi.log"));
+}
+
+#[test]
+fn write_file_tool_full_content_uses_edit_summary() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "write_file".to_string(),
+        input: serde_json::json!({
+            "path": "src/index.html",
+            "content": "<!doctype html>\n<html></html>\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "path": "src/index.html",
+            "bytes": 16,
+            "lines_added": 2,
+            "lines_removed": 1,
+            "diff": "*** Update File: src/index.html\n@@\n-old\n+<!doctype html>\n+<html></html>\n"
+        }),
+    };
+
+    let content = tool_full_content(&invocation, &result);
+
+    assert!(content.contains("Write src/index.html (+2 -1 lines)"));
+    // Body is the fenced diff only (no redundant "Edited …" chrome).
+    assert!(!content.contains("Edited src/index.html"));
+    assert!(content.contains("```diff\n"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
+    assert!(content.contains("-old\n"));
+    assert!(content.contains("+<!doctype html>\n"));
+    assert!(!content.contains("Input"));
+    assert!(!content.contains("Output"));
+    assert!(!content.contains("```json"));
+}
+
+#[test]
+fn completed_tool_removes_empty_tool_placeholder() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        model_label: Some("model".to_string()),
+        provider_label: Some("provider".to_string()),
+        status: Some("tool: read_file".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "Cargo.toml" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "path": "Cargo.toml", "content": "" }),
+    };
+
+    app.tool_invocations
+        .insert(invocation.id.clone(), invocation.clone());
+    app.running_tools
+        .insert(invocation.id.clone(), invocation.clone());
+
+    // Process ToolCompleted event logic directly as in the main event loop
+    app.running_tools.remove(&result.invocation_id);
+    if let Some(invocation) = app.tool_invocations.get(&result.invocation_id).cloned() {
+        remove_active_tool_placeholder(&mut app);
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation.clone()),
+            tool_result: Some(result.clone()),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+
+    assert_eq!(
+        app.messages
+            .iter()
+            .filter(|message| message.status.as_deref() == Some("tool result"))
+            .count(),
+        1
+    );
+    assert!(!app.messages.iter().any(is_empty_tool_placeholder));
+}
+
+#[test]
+fn compact_tool_render_hides_full_input_and_output() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "fs_browser".to_string(),
+        input: serde_json::json!({ "action": "list", "path": "/tmp/project" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "files": ["/tmp/project/package.json", "/tmp/project/src/App.tsx"]
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            "stale full tool content should not render in compact mode\n\nInput\nOutput"
+                .to_string(),
+        )
+    });
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("List /tmp/project"));
+    assert!(!text.contains("Input"));
+    assert!(!text.contains("Output"));
+    assert!(!text.contains("stale full tool content"));
+}
+
+#[test]
+fn compact_tool_render_keeps_consecutive_tools_progressive() {
+    let mut app = test_app("");
+    for index in 0..8 {
+        let id = format!("call-{index}");
+        let invocation = ToolInvocation {
+            id: id.clone(),
+            tool_name: "grep".to_string(),
+            input: serde_json::json!({ "pattern": format!("needle-{index}"), "path": "src" }),
+        };
+        let result = ToolResult {
+            invocation_id: id,
+            ok: true,
+            output: serde_json::json!({ "matches": [] }),
+        };
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(invocation),
+            tool_result: Some(result),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!text.contains("earlier tool calls"));
+    assert!(text.contains("needle-0"));
+    assert!(text.contains("needle-2"));
+    assert!(text.contains("needle-7"));
+    assert_eq!(text.matches("Search \"").count(), 8);
+}
+
+#[test]
+fn compact_tool_render_keeps_older_tool_runs_progressive() {
+    let mut app = test_app("");
+    for index in 0..6 {
+        let id = format!("old-call-{index}");
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(ToolInvocation {
+                id: id.clone(),
+                tool_name: "grep".to_string(),
+                input: serde_json::json!({ "pattern": format!("old-needle-{index}") }),
+            }),
+            tool_result: Some(ToolResult {
+                invocation_id: id,
+                ok: true,
+                output: serde_json::json!({ "matches": [] }),
+            }),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+    app.messages.push(ChatMessage::new(
+        ChatRole::Assistant,
+        "intermediate thought".to_string(),
+    ));
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "latest-call".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "README.md" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "latest-call".to_string(),
+            ok: true,
+            output: serde_json::json!({ "path": "README.md" }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(!text.contains("6 tools · Search x6"));
+    assert!(text.contains("old-needle-0"));
+    assert!(text.contains("old-needle-5"));
+    assert!(text.contains("intermediate thought"));
+    assert!(text.contains("Read README.md"));
+}
+
+#[test]
+fn compact_tool_render_does_not_group_across_thinking_placeholder() {
+    let mut app = test_app("");
+    for path in ["src/a.rs", "src/b.rs"] {
+        app.messages.push(ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(ToolInvocation {
+                id: path.to_string(),
+                tool_name: "read_file".to_string(),
+                input: serde_json::json!({ "path": path }),
+            }),
+            tool_result: Some(ToolResult {
+                invocation_id: path.to_string(),
+                ok: true,
+                output: serde_json::json!({ "path": path }),
+            }),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        });
+    }
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "src/c.rs".to_string(),
+            tool_name: "read_file".to_string(),
+            input: serde_json::json!({ "path": "src/c.rs" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "src/c.rs".to_string(),
+            ok: true,
+            output: serde_json::json!({ "path": "src/c.rs" }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Read src/a.rs"));
+    assert!(text.contains("Read src/b.rs"));
+    assert!(text.contains("Read src/c.rs"));
+    assert!(!text.contains("tools · Read"));
+}
+
+#[test]
+fn full_tool_render_generates_sanitized_metadata_view() {
+    let mut app = test_app("");
+    app.full_tool_view = true;
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "grep".to_string(),
+        input: serde_json::json!({ "pattern": "NAVI" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: false,
+        output: serde_json::json!({ "error": "denied" }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Search \"NAVI\""));
+    assert!(text.contains("error: denied") || text.contains("denied"));
+    // Pure error-envelope failures stay header-only (no raw JSON "Output" dump).
+    assert!(!text.contains("Input"));
+    assert!(!text.contains("\"error\": \"denied\""));
+}
+
+#[test]
+fn running_subagent_renders_active_task_block() {
+    let mut app = test_app("");
+    record_tool_requested(
+        &mut app,
+        ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Read justfile and summarize the main crates",
+            }),
+        },
+    );
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Subagent Task"));
+    assert!(text.contains("Analyze repository structure"));
+    assert!(text.contains("Read justfile and summarize the main crates"));
+}
+
+#[test]
+fn subagent_activity_replaces_single_status_without_context_leak() {
+    let mut app = test_app("");
+    record_tool_requested(
+        &mut app,
+        ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        },
+    );
+    let history_len = app.conversation_history.len();
+    let event_len = app.events.len();
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-1".to_string(),
+            message: "Read justfile".to_string(),
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-1".to_string(),
+            message: "Search \"SubagentTool\"".to_string(),
+        }),
+    );
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(text.contains("Subagent Task"));
+    assert!(text.contains("Search \"SubagentTool\""));
+    assert!(!text.contains("Read justfile"));
+    assert_eq!(app.conversation_history.len(), history_len);
+    assert_eq!(app.events.len(), event_len);
+}
+
+#[test]
+fn background_subagent_keeps_activity_after_spawn_completes() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-bg-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Explore runtime events",
+                "prompt": "Inspect subagent progress wiring",
+                "background": true,
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-bg-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "action": "poll",
+                "elapsed_ms": 12,
+                "message": "Subagent spawned in background.",
+            }),
+        })),
+    );
+
+    assert!(!app.running_tools.contains_key("subagent-bg-1"));
+
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentActivity {
+            invocation_id: "subagent-bg-1".to_string(),
+            message: "Read crates/navi-core/src/event.rs".to_string(),
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-bg-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read crates/navi-core/src/event.rs".to_string(),
+                detail: None,
+                ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
+                thinking: None,
+            },
+        }),
+    );
+
+    assert_eq!(
+        app.subagent_activity
+            .get("subagent-bg-1")
+            .map(String::as_str),
+        Some("Read crates/navi-core/src/event.rs")
+    );
+
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(text.contains("Read crates/navi-core/src/event.rs"));
+    assert!(text.contains("bg_1") || text.contains("Subagent"));
+
+    app.open_subagent_view("subagent-bg-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let view = terminal_buffer_text(&terminal);
+    assert!(view.contains("Read crates/navi-core/src/event.rs"));
+    assert!(view.contains("Parent up"));
+}
+
+#[test]
+fn subagent_view_renders_transcript_and_footer() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read justfile".to_string(),
+                detail: None,
+                ok: None,
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
+                thinking: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Repository summary ready".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: None,
+                status: None,
+                thinking: None,
+            },
+        }),
+    );
+    app.open_subagent_view("subagent-1");
+
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let text = terminal_buffer_text(&terminal);
+
+    assert!(text.contains("Analyze repository structure"));
+    assert!(text.contains("Read justfile"));
+    assert!(text.contains("Repository summary ready"));
+    assert!(text.contains("Parent up"));
+    assert!(text.contains("Prev left"));
+    assert!(text.contains("Next right"));
+}
+
+#[test]
+fn subagent_card_resolves_terminal_status_instead_of_running_forever() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Background spawn completes (running=true) — card should still show activity.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        })),
+    );
+    assert!(
+        app.subagent_status("subagent-1")
+            .is_some_and(|status| status.is_running()),
+        "expected Running state before final transcript"
+    );
+    // Final transcript item arrives with terminal status.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Repository summary ready".to_string()),
+                status: Some("done".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "expected terminal Done state"
+    );
+    // The persisted background tool result must be patched to terminal so a
+    // reload never resurrects the "Running subagent" zombie.
+    let patched = app
+        .messages
+        .iter()
+        .find_map(|m| {
+            m.tool_result
+                .as_ref()
+                .filter(|r| r.invocation_id == "subagent-1")
+        })
+        .expect("patched tool result");
+    assert_eq!(
+        patched.output.get("status").and_then(|v| v.as_str()),
+        Some("done")
+    );
+    // Chat render should surface the terminal status, not "Running subagent".
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Concluído") || text.contains("Done") || text.contains("✓"),
+        "expected terminal status on card, got: {text}"
+    );
+    assert!(
+        !text.contains("Running subagent"),
+        "card must not stay on Running subagent, got: {text}"
+    );
+}
+
+#[test]
+fn subagent_card_shows_failed_status_on_error() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: false,
+            output: serde_json::json!({
+                "error": "model timeout",
+            }),
+        })),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Failed(
+            "model timeout".to_string()
+        )),
+        "expected Failed state on tool error"
+    );
+    let text = build_chat_lines(&mut app, 96)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("Falhou") || text.contains("✗") || text.contains("model timeout"),
+        "expected failed status on card, got: {text}"
+    );
+}
+
+#[test]
+fn subagent_view_uses_main_chat_renderer_with_tool_cards_and_markdown() {
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Rich transcript: full invocation + result payloads.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolRequested,
+                title: "Read justfile".to_string(),
+                detail: None,
+                ok: None,
+                invocation: Some(ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: serde_json::json!({ "path": "justfile" }),
+                }),
+                result: None,
+                text: None,
+                status: None,
+                thinking: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::ToolCompleted,
+                title: "Tool completed".to_string(),
+                detail: Some("justfile".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: Some(ToolResult {
+                    invocation_id: "call-1".to_string(),
+                    ok: true,
+                    output: serde_json::json!({
+                        "path": "justfile",
+                        "content": "verify:\n  cargo test",
+                    }),
+                }),
+                text: None,
+                status: None,
+                thinking: None,
+            },
+        }),
+    );
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Repository summary ready".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("## Summary\n\nThe repo builds with `cargo test`.\n".to_string()),
+                status: Some("done".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    app.open_subagent_view("subagent-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    let text = terminal_buffer_text(&terminal);
+    // Tool card header (read_file summary) rendered via the main renderer.
+    assert!(
+        text.contains("justfile"),
+        "expected tool card to mention justfile, got: {text}"
+    );
+    // Final response markdown rendered (heading marker or content).
+    assert!(
+        text.contains("Summary") || text.contains("cargo test"),
+        "expected final response markdown, got: {text}"
+    );
+    assert!(text.contains("Parent up"));
+    assert!(text.contains("Prev left"));
+    assert!(text.contains("Next right"));
+}
+
+#[test]
+fn subagent_view_footer_hit_regions_are_clickable() {
+    let mut app = test_app("");
+    for id in ["subagent-1", "subagent-2"] {
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+                id: id.to_string(),
+                tool_name: "subagent".to_string(),
+                input: serde_json::json!({
+                    "description": format!("Task {id}"),
+                    "prompt": "Inspect project files",
+                }),
+            })),
+        );
+    }
+    app.open_subagent_view("subagent-1");
+    let backend = TestBackend::new(96, 24);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| crate::view::render(frame, &mut app))
+        .expect("draw");
+    // Probe the registered hit regions via hit() across the full frame,
+    // collecting any subagent footer actions wherever they landed.
+    let backend_size = terminal.size().expect("size");
+    let mut found = std::collections::HashSet::new();
+    let mut hits_debug = Vec::new();
+    for row in 0..backend_size.height {
+        for col in 0..backend_size.width {
+            if let Some(region) = app.hit_test(col, row) {
+                let tag = match region.action {
+                    crate::ui::interaction::HitAction::SubagentViewParent => Some("parent"),
+                    crate::ui::interaction::HitAction::SubagentViewPrev => Some("prev"),
+                    crate::ui::interaction::HitAction::SubagentViewNext => Some("next"),
+                    _ => None,
+                };
+                if let Some(tag) = tag {
+                    found.insert(tag);
+                    hits_debug.push(format!("{tag}@({col},{row})"));
+                }
+            }
+        }
+    }
+    assert!(
+        found.contains("parent") && found.contains("prev") && found.contains("next"),
+        "expected footer hit regions for parent/prev/next, got: {hits_debug:?}"
+    );
+}
+
+#[test]
+fn subagent_terminal_state_survives_background_result_reload() {
+    // Guard against the "Running subagent" zombie: once a subagent reaches a
+    // terminal UI state, the background status must not report it as running
+    // again — even if the persisted tool result still says "running" (e.g. the
+    // final transcript arrived after the spawn result was persisted).
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+            id: "subagent-1".to_string(),
+            tool_name: "subagent".to_string(),
+            input: serde_json::json!({
+                "description": "Analyze repository structure",
+                "prompt": "Inspect project files",
+            }),
+        })),
+    );
+    // Background spawn completes, still running.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+            invocation_id: "subagent-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        })),
+    );
+    // Final transcript arrives and marks the subagent terminal.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "subagent-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Repository summary ready".to_string()),
+                status: Some("done".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("subagent-1"),
+        Some(&crate::state::SubagentStatus::Done)
+    );
+    // Even with the persisted result still saying "running", the UI state is
+    // terminal — background_subagent_status must not surface "Running subagent".
+    // (The function consults app.subagent_status before trusting the result.)
+}
+
+#[test]
+fn subagent_view_keyboard_navigation_and_context_isolation() {
+    let mut app = test_app("");
+    for id in ["subagent-1", "subagent-2"] {
+        handle_async_event(
+            &mut app,
+            AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+                id: id.to_string(),
+                tool_name: "subagent".to_string(),
+                input: serde_json::json!({
+                    "description": format!("Task {id}"),
+                    "prompt": "Inspect project files",
+                }),
+            })),
+        );
+    }
+    let history_len = app.conversation_history.len();
+    let event_len = app.events.len();
+
+    app.open_subagent_view("subagent-1");
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-1"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Right, KeyModifiers::NONE);
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-2"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    assert!(matches!(
+        app.chat_view,
+        crate::state::ChatView::Subagent { ref invocation_id } if invocation_id == "subagent-1"
+    ));
+
+    handle_normal_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    assert!(matches!(app.chat_view, crate::state::ChatView::Parent));
+    assert_eq!(app.conversation_history.len(), history_len);
+    assert_eq!(app.events.len(), event_len);
+}
+
+// ---------------------------------------------------------------------------
+// Edge case tests for sub-agent tracking fix:
+// poll / cancel / list must NOT be tracked as spawns. Only spawns (calls with
+// `prompt` and no `task_id`) should appear in subagent_order / subagent_states
+// / subagent_transcripts. Terminal transcripts emitted by poll/cancel must
+// resolve the *original spawn's* card, not the poll's.
+// ---------------------------------------------------------------------------
+
+/// Helper: send a `subagent` ToolRequested with the given id and input.
+fn subagent_tool_requested(id: &str, input: serde_json::Value) -> AsyncEvent {
+    AsyncEvent::Agent(AgentEvent::ToolRequested(ToolInvocation {
+        id: id.to_string(),
+        tool_name: "subagent".to_string(),
+        input,
+    }))
+}
+
+/// Helper: send a `subagent` ToolCompleted with the given id and output.
+fn subagent_tool_completed(id: &str, ok: bool, output: serde_json::Value) -> AsyncEvent {
+    AsyncEvent::Agent(AgentEvent::ToolCompleted(ToolResult {
+        invocation_id: id.to_string(),
+        ok,
+        output,
+    }))
+}
+
+#[test]
+fn subagent_poll_not_tracked_as_spawn() {
+    // A poll call (has task_id, no prompt) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    assert!(
+        !app.subagent_order.contains(&"poll-1".to_string()),
+        "poll must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll must not create a subagent_states entry"
+    );
+    assert!(
+        app.subagent_transcripts.get("poll-1").is_none(),
+        "poll must not create a subagent_transcripts entry"
+    );
+}
+
+#[test]
+fn subagent_cancel_not_tracked_as_spawn() {
+    // A cancel call (has task_id, action=cancel) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "cancel-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "cancel" }),
+        ),
+    );
+    assert!(
+        !app.subagent_order.contains(&"cancel-1".to_string()),
+        "cancel must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("cancel-1").is_none(),
+        "cancel must not create a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_list_not_tracked_as_spawn() {
+    // A list call (action=list, no prompt) must not create a subagent card.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested("list-1", serde_json::json!({ "action": "list" })),
+    );
+    assert!(
+        !app.subagent_order.contains(&"list-1".to_string()),
+        "list must not be added to subagent_order"
+    );
+    assert!(
+        app.subagent_states.get("list-1").is_none(),
+        "list must not create a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_poll_toolcompleted_no_phantom_terminal() {
+    // A poll's ToolCompleted must NOT call set_subagent_terminal — that would
+    // create a phantom terminal entry in subagent_states for the poll's id.
+    let mut app = test_app("");
+    // First, spawn a real background subagent.
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    // Then, a poll on that task — its ToolCompleted should not create a
+    // terminal entry for "poll-1".
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "poll-1",
+            true,
+            serde_json::json!({ "task_id": "bg_1", "status": "done", "result": "finished" }),
+        ),
+    );
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll ToolCompleted must not create a phantom subagent_states entry"
+    );
+    // The spawn's card should still be Running (not resolved by the poll).
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "spawn card should still be Running after poll (no terminal transcript yet)"
+    );
+}
+
+#[test]
+fn subagent_multiple_polls_dont_inflate_count() {
+    // Multiple polls on the same background task must not inflate
+    // subagent_order — only the spawn should be tracked.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    for i in 0..5 {
+        let poll_id = format!("poll-{i}");
+        handle_async_event(
+            &mut app,
+            subagent_tool_requested(
+                &poll_id,
+                serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+            ),
+        );
+        handle_async_event(
+            &mut app,
+            subagent_tool_completed(
+                &poll_id,
+                true,
+                serde_json::json!({ "task_id": "bg_1", "status": "running" }),
+            ),
+        );
+    }
+    assert_eq!(
+        app.subagent_order.len(),
+        1,
+        "only the spawn should be in subagent_order, got: {:?}",
+        app.subagent_order
+    );
+    assert_eq!(app.subagent_order[0], "spawn-1");
+}
+
+#[test]
+fn subagent_spawn_with_action_field_not_list_is_tracked() {
+    // A spawn that includes an `action` field (but not "list") should still
+    // be tracked as a spawn — the action field is only meaningful for
+    // poll/cancel/list, but a spawn with a stray action must not be silently
+    // dropped.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "action": "poll" }),
+        ),
+    );
+    assert!(
+        app.subagent_order.contains(&"spawn-1".to_string()),
+        "spawn with prompt + action=poll should still be tracked (prompt takes precedence)"
+    );
+}
+
+#[test]
+fn subagent_terminal_transcript_resolves_spawn_not_poll() {
+    // When a poll emits a terminal SubagentTranscript for the *spawn's*
+    // invocation_id, the TUI should resolve the spawn's card — not the
+    // poll's (which was never tracked).
+    let mut app = test_app("");
+    // Spawn a background subagent.
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "spawn should be Running before terminal transcript"
+    );
+    // Poll arrives (not tracked as a subagent).
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "poll-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+        ),
+    );
+    // Terminal transcript arrives with the SPAWN's invocation_id (emitted by
+    // the core's emit_terminal_transcript_for_task).
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Done".to_string()),
+                ok: Some(true),
+                invocation: None,
+                result: None,
+                text: Some("Task complete".to_string()),
+                status: Some("done".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    // The spawn's card must now be Done.
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "spawn card must be resolved to Done by terminal transcript"
+    );
+    // The poll was never tracked — no state for it.
+    assert!(
+        app.subagent_states.get("poll-1").is_none(),
+        "poll must not have a subagent_states entry"
+    );
+}
+
+#[test]
+fn subagent_mixed_spawn_poll_cancel_only_counts_spawns() {
+    // Realistic scenario: 1 spawn + 3 polls + 1 cancel = only 1 in
+    // subagent_order. This is the exact bug the user reported (4 subagents
+    // shown when only 1 was spawned).
+    let mut app = test_app("");
+    // Spawn
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    // 3 polls
+    for i in 0..3 {
+        handle_async_event(
+            &mut app,
+            subagent_tool_requested(
+                &format!("poll-{i}"),
+                serde_json::json!({ "task_id": "bg_1", "action": "poll" }),
+            ),
+        );
+    }
+    // 1 cancel
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "cancel-1",
+            serde_json::json!({ "task_id": "bg_1", "action": "cancel" }),
+        ),
+    );
+    assert_eq!(
+        app.subagent_order.len(),
+        1,
+        "only the spawn should be tracked, got: {:?}",
+        app.subagent_order
+    );
+}
+
+#[test]
+fn subagent_cancel_terminal_transcript_resolves_spawn() {
+    // A cancel emits a terminal transcript with status=cancelled for the
+    // spawn's invocation_id — the spawn card should show Cancelled.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    // Cancel emits terminal transcript for spawn-1.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("Cancelled by user".to_string()),
+                ok: Some(false),
+                invocation: None,
+                result: None,
+                text: Some("Cancelled".to_string()),
+                status: Some("cancelled".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Cancelled),
+        "spawn card must be Cancelled after cancel terminal transcript"
+    );
+}
+
+#[test]
+fn subagent_failed_terminal_transcript_resolves_spawn() {
+    // A poll on a failed task emits a terminal transcript with status=failed
+    // — the spawn card should show Failed with the error message.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested(
+            "spawn-1",
+            serde_json::json!({ "prompt": "do work", "background": true }),
+        ),
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed(
+            "spawn-1",
+            true,
+            serde_json::json!({
+                "task_id": "bg_1",
+                "background": true,
+                "status": "running",
+                "elapsed_ms": 5,
+            }),
+        ),
+    );
+    // Failed terminal transcript for spawn-1.
+    handle_async_event(
+        &mut app,
+        AsyncEvent::Agent(AgentEvent::SubagentTranscript {
+            invocation_id: "spawn-1".to_string(),
+            item: SubagentTranscriptItem {
+                kind: SubagentTranscriptKind::Text,
+                title: "Final response".to_string(),
+                detail: Some("model error".to_string()),
+                ok: Some(false),
+                invocation: None,
+                result: None,
+                text: Some("model error".to_string()),
+                status: Some("failed".to_string()),
+                thinking: None,
+            },
+        }),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Failed(
+            "model error".to_string()
+        )),
+        "spawn card must be Failed after failed terminal transcript"
+    );
+}
+
+#[test]
+fn subagent_foreground_spawn_resolved_by_toolcompleted() {
+    // A foreground spawn (no background:true) is resolved directly by its
+    // own ToolCompleted — no terminal transcript needed. This verifies the
+    // is_subagent_spawn guard doesn't break the foreground path.
+    let mut app = test_app("");
+    handle_async_event(
+        &mut app,
+        subagent_tool_requested("spawn-1", serde_json::json!({ "prompt": "do work" })),
+    );
+    assert!(
+        app.subagent_status("spawn-1")
+            .is_some_and(|s| s.is_running()),
+        "foreground spawn should be Running before ToolCompleted"
+    );
+    handle_async_event(
+        &mut app,
+        subagent_tool_completed("spawn-1", true, serde_json::json!({ "result": "done" })),
+    );
+    assert_eq!(
+        app.subagent_status("spawn-1"),
+        Some(&crate::state::SubagentStatus::Done),
+        "foreground spawn should be Done after its own ToolCompleted"
+    );
+}
+
+#[test]
+fn compact_tool_render_expands_only_clicked_tool_result() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "read_file".to_string(),
+        input: serde_json::json!({ "path": "README.md" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "path": "README.md",
+            "content": "expanded-only-content"
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let collapsed = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!collapsed.contains("expanded-only-content"));
+
+    app.expanded_tool_results.insert("call-1".to_string());
+    let expanded = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(expanded.contains("expanded-only-content"));
+    assert!(
+        !expanded.to_lowercase().contains("click to collapse"),
+        "collapse hint should not appear on expanded tools: {expanded}"
+    );
+    assert!(!app.full_tool_view);
+}
+
+#[test]
+fn write_file_auto_expands_without_manual_expand() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "w1".to_string(),
+            tool_name: "write_file".to_string(),
+            input: serde_json::json!({
+                "path": "src/lib.rs",
+                "content": "fn main() {\n  println!(\"hi\");\n}\n"
+            }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "w1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "path": "src/lib.rs",
+                "lines_added": 3,
+                "lines_removed": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let text = build_chat_lines(&mut app, 100)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Useful edit body is visible without clicking / expand-all.
+    assert!(text.contains("Write"));
+    assert!(
+        text.contains("src/lib.rs") || text.contains("lib.rs"),
+        "expected path in auto-expanded write: {text}"
+    );
+}
+
+#[test]
+fn ctrl_o_leaving_expand_all_keeps_selected_tool_open() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(ToolInvocation {
+            id: "bash-1".to_string(),
+            tool_name: "run".to_string(),
+            input: serde_json::json!({ "command": "echo hi" }),
+        }),
+        tool_result: Some(ToolResult {
+            invocation_id: "bash-1".to_string(),
+            ok: true,
+            output: serde_json::json!({
+                "stdout": "hi-output-line",
+                "stderr": "",
+                "exit_code": 0
+            }),
+        }),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    // Bash is collapsed by default.
+    let collapsed = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!collapsed.contains("hi-output-line"));
+
+    // User opens it.
+    app.selected_chat_source = Some(ChatLineSource::ToolResult("bash-1".to_string()));
+    app.expanded_tool_results.insert("bash-1".to_string());
+
+    // Ctrl+O → expand all, then Ctrl+O back to smart — selected tool stays pinned.
+    assert!(crate::render::tool_policy::toggle_expand_all_mode(
+        &mut app.full_tool_view,
+        &mut app.expanded_tool_results,
+        &mut app.collapsed_tool_results,
+        Some("bash-1"),
+    ));
+    assert!(app.full_tool_view);
+    assert!(!crate::render::tool_policy::toggle_expand_all_mode(
+        &mut app.full_tool_view,
+        &mut app.expanded_tool_results,
+        &mut app.collapsed_tool_results,
+        Some("bash-1"),
+    ));
+    assert!(!app.full_tool_view);
+    assert!(app.expanded_tool_results.contains("bash-1"));
+
+    let text = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        text.contains("hi-output-line"),
+        "pinned tool must stay open after Ctrl+O cycle: {text}"
+    );
+}
+
+#[test]
+fn compact_tool_render_hides_bash_output_until_expanded() {
+    let mut app = test_app("");
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "run".to_string(),
+        input: serde_json::json!({ "command": "just test-crate navi-tui" }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({
+            "stdout": "hidden stdout",
+            "stderr": "hidden stderr",
+            "exit_code": 0
+        }),
+    };
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        tool_invocation: Some(invocation),
+        tool_result: Some(result),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    let collapsed = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(collapsed.contains("Run just test-crate navi-tui"));
+    assert!(!collapsed.contains("hidden stdout"));
+    assert!(!collapsed.contains("hidden stderr"));
+
+    app.expanded_tool_results.insert("call-1".to_string());
+    let expanded = build_chat_lines(&mut app, 80)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(expanded.contains("hidden stdout"));
+    assert!(expanded.contains("hidden stderr"));
+}
+
+#[test]
+fn apply_patch_tool_full_content_uses_edit_summary() {
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "apply_patch".to_string(),
+        input: serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: crates/navi-tui/src/lib.rs\n@@\n-    old\n+    new\n+    added\n*** End Patch\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "call-1".to_string(),
+        ok: true,
+        output: serde_json::json!({ "status": 0 }),
+    };
+
+    let content = tool_full_content(&invocation, &result);
+
+    assert!(content.contains("Edited crates/navi-tui/src/lib.rs (+2 -1)"));
+    assert!(content.contains("```diff\n"));
+    assert!(!content.contains("Patch:"));
+    assert!(!content.contains("*** Begin Patch"));
+    assert!(!content.contains("*** End Patch"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
+    assert!(content.contains("-    old\n+    new\n+    added"));
+    assert!(!content.contains("Input"));
+    assert!(!content.contains("Output"));
+}
+
+#[tokio::test]
+async fn command_palette_sync_models_starts_sync() {
+    let mut app = test_app("");
+    app.command_filter = "sync".to_string();
+    app.selected_command = 0;
+
+    let commands = filtered_commands(&app);
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::SyncModels))
+    );
+
+    sync_models_tui(&mut app);
+
+    assert!(app.is_loading);
+    assert!(app.loading_start.is_some());
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(
+        app.messages[0].content,
+        "Syncing registry and models from providers..."
+    );
+    assert_eq!(app.messages[0].status, Some("syncing".to_string()));
+}
+
+#[tokio::test]
+async fn model_picker_tab_triggers_per_provider_sync() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+
+    let provider_id = app.models[app.selected_model].provider_id.clone();
+
+    // Press Tab to trigger per-provider sync
+    handle_model_key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.messages.len(), 1);
+    assert!(
+        app.messages[0].content.contains(&provider_id),
+        "Tab sync message should mention the provider: got '{}'",
+        app.messages[0].content
+    );
+}
+
+#[tokio::test]
+async fn model_picker_ctrl_r_triggers_all_provider_sync() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+
+    // Press Ctrl+r to trigger all-provider sync
+    handle_model_key(&mut app, KeyCode::Char('r'), KeyModifiers::CONTROL);
+
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(
+        app.messages[0].content,
+        "Syncing registry and models from providers..."
+    );
+}
+
+#[test]
+fn model_picker_ctrl_e_opens_provider_setup() {
+    let mut app = test_app("");
+    app.mode = Mode::Models;
+    // Mark the selected provider as authenticated so it appears in filtered rows.
+    // (MockEngine does not mirror CredentialStore keys into credential_status.)
+    let provider_id = app.models[app.selected_model].provider_id.clone();
+    let _ = app
+        .credential_store()
+        .set_api_key(&provider_id, "dummy-key");
+    app.authenticated_providers
+        .insert(navi_sdk::canonical_provider_id(&provider_id).to_string());
+
+    let selected = app.selected_model;
+    // Ensure selection is visible in the model list rows used by Ctrl+e.
+    let rows = build_model_rows(&app);
+    let selected = if selected_model_in_rows(&rows, selected).is_some() {
+        selected
+    } else {
+        first_model_index(&rows).unwrap_or(selected)
+    };
+    app.selected_model = selected;
+
+    handle_model_key(&mut app, KeyCode::Char('e'), KeyModifiers::CONTROL);
+
+    assert_eq!(app.mode, Mode::ApiKeyEntry);
+    assert_eq!(app.pending_model_selection, Some(selected));
+    assert!(app.api_key_input.is_empty());
+    assert_eq!(app.api_key_cursor, 0);
+}
+
+#[test]
+fn model_error_is_rendered_as_separate_message() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("tool result".to_string()),
+        ..ChatMessage::new(
+            ChatRole::Assistant,
+            "✓ write_file called · success".to_string(),
+        )
+    });
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+    app.skip_next_model_done = true;
+
+    handle_model_error(
+        &mut app,
+        "provider request failed with 400 Bad Request".to_string(),
+    );
+
+    assert_eq!(app.messages[0].status.as_deref(), Some("tool result"));
+    assert_eq!(app.messages[2].status.as_deref(), Some("error"));
+    assert!(app.messages[2].content.contains("400"));
+    assert!(!app.is_loading);
+    assert!(!app.skip_next_model_done);
+}
+
+// Spawns a retry stream task; current_thread is sufficient (task yields).
+#[tokio::test]
+async fn transient_model_error_retries_without_final_error() {
+    let mut app = test_app("");
+    app.provider_configured = false;
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+
+    handle_model_error(
+        &mut app,
+        "failed to read chat completions stream: unexpected EOF during chunk size line".to_string(),
+    );
+
+    assert_eq!(app.model_retry_attempts, 1);
+    assert!(app.is_loading);
+    assert!(app.has_stream_task());
+    assert!(
+        app.messages
+            .iter()
+            .any(|message| message.status.as_deref() == Some("retrying"))
+    );
+    assert!(
+        app.messages
+            .iter()
+            .all(|message| message.status.as_deref() != Some("thinking"))
+    );
+}
+
+#[test]
+fn free_usage_limit_error_does_not_schedule_retry() {
+    let mut app = test_app("");
+    app.messages.push(ChatMessage {
+        status: Some("thinking".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+    app.is_loading = true;
+
+    handle_model_error(
+            &mut app,
+            "API error 429 Too Many Requests: {\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Rate limit exceeded.\"}} (requested delay: Some(64649s))".to_string(),
+        );
+
+    assert_eq!(app.model_retry_attempts, 0);
+    assert!(!app.is_loading);
+    assert!(!app.has_stream_task());
+    assert!(
+        app.messages
+            .last()
+            .unwrap()
+            .content
+            .contains("Usage limit reached for")
+    );
+    assert!(
+        app.messages
+            .last()
+            .unwrap()
+            .content
+            .contains("select a non-free model")
+    );
+}
+
+#[test]
+fn opencode_zen_model_names_are_canonicalized_for_api_requests() {
+    assert_eq!(
+        navi_sdk::provider_request_model_name("opencode", "DeepSeek V4 Flash Free"),
+        "deepseek-v4-flash-free"
+    );
+    assert_eq!(
+        navi_sdk::provider_request_model_name("opencode-zen", "opencode/Nemotron 3 Ultra Free"),
+        "nemotron-3-ultra-free"
+    );
+    assert_eq!(
+        navi_sdk::provider_request_model_name("openrouter", "DeepSeek V4 Flash Free"),
+        "DeepSeek V4 Flash Free"
+    );
+}
+
+#[test]
+fn opencode_free_models_can_use_public_access_without_key() {
+    let app = test_app("");
+    let model = ModelOption {
+        name: "deepseek-v4-flash-free".to_string(),
+        provider_id: "opencode".to_string(),
+        provider_label: "OpenCode Zen".to_string(),
+        provider_description: "Recommended".to_string(),
+        task_size: Some(navi_sdk::ModelTaskSize::Small),
+        context_window_tokens: None,
+        supports_thinking: None,
+        reasoning_levels: Vec::new(),
+        default_reasoning_effort: None,
+    };
+
+    assert!(model_is_available_for_selection(&app, &model));
+    assert_eq!(
+        navi_sdk::provider_request_model_name("opencode", "deepseek-v4-flash-free"),
+        "deepseek-v4-flash-free"
+    );
+}
+
+#[test]
+fn escape_confirm_modal_cancels_active_tool_task_state() {
+    let mut app = test_app("");
+    app.is_loading = true;
+    app.skip_next_model_done = true;
+    app.messages.push(ChatMessage {
+        status: Some("tool: bash".to_string()),
+        ..ChatMessage::new(ChatRole::Assistant, String::new())
+    });
+
+    // Esc opens a confirmation modal and keeps the operation running.
+    let should_quit = handle_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!should_quit);
+    assert!(app.is_loading);
+    assert_eq!(app.mode, Mode::ConfirmCancelTurn);
+
+    // Enter confirms cancellation.
+    let should_quit = handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert!(!should_quit);
+    assert!(!app.is_loading);
+    assert!(!app.skip_next_model_done);
+    assert_eq!(
+        active_assistant_message(&mut app).and_then(|message| message.status.clone()),
+        Some("cancelled".to_string())
+    );
+}
+
+// ─── recent provider / model lists ────────────────────────────────────────
+
+#[test]
+fn push_recent_provider_dedupes_and_caps() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+
+    for _ in 0..20 {
+        crate::providers::push_recent_provider(&mut app, "openai");
+    }
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec!["openai".to_string()]
+    );
+
+    crate::providers::push_recent_provider(&mut app, "anthropic");
+    crate::providers::push_recent_provider(&mut app, "google-gemini");
+    crate::providers::push_recent_provider(&mut app, "openai");
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec![
+            "openai".to_string(),
+            "google-gemini".to_string(),
+            "anthropic".to_string(),
+        ]
+    );
+
+    // Fill past the cap and confirm the oldest entries fall off.
+    for id in ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"] {
+        crate::providers::push_recent_provider(&mut app, id);
+    }
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids.len(),
+        crate::providers::RECENTS_LIMIT
+    );
+    assert_eq!(
+        app.loaded_config
+            .config
+            .tui
+            .recent_provider_ids
+            .first()
+            .map(String::as_str),
+        Some("j"),
+    );
+}
+
+#[test]
+fn push_recent_model_uses_provider_model_key() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_model_ids.clear();
+
+    crate::providers::push_recent_model(&mut app, "openai", "gpt-5.5");
+    crate::providers::push_recent_model(&mut app, "anthropic", "claude-sonnet-4-20250514");
+    crate::providers::push_recent_model(&mut app, "openai", "gpt-5.5");
+
+    assert_eq!(
+        app.loaded_config.config.tui.recent_model_ids,
+        vec![
+            "openai:gpt-5.5".to_string(),
+            "anthropic:claude-sonnet-4-20250514".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn push_recent_provider_canonicalizes_aliases() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+
+    crate::providers::push_recent_provider(&mut app, "opencode-zen");
+    crate::providers::push_recent_provider(&mut app, "opencode");
+
+    // Both should collapse to the canonical `opencode`.
+    assert_eq!(
+        app.loaded_config.config.tui.recent_provider_ids,
+        vec!["opencode".to_string()],
+    );
+}
+
+fn provider_rows_labels(app: &TuiApp) -> Vec<String> {
+    app.filtered_providers()
+        .into_iter()
+        .map(|row| match row {
+            crate::providers::ProviderListRow::Header { label } => {
+                format!("section: {label}")
+            }
+            crate::providers::ProviderListRow::Provider { index } => {
+                let catalog = navi_sdk::provider_catalog(&app.loaded_config.config);
+                catalog
+                    .get(index)
+                    .map(|p| p.id.clone())
+                    .unwrap_or_else(|| format!("#{index}"))
+            }
+            crate::providers::ProviderListRow::Account {
+                label, selected, ..
+            } => {
+                let indicator = if selected { "●" } else { "○" };
+                format!("  {indicator} {label}")
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn filtered_providers_orders_recent_connected_other() {
+    let mut app = test_app("");
+    // Mark two arbitrary providers as recent.
+    app.loaded_config.config.tui.recent_provider_ids.clear();
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    // Mark a different provider as connected.
+    app.authenticated_providers.clear();
+    app.authenticated_providers
+        .insert("google-gemini".to_string());
+
+    let rows = provider_rows_labels(&app);
+
+    // Recent header first, then the two recents (in recents order).
+    assert!(rows[0].starts_with("section:"));
+    assert!(rows[0].contains("Recent"));
+    assert!(rows[1].ends_with("anthropic"));
+    assert!(rows[2].ends_with("openai"));
+    // Connected section next.
+    let connected_idx = rows
+        .iter()
+        .position(|r| r.contains("Connected"))
+        .expect("connected header present");
+    assert!(rows[connected_idx + 1].ends_with("google-gemini"));
+    // The trailing "Other" section appears last.
+    assert!(rows.iter().any(|r| r.contains("Other providers")));
+}
+
+#[test]
+fn filtered_providers_skips_sections_when_filtering() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    app.authenticated_providers.clear();
+    app.authenticated_providers
+        .insert("google-gemini".to_string());
+    app.provider_filter = "ant".to_string();
+
+    let rows = provider_rows_labels(&app);
+
+    // No section headers when filtering, and only matches show up.
+    assert!(rows.iter().all(|r| !r.starts_with("section:")));
+    assert!(rows.iter().any(|r| r.contains("anthropic")));
+}
+
+#[test]
+fn provider_modal_arrow_keys_skip_section_headers() {
+    let mut app = test_app("");
+    app.loaded_config.config.tui.recent_provider_ids =
+        vec!["anthropic".to_string(), "openai".to_string()];
+    app.authenticated_providers.clear();
+    open_modal(&mut app, ModalKind::Providers);
+
+    let rows = app.filtered_providers();
+    let recent_openai = rows
+        .iter()
+        .position(|row| {
+            matches!(
+                row,
+                crate::providers::ProviderListRow::Provider { index }
+                    if navi_sdk::provider_catalog(&app.loaded_config.config)
+                        .get(*index)
+                        .is_some_and(|provider| provider.id == "openai")
+            )
+        })
+        .expect("recent openai row");
+    let next_header = rows
+        .iter()
+        .enumerate()
+        .skip(recent_openai + 1)
+        .find_map(|(index, row)| {
+            matches!(row, crate::providers::ProviderListRow::Header { .. }).then_some(index)
+        })
+        .expect("section header after recent providers");
+    let last_selectable_before_header = next_header - 1;
+    let next_provider_after_header = rows
+        .iter()
+        .enumerate()
+        .skip(next_header + 1)
+        .find_map(|(index, row)| {
+            matches!(row, crate::providers::ProviderListRow::Provider { .. }).then_some(index)
+        })
+        .expect("provider after next section header");
+
+    app.selected_provider_setting = last_selectable_before_header;
+    handle_key(&mut app, KeyCode::Down, KeyModifiers::empty());
+    assert_eq!(app.selected_provider_setting, next_provider_after_header);
+
+    handle_key(&mut app, KeyCode::Up, KeyModifiers::empty());
+    assert_eq!(app.selected_provider_setting, last_selectable_before_header);
+}
+
+#[test]
+fn open_model_picker_keeps_current_model_selected() {
+    let mut app = test_app("");
+    // Find a model that is actually available for selection (has credentials
+    // or is a free/public model). Using an arbitrary index like 1 is fragile
+    // because the embedded registry snapshot may have models whose providers
+    // require API keys the test app doesn't have.
+    let rows = build_model_rows(&app);
+    let Some(first_idx) = crate::providers::first_model_index(&rows) else {
+        return; // No selectable models — nothing to test.
+    };
+    if app.models.len() > first_idx {
+        app.selected_model = first_idx;
+        let current_name = app.models[first_idx].name.clone();
+
+        open_model_picker(&mut app);
+
+        // The model picker should keep the current selection if it's still
+        // in the filtered rows.
+        assert_eq!(app.models[app.selected_model].name, current_name);
+    }
+}
+
+#[test]
+fn build_model_rows_prepends_recent_section() {
+    let mut app = test_app("");
+    let Some((recent_index, recent_model)) = app
+        .models
+        .iter()
+        .enumerate()
+        .find(|(_, model)| model_is_available_for_selection(&app, model))
+    else {
+        return;
+    };
+    // Force the first model to be a "recent" so it appears at the top.
+    app.loaded_config.config.tui.recent_model_ids.clear();
+    app.loaded_config.config.tui.recent_model_ids = vec![format!(
+        "{}:{}",
+        recent_model.provider_id, recent_model.name
+    )];
+
+    let rows = build_model_rows(&app);
+
+    // The first non-header row should be the recent model.
+    let first_model = rows
+        .iter()
+        .find_map(|r| match r {
+            ListRow::Model { index } => Some(*index),
+            ListRow::Header { .. } | ListRow::Spacer => None,
+        })
+        .expect("at least one model row");
+    assert_eq!(first_model, recent_index);
+    // And there must be a recent header above it.
+    let has_recent_header = rows.iter().any(|r| match r {
+        ListRow::Header { label, .. } => label.contains("Recent"),
+        _ => false,
+    });
+    assert!(
+        has_recent_header,
+        "expected a Recent header in the rendered model rows"
+    );
+}
+
+#[test]
+fn model_routing_opens_from_ctrl_b_and_tabs() {
+    let mut app = test_app("");
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char('b'),
+        KeyModifiers::CONTROL
+    ));
+    assert_eq!(app.mode, Mode::ModelRouting);
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
+
+    // Right arrow advances tabs: Chat -> Attachments -> Chat
+    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(
+        app.model_routing_tab,
+        crate::state::ModelRoutingTab::Attachments
+    );
+    assert!(!handle_key(&mut app, KeyCode::Right, KeyModifiers::NONE));
+    assert_eq!(app.model_routing_tab, crate::state::ModelRoutingTab::Chat);
+}
+
+#[test]
+fn ctrl_comma_opens_settings() {
+    let mut app = test_app("");
+    assert!(!handle_key(
+        &mut app,
+        KeyCode::Char(','),
+        KeyModifiers::CONTROL
+    ));
+    assert_eq!(app.mode, Mode::Settings);
+}
+
+#[test]
+fn extensions_hub_opens_skills() {
+    let mut app = test_app("");
+    app.mode = Mode::Commands;
+    // Global search finds Skills even though it lives under Extensions hub.
+    app.command_filter = "skills".to_string();
+    app.selected_command = 0;
+    assert!(!run_selected_command(&mut app));
+    assert_eq!(app.mode, Mode::Skills);
+}
+
+#[test]
+fn command_palette_model_routing_entry_exists() {
+    let mut app = test_app("");
+    // Root has Model hub; search finds Model Routing action.
+    app.command_filter = "routing".into();
+    let commands = filtered_commands(&app);
+    assert!(
+        commands
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::ModelRouting))
+    );
+    app.command_filter = "skills".into();
+    assert!(
+        filtered_commands(&app)
+            .iter()
+            .any(|c| matches!(c.action, CommandAction::Skills))
+    );
+}
+
+#[test]
+fn apply_patch_body_is_clean_diff_without_protocol_chrome() {
+    let invocation = ToolInvocation {
+        id: "p1".into(),
+        tool_name: "apply_patch".into(),
+        input: serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old\n+new\n*** End Patch\n"
+        }),
+    };
+    let result = ToolResult {
+        invocation_id: "p1".into(),
+        ok: true,
+        output: serde_json::json!({}),
+    };
+    let content = tool_full_content(&invocation, &result);
+    assert!(content.contains("Edited src/a.rs"));
+    assert!(content.contains("```diff\n"));
+    assert!(
+        !content.contains("*** Update File:"),
+        "path chrome belongs on the card only"
+    );
+    assert!(content.contains("-old\n+new"));
+    assert!(!content.contains("*** Begin Patch"));
+    assert!(!content.contains("*** End Patch"));
+    assert!(!content.contains("Patch:"));
+}
+
+#[test]
+fn next_model_index_from_recovers_when_selection_not_in_rows() {
+    use crate::providers::{ListRow, next_model_index_from, previous_model_index_from};
+
+    let rows = vec![
+        ListRow::Header {
+            label: "— Recent models —".into(),
+            provider_id: String::new(),
+        },
+        ListRow::Spacer,
+        ListRow::Model { index: 5 },
+        ListRow::Model { index: 7 },
+        ListRow::Header {
+            label: "Other".into(),
+            provider_id: "other-provider".into(),
+        },
+        ListRow::Model { index: 1 },
+    ];
+    // Stale selection 0 (not in rows) → land on first model (5), not no-op.
+    assert_eq!(next_model_index_from(0, &rows), 5);
+    assert_eq!(next_model_index_from(5, &rows), 7);
+    assert_eq!(next_model_index_from(7, &rows), 1);
+    assert_eq!(previous_model_index_from(5, &rows), 5); // already first
+    assert_eq!(previous_model_index_from(7, &rows), 5);
+}
+
+#[test]
+fn effort_picker_arrow_moves_cursor_independent_of_current_level() {
+    use crate::state::ThinkingLevel;
+
+    let mut app = test_app("");
+    // Full effort ladder (not binary).
+    app.models = vec![ModelOption {
+        name: "thinky".into(),
+        provider_id: "p".into(),
+        provider_label: "P".into(),
+        provider_description: String::new(),
+        task_size: None,
+        context_window_tokens: None,
+        supports_thinking: Some(true),
+        reasoning_levels: vec![
+            "max".into(),
+            "high".into(),
+            "medium".into(),
+            "low".into(),
+            "off".into(),
+        ],
+        default_reasoning_effort: None,
+    }];
+    app.selected_model = 0;
+    app.thinking_level = ThinkingLevel::Medium;
+    app.selected_thinking = ThinkingLevel::Medium.index();
+    app.mode = Mode::Thinking;
+    app.modal_stack.replace(Some(ModalKind::Thinking));
+
+    // Down should move highlight even while thinking_level stays Medium until Enter.
+    // (Old render used `selected || thinking_level` and stayed stuck on Medium.)
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Low.index());
+    assert_eq!(
+        app.thinking_level,
+        ThinkingLevel::Medium,
+        "Enter not pressed — active level unchanged"
+    );
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Off.index());
+    assert!(!handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(app.selected_thinking, ThinkingLevel::Low.index());
+}
+
+#[test]
+fn background_commands_down_arrow_moves_selection() {
+    let mut app = test_app("");
+    app.mode = Mode::BackgroundCommands;
+    app.modal_stack.replace(Some(ModalKind::BackgroundCommands));
+    app.background_commands = vec![
+        sample_background_command("bg_1"),
+        sample_background_command("bg_2"),
+        sample_background_command("bg_3"),
+    ];
+    app.bg_command_selected = 0;
+
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_command_selected, 1);
+    assert!(!handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE));
+    assert_eq!(app.bg_command_selected, 2);
+}
+
+#[test]
+fn set_goal_command_opens_modal() {
+    use crate::state::{ModalKind, Mode};
+
+    let mut app = test_app("");
+    app.input = "prefilled objective".into();
+    // Same path as CommandAction::SetGoal.
+    app.goal_draft_text = app.input.trim().to_string();
+    app.goal_draft_cursor = app.goal_draft_text.len();
+    crate::keybindings::replace_modal(&mut app, ModalKind::SetGoal);
+    assert_eq!(app.mode, Mode::SetGoal);
+    assert_eq!(app.goal_draft_text, "prefilled objective");
+}
+
+#[test]
+fn submit_goal_objective_adds_goal_chat_and_model_history() {
+    let mut app = test_app("");
+    app.provider_configured = false; // skip tokio stream in unit test
+    crate::chat::submit_goal_objective(&mut app, "Ship coverage gate in CI".into());
+    assert!(app.goal_state.is_some());
+    let goal_msg = app
+        .messages
+        .iter()
+        .find(|m| m.is_goal)
+        .expect("goal chat message");
+    assert_eq!(goal_msg.content, "Ship coverage gate in CI");
+    let hist = app.conversation_history.last().expect("history");
+    assert!(
+        hist.content.contains("# Goal") && hist.content.contains("Ship coverage gate in CI"),
+        "model history must include goal framing: {}",
+        hist.content
+    );
+}
+
+#[test]
+fn set_goal_enter_submits_and_closes_modal() {
+    use crate::state::{ModalKind, Mode};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    let mut app = test_app("");
+    // Avoid starting a real stream/reactor in unit tests.
+    app.provider_configured = false;
+    app.goal_draft_text = "Fix the goal UX".into();
+    app.goal_draft_cursor = app.goal_draft_text.len();
+    crate::keybindings::replace_modal(&mut app, ModalKind::SetGoal);
+    assert_eq!(app.mode, Mode::SetGoal);
+
+    crate::keybindings::handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.goal_draft_text.is_empty());
+    // First message is the Goal bubble; stream may add an error assistant if no key.
+    let goal_msg = app
+        .messages
+        .iter()
+        .find(|m| m.is_goal)
+        .expect("goal chat message");
+    assert_eq!(goal_msg.content, "Fix the goal UX");
+    assert!(app.goal_state.is_some());
+}

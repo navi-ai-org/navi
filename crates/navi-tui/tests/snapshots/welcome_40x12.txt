@@ -1,0 +1,12 @@
+  main  /tmp/navi-test-project
+
+   NAVI local agent
+
+
+
+    (￣ ω￣ ) z   Ready
+
+  ╭──────────────────────────────────╮
+  │ ›                                │
+  ╰──────────────────────────────────╯
+                  gpt-5.5 · restricted

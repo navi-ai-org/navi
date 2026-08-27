@@ -1,0 +1,12 @@
+version = 1
+id = "b0-trace-store"
+title = "trace store module exists"
+category = "simple_repo_task"
+task = "Verify that structured trace storage is available."
+tags = ["b0", "trace"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/trace.rs"
+required = true
+

@@ -1,0 +1,19 @@
+# Skill-kind package skeleton (LocalDev / unsigned).
+# Includes SKILL.md which install imports into skills.sqlite when kind=skill.
+
+[plugin]
+id = "hello-skill"
+name = "Hello Skill Pack"
+version = "0.1.0"
+publisher = "gh:navi-ai-org"
+runtime = "wasm-component"
+entry = "plugin.wasm"
+wasm_hash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+signature = "local-dev"
+minimum_navi = "0.1.0"
+
+[[tools]]
+id = "skill_ping"
+summary = "Placeholder tool shipped with the skill pack WASM."
+risk = "read_only"
+capabilities = []

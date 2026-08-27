@@ -1,0 +1,31 @@
+version = 1
+id = "tq-symbol-ranking"
+title = "Tool quality: symbol ranking relevance"
+category = "tool_quality"
+fixture = "benchmarks/fixtures/rust-symbol-ranking"
+task = """
+Fix search/symbol ranking so tests pass.
+
+Use tools efficiently: locate failing assertions, inspect ranking logic,
+apply a small correct fix, re-run tests. Avoid thrashing (repeat failed
+commands without changes).
+"""
+timeout_ms = 600000
+max_turns = 16
+max_tool_calls = 80
+tags = ["tool-quality", "medium-high", "ranking"]
+
+[metadata]
+difficulty = "medium-high"
+focus = "search relevance + deterministic ordering"
+eval_axis = "reasoning_with_tools"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

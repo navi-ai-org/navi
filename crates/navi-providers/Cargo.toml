@@ -1,0 +1,13 @@
+[package]
+name = "navi-providers"
+version = "0.7.0"
+edition.workspace = true
+license.workspace = true
+description = "Provider facade for NAVI — re-exports the provider implementation crate."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+navi-core.workspace = true
+navi-openai.workspace = true

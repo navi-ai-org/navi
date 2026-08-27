@@ -1,0 +1,242 @@
+name: CI
+
+# Triggers:
+# - pull_request: fast quality gate (fmt / test-fast / clippy / coverage-core)
+# - workflow_dispatch: manual full run (includes integration suite)
+#
+# Version tags (v*) do NOT run this workflow — only `.github/workflows/release.yml`
+# handles tagged releases (fmt + package tests + multi-platform builds + GH assets).
+# Push to main alone does NOT start CI (open a PR or dispatch manually).
+#
+# Fast path notes:
+# - No artificial CARGO_BUILD_JOBS cap (use all runner cores)
+# - Jobs run in parallel (test no longer waits on check)
+# - Skip binding crates (napi/dart) — heavy toolchains, not the shipping binary
+# - PR Test = lib+bins (test-fast) + selective goldens/smoke — not full --tests
+# - Clippy on lib/bins only (not --all-targets, which recompiles every integration harness)
+# - Full workspace integration suite runs on workflow_dispatch only
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Leave CARGO_BUILD_JOBS unset so rustc uses nproc on the runner.
+  RUST_BACKTRACE: "1"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    name: Format
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  # Primary quality gate: unit/bin tests for product crates (mirrors `just test-fast`).
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout: 25
+          - os: windows-latest
+            timeout: 40
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-product-${{ matrix.os }}
+          prefix-key: v2
+
+      - name: Product unit + bin tests (fast path)
+        # No integration harnesses (no CARGO_BIN_EXE_navi, no TUI scenario binaries).
+        # Flaky/hanging tests are #[ignore] in source (headless_e2e, wasm fake, compact palette).
+        # Omit navi-cli (bin link tax) and navi-voice (onnx is opt-in; test with
+        # --no-default-features in a dedicated job if needed). embeddings stay
+        # off unless a package enables them — navi-core default no longer pulls
+        # candle into unit-test graphs for sdk/tui/core alone.
+        run: >
+          cargo test --locked
+          --lib --bins
+          -p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui
+          -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api
+          -p navi-plugin-broker -p navi-plugin-manifest
+          -p navi-plugin-orchestrator -p navi-plugin-runtime -p copland
+          -- --test-threads=4
+
+      - name: TUI screenshot goldens
+        # Visual regressions; uses MockEngine harness (no full process spawn).
+        run: cargo test --locked -p navi-tui --test screenshots -- --test-threads=4
+
+      - name: CLI PTY smoke
+        # One binary link + short poll for first paint. Linux only in source.
+        if: runner.os == 'Linux'
+        run: cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1
+
+      - name: Smoke-build navi-lite
+        run: cargo build -p navi-lite --bin navi-lite --locked
+
+  # Full product workspace tests (integration binaries, scenarios, CLI e2e that
+  # are not ignored). Manual dispatch only — not every PR (tags use release.yml).
+  test-full:
+    name: Test (full integration)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-product
+          prefix-key: v2
+
+      - name: Full product workspace tests
+        run: >
+          cargo test --locked
+          --workspace
+          --exclude navi-napi
+          --exclude navi-dart
+          --exclude navi-server
+          -- --test-threads=8
+
+  # Lint in parallel with Test (shared cache key → second job is usually a hit).
+  clippy:
+    name: Clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout: 15
+          - os: windows-latest
+            timeout: 25
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-product-${{ matrix.os }}
+          prefix-key: v2
+
+      - name: Clippy (lib + bins, product crates)
+        # --all-targets forces recompilation of every integration test binary and
+        # is the #1 clippy wall-time cost. Style pedantry is not -D here; correctness
+        # and suspicious lints still fail the build via -D clippy::correctness etc.
+        run: >
+          cargo clippy --locked
+          --workspace
+          --lib --bins
+          --exclude navi-napi
+          --exclude navi-dart
+          --exclude navi-server
+          --
+          -D clippy::correctness
+          -D clippy::suspicious
+          -D clippy::perf
+          -W clippy::style
+          -A clippy::too_many_arguments
+          -A clippy::collapsible_if
+          -A clippy::needless_borrow
+          -A clippy::needless_borrows_for_generic_args
+          -A clippy::derivable_impls
+          -A clippy::doc_lazy_continuation
+          -A clippy::redundant_guards
+          -A clippy::if_same_then_else
+          -A clippy::match_like_matches_macro
+          -A clippy::redundant_closure
+          -A clippy::bool_comparison
+          -A clippy::collapsible_match
+          -A clippy::manual_strip
+          -A clippy::single_char_pattern
+          -A clippy::unnecessary_wraps
+
+  # Targeted coverage gate: navi-core lib tests + critical production-path floors.
+  # Avoids a vague global 80% (mock-heavy suite). Local: `just coverage-core`.
+  coverage:
+    name: Coverage (navi-core critical paths)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-coverage-core
+          prefix-key: v1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: navi-core lib coverage (lcov)
+        # --ignore-run-fail: still emit lcov if flaky/unrelated tests fail.
+        # The Test job owns suite pass/fail; this job gates critical-path floors.
+        run: |
+          mkdir -p coverage
+          cargo llvm-cov -p navi-core --lib --lcov --output-path coverage/lcov-core.info \
+            --ignore-run-fail \
+            -- --test-threads=4
+
+      - name: Critical path coverage gate
+        run: python3 scripts/check-critical-coverage.py coverage/lcov-core.info
+
+      - name: Upload lcov artifact
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: lcov-core
+          path: coverage/lcov-core.info
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # Single green check for branch protection / release gates.
+  # test-full is not required for PR merge (optional on main).
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [fmt, test, clippy, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aggregate job results
+        run: |
+          set -euo pipefail
+          echo "fmt=${{ needs.fmt.result }}"
+          echo "test=${{ needs.test.result }}"
+          echo "clippy=${{ needs.clippy.result }}"
+          echo "coverage=${{ needs.coverage.result }}"
+          for r in \
+            "${{ needs.fmt.result }}" \
+            "${{ needs.test.result }}" \
+            "${{ needs.clippy.result }}" \
+            "${{ needs.coverage.result }}"
+          do
+            if [[ "$r" != "success" ]]; then
+              echo "CI failed (job result: $r)" >&2
+              exit 1
+            fi
+          done
+          echo "All CI jobs passed."

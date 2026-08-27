@@ -1,0 +1,77 @@
+// NAVI plugin WIT definitions (WebAssembly Component Model)
+//
+// This WIT package defines the host-plugin interface for NAVI plugins. A
+// plugin component implements `navi-plugin`, which gives the host a
+// strongly-typed view of the tool's name, risk, and invocation signature.
+//
+// Until wit-bindgen generates native Rust bindings (see `navi-plugin-runtime/src/component.rs`),
+// plugins use a flat memory ABI identical to the raw-module path. This
+// document is the canonical interface for component authors.
+
+package navi:plugin@0.1.0;
+
+interface types {
+    /// Tool risk classification.
+    variant tool-risk {
+        read-only,
+        network-read,
+        network-write,
+        write,
+    }
+
+    /// Plugin manifest exposed to the host.
+    record plugin-info {
+        id: string,
+        name: string,
+        version: string,
+        publisher: string,
+    }
+
+    /// Tool description as declared by the plugin.
+    record tool-info {
+        id: string,
+        summary: string,
+        risk: tool-risk,
+        input-schema: string,
+    }
+}
+
+interface host {
+    use types.{tool-risk};
+
+    /// Read a project file. Returns a UTF-8 string on success, or a JSON
+    /// error document on failure.
+    fs-read: func(path: string) -> string;
+
+    /// List a project directory. Returns a JSON array of entry names.
+    fs-list: func(path: string) -> string;
+
+    /// Make an HTTP request. Input is a JSON object describing method/url/body;
+    /// output is a JSON object describing the response or an error.
+    http-request: func(input: string) -> string;
+
+    /// Get git status as a text dump.
+    git-status: func() -> string;
+
+    /// Get git diff as a text dump.
+    git-diff: func() -> string;
+}
+
+interface plugin {
+    use types.{plugin-info, tool-info};
+    use host;
+
+    /// Returns the plugin's identifying metadata.
+    info: func() -> plugin-info;
+
+    /// Lists all tools the plugin implements.
+    list-tools: func() -> list<tool-info>;
+
+    /// Invokes a tool by name with a JSON input. Returns a JSON output.
+    run-tool: func(name: string, input: string) -> string;
+}
+
+world navi-plugin {
+    export plugin;
+    import host;
+}

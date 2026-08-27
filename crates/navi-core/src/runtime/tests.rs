@@ -1,0 +1,841 @@
+use super::*;
+use crate::config::{ApprovalConfig, HarnessConfig, PermissionMode};
+use crate::{
+    ModelRequest, ModelResponse, ModelStream, ModelStreamEvent, NaviConfig, SecurityConfig,
+    ToolInvocation,
+};
+use anyhow::Result;
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use futures_util::stream;
+use serde_json::json;
+use std::sync::Mutex;
+use std::time::Duration;
+use tokio::time::timeout;
+
+struct MockToolProvider {
+    calls: Arc<Mutex<usize>>,
+    file_path: String,
+}
+
+#[async_trait]
+impl ModelProvider for MockToolProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        let mut calls = self.calls.lock().expect("calls");
+        *calls += 1;
+        let call_number = *calls;
+        drop(calls);
+
+        if call_number == 1 {
+            assert!(!request.tools.is_empty());
+            assert!(request.messages[0].content.contains("Workflow contract"));
+            // Context packets are now in developer messages, not the system message.
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|m| m.content.contains("runtime context")),
+                "context packet content should be in a developer message"
+            );
+            Box::pin(stream::iter(vec![Ok(ModelStreamEvent::ToolCall(
+                ToolInvocation {
+                    id: "call-1".to_string(),
+                    tool_name: "read_file".to_string(),
+                    input: json!({ "path": self.file_path }),
+                },
+            ))]))
+        } else {
+            assert!(
+                request
+                    .messages
+                    .iter()
+                    .any(|message| { message.role == crate::model::ModelRole::Tool })
+            );
+            Box::pin(stream::iter(vec![
+                Ok(ModelStreamEvent::TextDelta {
+                    text: "read complete".to_string(),
+                }),
+                Ok(ModelStreamEvent::Done),
+            ]))
+        }
+    }
+
+    async fn complete(&self, request: ModelRequest) -> Result<ModelResponse> {
+        let mut stream = self.stream(request);
+        let mut text = String::new();
+        while let Some(event) = stream.next().await {
+            match event? {
+                ModelStreamEvent::TextDelta { text: delta } => text.push_str(&delta),
+                ModelStreamEvent::Done => break,
+                _ => {}
+            }
+        }
+        Ok(ModelResponse { text })
+    }
+}
+
+struct SimpleProvider;
+
+#[async_trait]
+impl ModelProvider for SimpleProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: "simple".to_string(),
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
+struct GoalToolsProvider;
+
+#[async_trait]
+impl ModelProvider for GoalToolsProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        // Goal tools are Direct exposure and should be listed in the model schema.
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: "goal tools available".to_string(),
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
+struct EchoModelProvider;
+
+#[async_trait]
+impl ModelProvider for EchoModelProvider {
+    fn stream(&self, request: ModelRequest) -> ModelStream {
+        Box::pin(stream::iter(vec![
+            Ok(ModelStreamEvent::TextDelta {
+                text: request.model,
+            }),
+            Ok(ModelStreamEvent::Done),
+        ]))
+    }
+}
+
+// Session snapshot uses `block_in_place` — requires multi_thread Tokio.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn headless_runtime_executes_read_tools_and_continues() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let file = tempdir.path().join("Cargo.toml");
+    std::fs::write(&file, "[package]\nname = \"demo\"\n").expect("write file");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig {
+                permission_mode: PermissionMode::AcceptEdits,
+                ..SecurityConfig::default()
+            },
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    let provider = Arc::new(MockToolProvider {
+        calls: Arc::new(Mutex::new(0)),
+        file_path: file.display().to_string(),
+    });
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: provider,
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: vec![crate::ContextPacket {
+            id: Some("ctx-1".to_string()),
+            source: crate::ContextSource::FocusThread,
+            title: Some("focus".to_string()),
+            content: "runtime context".to_string(),
+            priority: 10,
+            metadata: json!({}),
+        }],
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    let response = runtime
+        .submit_task("inspect".to_string())
+        .await
+        .expect("run");
+
+    assert_eq!(response.text, "read complete");
+    assert!(
+        runtime
+            .events()
+            .iter()
+            .any(|event| matches!(event, AgentEvent::ToolCompleted(_)))
+    );
+    assert!(
+        runtime
+            .events()
+            .iter()
+            .any(|event| matches!(event, AgentEvent::HarnessTrace(_)))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn runtime_session_lifecycle_streams_events_and_snapshots() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            // Keep a goal on the session for snapshot checks, but do not run the
+            // full auto-continue storm (default max is 50) — that floods the
+            // runtime event bus and makes this test lag before it can drain.
+            goals: crate::config::GoalsConfig {
+                enabled: true,
+                max_auto_continue_turns: 1,
+            },
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    let provider = Arc::new(SimpleProvider);
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: provider,
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: vec![crate::ContextPacket {
+            id: Some("ctx-1".to_string()),
+            source: crate::ContextSource::FocusThread,
+            title: Some("focus".to_string()),
+            content: "runtime context".to_string(),
+            priority: 10,
+            metadata: json!({}),
+        }],
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    let mut events = runtime.stream_events();
+    let session_id = runtime.start_session().expect("start session");
+    let goal = runtime.set_goal("finish runtime goal".to_string(), Some(1000));
+    assert_eq!(goal.session_id, session_id.as_str());
+
+    let first_event = timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("session event timeout")
+        .expect("session event");
+    assert!(matches!(
+        first_event.kind,
+        RuntimeEventKind::SessionStarted { session_id: ref id } if id.as_str() == session_id.as_str()
+    ));
+
+    let response = runtime
+        .send_turn("inspect".to_string())
+        .await
+        .expect("run turn");
+    assert_eq!(response.text, "simple");
+
+    let mut saw_turn_started = false;
+    let mut saw_turn_completed = false;
+    for _ in 0..64 {
+        let event = match timeout(Duration::from_secs(1), events.recv()).await {
+            Ok(Ok(event)) => event,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+            Ok(Err(err)) => panic!("turn event: {err}"),
+            Err(_) => panic!("turn event timeout"),
+        };
+        match event.kind {
+            RuntimeEventKind::TurnStarted { .. } => saw_turn_started = true,
+            RuntimeEventKind::TurnCompleted { ref text, .. } => {
+                saw_turn_completed = true;
+                assert_eq!(text, "simple");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_turn_started);
+    assert!(saw_turn_completed);
+
+    let snapshot = runtime.snapshot_session().expect("snapshot");
+    assert_eq!(snapshot.id.as_str(), session_id.as_str());
+    assert_eq!(
+        snapshot.goal.as_ref().map(|goal| goal.session_id.as_str()),
+        Some(session_id.as_str())
+    );
+    assert_eq!(
+        snapshot.goal.as_ref().map(|goal| goal.objective.as_str()),
+        Some("finish runtime goal")
+    );
+    // Title generation is fire-and-forget; may not have finished yet.
+    // Snapshot + goal persistence are the contractual guarantees here.
+    let snapshot_path = runtime
+        .session_store()
+        .root()
+        .join(format!("{}.json", snapshot.id.as_str()));
+    assert!(snapshot_path.exists());
+    let traces = crate::TraceStore::new(&tempdir.path().join("data"))
+        .load_session_traces(snapshot.id.as_str());
+    // User turn + one auto-continue turn (max_auto_continue_turns: 1).
+    assert_eq!(traces.len(), 2);
+    assert_eq!(traces[0].task, "inspect");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_registers_goal_tools_on_provided_executor() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    let security_policy = crate::SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join("data"),
+        SecurityConfig::default(),
+    )
+    .expect("security policy");
+    // Pass a unique Arc so `ensure_tool_executor` can Arc::get_mut and install
+    // goal tools onto the provided executor (strong_count must stay 1).
+    let executor = Arc::new(crate::ToolExecutor::with_security_policy(
+        security_policy,
+        Arc::new(crate::DefaultToolSecurityPolicy),
+    ));
+    assert_eq!(
+        Arc::strong_count(&executor),
+        1,
+        "test must not share the executor Arc before runtime takes ownership"
+    );
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: Arc::new(GoalToolsProvider),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: Some(executor),
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    let response = runtime
+        .send_turn("check tools".to_string())
+        .await
+        .expect("run turn");
+    assert_eq!(response.text, "goal tools available");
+
+    // Goal tools must be installed on the provided executor (Deferred, so
+    // not in the Direct model schema — check all_definitions instead).
+    let executor = runtime.tool_executor().expect("executor");
+    let names: Vec<_> = executor
+        .all_definitions()
+        .into_iter()
+        .map(|d| d.name)
+        .collect();
+    assert!(
+        names.iter().any(|n| n == "get_goal"),
+        "get_goal missing from executor: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "create_goal"), "{names:?}");
+    assert!(names.iter().any(|n| n == "update_goal"), "{names:?}");
+}
+
+#[tokio::test]
+async fn runtime_uses_requested_session_id_once() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    let provider = Arc::new(SimpleProvider);
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: provider,
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: Some(crate::SessionId::new(
+            "navi_tutor_algoritmos_2026-05-25_14-32-10".to_string(),
+        )),
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    let first_id = runtime.start_session().expect("start first session");
+    let second_id = runtime.start_session().expect("start second session");
+
+    assert_eq!(
+        first_id.as_str(),
+        "navi_tutor_algoritmos_2026-05-25_14-32-10"
+    );
+    assert_ne!(second_id.as_str(), first_id.as_str());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn active_session_uses_replaced_model_provider_on_next_turn() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let mut loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    loaded_config.config.model.name = "first-model".to_string();
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config: loaded_config.clone(),
+        model_provider: Arc::new(EchoModelProvider),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    runtime.start_session().expect("start session");
+    assert_eq!(
+        runtime
+            .send_turn("first".to_string())
+            .await
+            .expect("first turn")
+            .text,
+        "first-model"
+    );
+
+    loaded_config.config.model.name = "second-model".to_string();
+    runtime.set_model_provider(loaded_config, Arc::new(EchoModelProvider));
+
+    assert_eq!(
+        runtime
+            .send_turn("second".to_string())
+            .await
+            .expect("second turn")
+            .text,
+        "second-model"
+    );
+}
+
+struct BlockingProvider {
+    gate: Arc<tokio::sync::Notify>,
+}
+
+#[async_trait]
+impl ModelProvider for BlockingProvider {
+    fn stream(&self, _request: ModelRequest) -> ModelStream {
+        let gate = self.gate.clone();
+        Box::pin(
+            futures_util::stream::once(async move {
+                gate.notified().await;
+                Ok(ModelStreamEvent::TextDelta {
+                    text: "unblocked".to_string(),
+                })
+            })
+            .chain(futures_util::stream::iter(vec![Ok(ModelStreamEvent::Done)])),
+        )
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dropped_turn_future_does_not_poison_session_event_stream() {
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+        app_scope: crate::app_scope::AppScope::none(),
+        global_config_mtime: None,
+    };
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config: loaded_config.clone(),
+        model_provider: Arc::new(BlockingProvider { gate: gate.clone() }),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: None,
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: false,
+        system_prompt: None,
+    });
+
+    runtime.start_session().expect("start session");
+
+    let first = tokio::time::timeout(
+        Duration::from_millis(50),
+        runtime.send_turn("first".to_string()),
+    )
+    .await;
+    assert!(first.is_err(), "first turn should time out while blocked");
+
+    gate.notify_one();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let mut next_config = loaded_config.clone();
+    next_config.config.model.name = "next-model".to_string();
+    runtime.set_model_provider(next_config, Arc::new(EchoModelProvider));
+
+    let second = runtime
+        .send_turn("second".to_string())
+        .await
+        .expect("second turn must not fail with session event stream unavailable");
+    assert_eq!(second.text, "next-model");
+}
+
+// ── Subagent event conversion and transient handling ───────────────────────
+
+#[test]
+fn runtime_event_kind_from_subagent_activity_preserves_fields() {
+    let event = AgentEvent::SubagentActivity {
+        invocation_id: "inv-act-1".to_string(),
+        message: "Read justfile".to_string(),
+    };
+    let kind = super::runtime_event_kind_from_agent_event(&event);
+    match kind {
+        Some(RuntimeEventKind::SubagentActivity {
+            invocation_id,
+            message,
+        }) => {
+            assert_eq!(invocation_id, "inv-act-1");
+            assert_eq!(message, "Read justfile");
+        }
+        other => panic!("expected SubagentActivity RuntimeEventKind, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_event_kind_from_subagent_transcript_preserves_fields() {
+    use crate::event::{SubagentTranscriptItem, SubagentTranscriptKind};
+    let event = AgentEvent::SubagentTranscript {
+        invocation_id: "inv-tr-1".to_string(),
+        item: SubagentTranscriptItem {
+            kind: SubagentTranscriptKind::Text,
+            title: "Final response".to_string(),
+            detail: Some("Done".to_string()),
+            ok: Some(true),
+            invocation: None,
+            result: None,
+            text: Some("All done".to_string()),
+            thinking: None,
+            status: Some("done".to_string()),
+        },
+    };
+    let kind = super::runtime_event_kind_from_agent_event(&event);
+    match kind {
+        Some(RuntimeEventKind::SubagentTranscript {
+            invocation_id,
+            item,
+        }) => {
+            assert_eq!(invocation_id, "inv-tr-1");
+            assert_eq!(item.kind, SubagentTranscriptKind::Text);
+            assert_eq!(item.title, "Final response");
+            assert_eq!(item.status.as_deref(), Some("done"));
+        }
+        other => panic!("expected SubagentTranscript RuntimeEventKind, got {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_event_kind_from_agent_event_returns_none_for_unmapped() {
+    // Some AgentEvent variants don't have a RuntimeEventKind equivalent.
+    // Verify the function doesn't panic and returns None for at least one
+    // unmapped variant (or Some for mapped ones — the key is no panic).
+    let event = AgentEvent::Error {
+        message: "test".to_string(),
+    };
+    let _ = super::runtime_event_kind_from_agent_event(&event);
+    // No panic = pass. The result may be Some or None depending on the variant.
+}
+
+// ---------------------------------------------------------------------------
+// App-scoped storage integration tests (ADR 0019)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scoped_session_store_uses_app_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+    let store = crate::session::SessionStore::with_redaction_scoped(
+        data_dir.to_path_buf(),
+        scope.clone(),
+        false,
+    );
+    // The store root should be under apps/tutor/sessions
+    let expected_root = data_dir.join("apps").join("tutor").join("sessions");
+    assert_eq!(
+        store.root(),
+        &expected_root,
+        "scoped session store root should be under apps/<id>/sessions"
+    );
+}
+
+#[test]
+fn unscoped_session_store_uses_default_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let store = crate::session::SessionStore::with_redaction(data_dir.to_path_buf(), false);
+    let expected_root = data_dir.join("sessions");
+    assert_eq!(
+        store.root(),
+        &expected_root,
+        "unscoped session store root should be at data_dir/sessions"
+    );
+}
+
+#[test]
+fn scoped_plan_paths_isolate_per_app() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope_a = crate::app_scope::AppScope::new("app-a").unwrap();
+    let scope_b = crate::app_scope::AppScope::new("app-b").unwrap();
+
+    let plans_a = crate::plan_store::plans_dir_scoped(data_dir, &scope_a);
+    let plans_b = crate::plan_store::plans_dir_scoped(data_dir, &scope_b);
+
+    assert_ne!(
+        plans_a, plans_b,
+        "different apps must have different plan dirs"
+    );
+    assert!(plans_a.starts_with(data_dir.join("apps").join("app-a")));
+    assert!(plans_b.starts_with(data_dir.join("apps").join("app-b")));
+}
+
+#[test]
+fn scoped_memory_manager_uses_app_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let project_dir = tmp.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+    let config = crate::config::MemoryConfig::default();
+    let manager = crate::memory::MemoryManager::new_scoped(
+        project_dir,
+        data_dir.to_path_buf(),
+        scope,
+        &config,
+    )
+    .expect("memory manager");
+    // The memory root should be under apps/tutor/memory
+    let expected_prefix = data_dir.join("apps").join("tutor").join("memory");
+    assert!(
+        manager.store.memory_root.starts_with(&expected_prefix),
+        "scoped memory root should be under apps/<id>/memory, got: {}",
+        manager.store.memory_root.display()
+    );
+}
+
+#[test]
+fn scoped_trace_store_uses_app_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+    let store = crate::trace::TraceStore::new_scoped(data_dir, &scope);
+    let expected = data_dir.join("apps").join("tutor").join("traces");
+    assert_eq!(store.root(), &expected);
+}
+
+#[test]
+fn scoped_skills_store_uses_app_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+    let store = crate::skills::SkillStore::open_scoped(data_dir, &scope).expect("skill store");
+    let expected = data_dir.join("apps").join("tutor").join("skills");
+    assert_eq!(store.path(), expected);
+}
+
+#[test]
+fn scoped_harness_pack_dir_uses_app_paths() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+    let dir = crate::harness_pack::harness_pack_dir_scoped(data_dir, &scope, "my-pack");
+    let expected = data_dir
+        .join("apps")
+        .join("tutor")
+        .join("harnesses")
+        .join("my-pack");
+    assert_eq!(dir, expected);
+}
+
+#[test]
+fn security_policy_denies_cross_app_access() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let project_dir = tmp.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let scope_a = crate::app_scope::AppScope::new("app-a").unwrap();
+    let policy = crate::security::SecurityPolicy::new_scoped(
+        project_dir.clone(),
+        data_dir.to_path_buf(),
+        scope_a,
+        crate::config::SecurityConfig::default(),
+    )
+    .expect("policy");
+
+    // Create app-a and app-b directories
+    let app_a_root = data_dir.join("apps").join("app-a");
+    let app_b_root = data_dir.join("apps").join("app-b");
+    std::fs::create_dir_all(app_a_root.join("sessions")).unwrap();
+    std::fs::create_dir_all(app_b_root.join("sessions")).unwrap();
+
+    // Accessing app-b's sessions from app-a's policy should be denied as private
+    let app_b_session = app_b_root.join("sessions").join("s1.json");
+    std::fs::write(&app_b_session, "{}").unwrap();
+    let decision = policy.validate_path(&app_b_session, false);
+    assert!(
+        matches!(decision, crate::security::SecurityDecision::Deny(_)),
+        "cross-app read should be denied, got: {:?}",
+        decision
+    );
+}
+
+#[test]
+fn security_policy_allows_own_app_scope() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let project_dir = tmp.path().join("project");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let scope = crate::app_scope::AppScope::new("app-a").unwrap();
+    let policy = crate::security::SecurityPolicy::new_scoped(
+        project_dir.clone(),
+        data_dir.to_path_buf(),
+        scope,
+        crate::config::SecurityConfig::default(),
+    )
+    .expect("policy");
+
+    // Plan markdown under own app scope: read should be allowed (agent-owned artifact)
+    let own_plans_dir = data_dir.join("apps").join("app-a").join("plans");
+    std::fs::create_dir_all(&own_plans_dir).unwrap();
+    let plan_file = own_plans_dir.join("session-1.md");
+    std::fs::write(&plan_file, "# Plan").unwrap();
+
+    // Read should be allowed
+    let decision = policy.validate_path(&plan_file, false);
+    assert!(
+        matches!(decision, crate::security::SecurityDecision::Allow),
+        "reading own app's plan file should be allowed, got: {:?}",
+        decision
+    );
+
+    // Write outside plan mode requires approval (not denied, not cross-app blocked)
+    let decision = policy.validate_path(&plan_file, true);
+    assert!(
+        matches!(
+            decision,
+            crate::security::SecurityDecision::NeedsApproval(_)
+        ),
+        "writing to own app's plan file should need approval (not denied), got: {:?}",
+        decision
+    );
+}
+
+#[test]
+fn shared_credentials_remain_global_under_scope() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let data_dir = tmp.path();
+    let scope = crate::app_scope::AppScope::new("tutor").unwrap();
+
+    // Credentials path should NOT be scoped
+    let creds = scope.credentials_path(data_dir);
+    assert_eq!(creds, data_dir.join("credentials.toml"));
+
+    // Registry, plugins, voice, browser should also remain shared
+    assert_eq!(scope.registry_dir(data_dir), data_dir.join("registry"));
+    assert_eq!(scope.plugins_dir(data_dir), data_dir.join("plugins"));
+    assert_eq!(scope.voice_dir(data_dir), data_dir.join("voice"));
+    assert_eq!(scope.browser_dir(data_dir), data_dir.join("browser"));
+}

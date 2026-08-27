@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+
+    ███╗   ██╗ █████╗ ██╗   ██╗██╗      project navi-tui
+    ████╗  ██║██╔══██╗██║   ██║██║      model   gpt-5.5
+    ██╔█╭ Commands ────────────────────────────────────────────────────╮
+    ██║╚│ > type to search all commands                                │
+    ██║ │                                                              │
+    ╚═╝ │ Model…                                          ctrl+m       │
+        │ Sessions…                                       ctrl+s       │
+        │ New Session                                     ctrl+n       │tch
+        │ Session →                                                    │
+        │ Models →                                                     │
+        │ Tools →                                                      │
+        │ Extensions →                                                 │
+        │ Settings…                                       ctrl+,       │
+        │ Help →                                                       │
+        │ [enter] open  [esc] close  type to search all                │
+        ╰──────────────────────────────────────────────────────────────╯
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                                         gpt-5.5 (max) · 0 / 200k · restricted

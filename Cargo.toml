@@ -1,0 +1,179 @@
+[workspace]
+members = [
+    "crates/copland",
+    "crates/navi-acp",
+    "crates/navi-browser",
+    "crates/navi-cli",
+    "crates/navi-computer-use",
+    "crates/navi-core",
+    "crates/navi-dart",
+    "crates/navi-lite",
+    "crates/navi-mcp",
+    "crates/navi-napi",
+    "crates/navi-openai",
+    "crates/navi-os-macos",
+    "crates/navi-os-windows",
+    "crates/navi-plugin-api",
+    "crates/navi-plugin-broker",
+    "crates/navi-plugin-manifest",
+    "crates/navi-plugin-orchestrator",
+    "crates/navi-plugin-runtime",
+    "crates/navi-providers",
+    "crates/navi-sdk",
+    "crates/navi-server",
+    "crates/navi-tui",
+    "crates/navi-voice",
+    "crates/navi-vfs",
+]
+resolver = "3"
+# Default build/test targets: the shipping CLI plus its full dependency
+# closure. Non-essential distribution surfaces — Node bindings (navi-napi),
+# Dart FFI (navi-dart), the web server (navi-server), and the standalone
+# demo (navi-lite) — are excluded from bare `cargo build`/`cargo test`
+# so the default path stays lean. Build them explicitly when needed.
+default-members = [
+    "crates/copland",
+    "crates/navi-acp",
+    "crates/navi-browser",
+    "crates/navi-cli",
+    "crates/navi-computer-use",
+    "crates/navi-core",
+    "crates/navi-mcp",
+    "crates/navi-openai",
+    "crates/navi-os-macos",
+    "crates/navi-os-windows",
+    "crates/navi-plugin-api",
+    "crates/navi-plugin-broker",
+    "crates/navi-plugin-manifest",
+    "crates/navi-plugin-orchestrator",
+    "crates/navi-plugin-runtime",
+    "crates/navi-providers",
+    "crates/navi-sdk",
+    "crates/navi-tui",
+    "crates/navi-voice",
+    "crates/navi-vfs",
+]
+
+[workspace.package]
+version = "0.7.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "Local agentic engine and terminal-first coding agent."
+repository = "https://github.com/navi-ai-org/navi"
+homepage = "https://github.com/navi-ai-org/navi"
+readme = "README.md"
+
+[workspace.dependencies]
+copland = { version = "0.7.0", path = "crates/copland" }
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22.1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+directories = "6"
+libloading = "0.9"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "macros", "underline-color"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+hex = "0.4"
+jsonschema = { version = "0.47", default-features = false }
+proptest = { version = "1.11", default-features = true }
+async-stream = "0.3"
+futures-util = "0.3"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
+portable-pty = "0.8"
+fastrand = "2"
+# rmcp 3.1 requires sse-stream >= 0.2.4 (`SseStream::from_bytes_stream`).
+rmcp = { version = "3.1", default-features = false, features = ["client", "transport-child-process", "reqwest", "transport-streamable-http-client-reqwest"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+toml = "1"
+# Was pinned to `=0.3.47` for an E0119 conflict with older ratatui-widgets.
+# 0.3.53 works with ratatui 0.30 / ratatui-widgets 0.3 in this workspace.
+time = "0.3.53"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-width = "0.2"
+warp = "0.3"
+tree-sitter = "0.26"
+tree-sitter-bash = "0.25.1"
+tree-sitter-c = "0.24.2"
+tree-sitter-c-sharp = "0.23.5"
+tree-sitter-cpp = "0.23.4"
+tree-sitter-css = "0.25.0"
+tree-sitter-go = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-php = "0.24.2"
+tree-sitter-python = "0.25.0"
+tree-sitter-ruby = "0.23.1"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
+rust-embed = "8.11"
+tempfile = "3"
+wiremock = "0.6"
+# `windows` (not `windows-sys`) is required for UI Automation COM interfaces
+# (IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker, …) used by
+# `navi-os-windows` for the `inspect_element` tool. Only pulled in on Windows
+# targets via `[target.'cfg(windows)'.dependencies]` in the leaf crate.
+windows = { version = "0.62" }
+mlua = { version = "0.10", default-features = false, features = ["lua54", "vendored", "serialize"] }
+navi-acp = { version = "0.7.0", path = "crates/navi-acp" }
+navi-browser = { version = "0.7.0", path = "crates/navi-browser" }
+navi-core = { version = "0.7.0", path = "crates/navi-core" }
+navi-computer-use = { version = "0.7.0", path = "crates/navi-computer-use" }
+navi-dart = { version = "0.7.0", path = "crates/navi-dart" }
+navi-mcp = { version = "0.7.0", path = "crates/navi-mcp" }
+napi = { version = "3.9.4", features = ["async", "serde-json"] }
+napi-build = "2.3.2"
+napi-derive = "3.5.7"
+navi-openai = { version = "0.7.0", path = "crates/navi-openai" }
+navi-os-macos = { version = "0.7.0", path = "crates/navi-os-macos" }
+navi-os-windows = { version = "0.7.0", path = "crates/navi-os-windows" }
+navi-plugin-api = { version = "0.7.0", path = "crates/navi-plugin-api" }
+navi-plugin-broker = { version = "0.7.0", path = "crates/navi-plugin-broker" }
+navi-providers = { version = "0.7.0", path = "crates/navi-providers" }
+navi-plugin-manifest = { version = "0.7.0", path = "crates/navi-plugin-manifest" }
+navi-plugin-orchestrator = { version = "0.7.0", path = "crates/navi-plugin-orchestrator", default-features = false }
+navi-plugin-runtime = { version = "0.7.0", path = "crates/navi-plugin-runtime" }
+navi-sdk = { version = "0.7.0", path = "crates/navi-sdk" }
+navi-server = { version = "0.7.0", path = "crates/navi-server" }
+navi-tui = { version = "0.7.0", path = "crates/navi-tui" }
+navi-voice = { version = "0.7.0", path = "crates/navi-voice", default-features = false }
+navi-vfs = { version = "0.7.0", path = "crates/navi-vfs" }
+
+# ── Build profiles ──────────────────────────────────────────────────────────
+# Dev: fast iterative builds (defaults plus thinner debug info).
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+incremental = true
+codegen-units = 256
+lto = false
+
+# Release: full optimization for shipping (Cargo defaults: lto=false, codegen-units=16).
+# Prefer `cargo build --release` / `just build-release` for distribution binaries.
+
+# Faster local “almost release” binary without thin/fat LTO link cost.
+# Use: cargo build --profile release-fast -p navi-cli
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
+
+# ── Patches ─────────────────────────────────────────────────────────────────
+# esaxx-rs 0.1.10 forces `.static_crt(true)` in its build.rs, which emits `/MT`
+# (static CRT). This conflicts with ort-sys prebuilt binaries that use `/MD`
+# (dynamic CRT), causing LNK2038 on Windows MSVC. The upstream fix (removing
+# `static_crt(true)`) has not been published. We vendor a patched copy so
+# `cc` picks up the default CRT (/MD) matching the rest of the workspace.
+[patch.crates-io]
+esaxx-rs = { path = "patches/esaxx-rs" }
+

@@ -1,0 +1,21 @@
+{
+  "name": "@navi-agent/napi-linux-x64",
+  "version": "0.4.7",
+  "description": "Linux x64 prebuilt binary for @navi-agent/napi.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navi-ai-org/navi.git",
+    "directory": "crates/navi-napi"
+  },
+  "license": "Apache-2.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "navi.linux-x64.node",
+  "files": [
+    "navi.linux-x64.node"
+  ]
+}

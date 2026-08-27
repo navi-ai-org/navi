@@ -1,0 +1,33 @@
+[package]
+name = "navi-acp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent Client Protocol (ACP) client for delegating turns to external agents."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+agent-client-protocol = "2.0.0"
+anyhow.workspace = true
+async-trait.workspace = true
+futures = "0.3"
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[features]
+# ACP v2 draft surface (ADR 0023). Enables the v2 schema types from the
+# official `agent-client-protocol` crate and adds dual-version negotiation
+# and dispatch to `AcpServer`. v1 behaviour is unchanged when this is off.
+# Only the stable v2 baseline is implemented; unstable v2 features
+# (MCP-over-ACP, elicitation, NES, etc.) are each behind their own flag.
+acp-v2 = ["agent-client-protocol/unstable_protocol_v2"]
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }

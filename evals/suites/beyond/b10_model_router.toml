@@ -1,0 +1,12 @@
+version = 1
+id = "b10-model-router"
+title = "model router uses scorecards by role and risk"
+category = "simple_repo_task"
+mode = "verifier-first"
+task = "Verify that model routing has role scorecards, risk-aware selection, fallback, and SDK export coverage."
+tags = ["beyond", "b10", "model-router"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/model_router.rs && rg -q 'ModelRouter|ModelScorecard|ModelRouteRole|unsafe_action_rate|fallback' crates/navi-core/src/model_router.rs"
+required = true

@@ -1,0 +1,598 @@
+# NAVI SDK Agents Guide
+
+This document covers the technical API for embedding NAVI in other applications using `navi-sdk`. It is intended for developers building clients that drive NAVI programmatically (e.g. NAVI Tutor, custom UIs, automation).
+
+## Overview
+
+`navi-sdk` is the stable Rust embedding facade. It wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions, and events into a single entry point: `NaviEngine`.
+
+```
+Your App (Tauri, CLI, etc.)
+    |
+    v
+navi-sdk (NaviEngine)
+    |
+    +-- navi-core (runtime, tools, security, sessions)
+    +-- navi-providers (navi-openai facade)
+    +-- navi-plugin-orchestrator / navi-plugin-runtime (WASM plugins)
+    +-- navi-mcp (MCP client)
+```
+
+## Engine Construction
+
+```rust
+use navi_sdk::{
+    NaviEngineBuilder, NaviEngine, NaviToolProfile, NaviPromptProfile, NaviSecurityProfile,
+};
+
+// From a project directory (loads config, providers, plugins, MCP)
+let engine = NaviEngineBuilder::from_project(".")
+    .build()
+    .expect("engine");
+
+// With explicit config + app-owned durable data dir
+let engine = NaviEngineBuilder::from_project(".")
+    .loaded_config(loaded_config)
+    .data_dir("/path/to/app/navi-data")
+    .build()
+    .expect("engine");
+
+// Host embedding without code-agent tools (vault / chat apps)
+let engine = NaviEngineBuilder::from_project(".")
+    .tool_profile(NaviToolProfile::HostToolsOnly) // or ChatOnly
+    .prompt_profile(NaviPromptProfile::Assistant)
+    .security_profile(NaviSecurityProfile::HostApp) // restricted writes
+    .host_tool(Arc::new(MyTool))
+    .build()
+    .expect("engine");
+```
+
+`from_project` returns a builder (not `Result`). Config is loaded from defaults, global config, and project config on `build()`. The selected provider is resolved from the catalog plus user overrides. Credentials are resolved from environment variables first, then the credential store.
+
+### Host tool profiles
+
+| Profile | Model-visible tools |
+|---|---|
+| `code_agent` (default) | Full project bash/edit/read surface |
+| `host_tools_only` | Only tools registered via `host_tool` |
+| `chat_only` | No tools |
+
+Optional `allow_tools` / `deny_tools` further restrict names after the profile.
+
+### Prompt profiles
+
+| Profile | System identity |
+|---|---|
+| `code_agent` (default) | Terminal autonomous code agent |
+| `assistant` | Non-code creative/conversational assistant |
+
+Skills still attach on top of either base profile via `active_skills` / `set_session_skills`.
+
+### Security profiles
+
+| Profile | Default posture |
+|---|---|
+| `code_agent` | Existing config-driven permission mode |
+| `host_app` | `Restricted` — write-kind tools need approval; YOLO is opt-in via `permission_mode` |
+
+### OpenAI-compatible provider upsert (e.g. Ollama)
+
+```rust
+engine.upsert_provider(ProviderConfig {
+    id: "ollama".into(),
+    label: "Ollama".into(),
+    kind: ProviderKind::OpenAiChatCompletions,
+    base_url: Some("http://localhost:11434/v1".into()),
+    api_key_env: "OLLAMA_API_KEY".into(),
+    models: vec![/* … */],
+    ..Default::default()
+}, NaviConfigSaveTarget::None)?;
+engine.select_model(NaviModelSelectionRequest {
+    provider_id: "ollama".into(),
+    model: "llama3".into(),
+    save_target: NaviConfigSaveTarget::None,
+})?;
+```
+
+Unreachable base URLs do not crash engine build; list/status still work.
+
+### Snapshot reopen
+
+Prefer `session_request_from_snapshot` / `start_session_from_snapshot` over hand-rolled
+`initial_messages` / `initial_events`. Attachments rehydrate from the project path or
+`{data_dir}/attachments/{id}`.
+
+## Session Lifecycle
+
+Session-scoped operations require a `session_id` parameter:
+
+```rust
+use navi_sdk::NaviSessionRequest;
+
+// Start a session (full seed: messages, events, skills, goal, timestamps)
+let info = engine.start_session(NaviSessionRequest {
+    project_dir: None,       // defaults to engine's project
+    session_id: None,        // auto-generate
+    context_packets: vec![],
+    active_skills: vec![],
+    initial_messages: vec![],
+    initial_events: vec![],
+    initial_created_at: None,
+    initial_updated_at: None,
+    initial_goal: None,
+}).await?;
+let session_id = info.id;
+
+// Or reopen a saved snapshot with full history
+// let info = engine.start_session_from_snapshot(&snapshot).await?;
+
+// Manual compact (same path as TUI Compact)
+// let outcome = engine.compact_session(&session_id).await?;
+
+// Send a turn (user message -> response)
+let response = engine.send_turn(NaviTurnRequest {
+    session_id: session_id.clone(),
+    message: "explain this codebase".into(),
+    context_packets: vec![],
+}).await?;
+
+// Thread goals (host API). While Active, send_turn auto-continues until
+// complete/blocked/budget-limited/paused/cleared. Model tools during a turn:
+// get_goal, create_goal, update_goal (status complete|blocked only).
+// let goal = engine.set_goal(&session_id, "Ship feature X", Some(100_000)).await?;
+// engine.update_goal_status(&session_id, GoalStatus::Paused).await?;
+// engine.clear_goal(&session_id).await?;
+
+// Cancel an active turn
+engine.cancel_turn(&session_id).await?;
+
+// Take a persistence snapshot
+let snapshot = engine.snapshot_session(&session_id).await?;
+
+// Close a session
+engine.close_session(&session_id).await?;
+```
+
+## Runtime Events
+
+Runtime events are delivered via `subscribe_events` as a `broadcast::Receiver<RuntimeEvent>`. Each event has `version` and `kind` fields:
+
+```rust
+use navi_core::RuntimeEvent;
+
+// Subscribe to events for a session (synchronous, returns broadcast::Receiver)
+let mut events = engine.subscribe_events(&session_id)?;
+
+// In an async task, receive events
+while let Ok(event) = events.recv().await {
+    match event {
+        RuntimeEvent::AssistantDelta { text, .. } => { /* render text */ }
+        RuntimeEvent::ToolRequested { name, input, .. } => { /* show tool call */ }
+        RuntimeEvent::ApprovalRequired { call_id, .. } => {
+            engine.resolve_approval(&session_id, ApprovalDecision::Allow).await?;
+        }
+        // ...
+    }
+}
+```
+
+Events are serializable and UI-agnostic. Common event kinds include `session.started`, `turn.started`, `assistant.delta`, `assistant.thinking_delta`, `tool.requested`, `approval.required`, `tool.started`, `tool.completed`, `context.updated`, `tokens.updated`, `session.saved`, `turn.completed`, `session.finished`, and `error`.
+
+## Approval Flow
+
+Write and command tools require approval by default. When `approval.required` fires:
+
+```rust
+use navi_core::ApprovalDecision;
+
+// Approve
+engine.resolve_approval(&session_id, ApprovalDecision::Allow).await?;
+
+// Deny
+engine.resolve_approval(&session_id, ApprovalDecision::Deny).await?;
+```
+
+In headless/autonomous mode, approvals are gated by default. Configure `[approvals]` to auto-allow specific tool kinds if needed.
+
+## Model Management
+
+```rust
+// List available models (synchronous)
+let models = engine.list_models();
+
+// Select a model (persists config change)
+let result = engine.select_model(NaviModelSelectionRequest {
+    provider_id: "openai".into(),
+    model: "gpt-5.5".into(),
+    save_target: NaviConfigSaveTarget::Auto,
+})?;
+
+// List provider accounts and credential status
+let accounts = engine.list_provider_accounts()?;
+
+// Set the active model for a session
+engine.set_model(&session_id, "openai", "gpt-5.5").await?;
+```
+
+## Skills
+
+```rust
+// List discovered skills
+let skills = engine.list_skills()?;
+
+// Set active skills for a session
+engine.set_session_skills(&session_id, vec!["planner".into(), "reviewer".into()]).await?;
+```
+
+Skills come from built-ins and `data_dir/skills.sqlite`. Use `list_skills` / `save_skill` / `delete_skill` to manage them. `set_session_skills` activates them for the current session's system prompt.
+
+## MCP Servers
+
+```rust
+// List MCP servers for a session
+let servers = engine.list_mcp_servers(&session_id)?;
+
+// List MCP tool names for a session
+let tools = engine.list_mcp_tools(&session_id)?;
+```
+
+MCP servers are started by `navi-sdk` on engine build. Their tools are registered with prefixed names (e.g. `memory__search`) and follow the same approval flow as built-in tools. MCP servers can only be configured in global config, not project config.
+
+## Host Tools
+
+Applications embedding NAVI can register custom tools:
+
+```rust
+use std::sync::Arc;
+use async_trait::async_trait;
+use navi_core::ToolKind;
+use navi_sdk::{
+    HostToolDefinition, HostToolHandler, HostToolInvocation, SdkHostTool,
+    SdkHostToolResult,
+};
+use serde_json::json;
+
+struct MyTool;
+
+#[async_trait]
+impl HostToolHandler for MyTool {
+    async fn invoke(&self, invocation: HostToolInvocation) -> anyhow::Result<SdkHostToolResult> {
+        // Return structured JSON result
+        Ok(SdkHostToolResult::success(json!({
+            "id": invocation.invocation_id,
+            "status": "ok",
+            "data": "..."
+        })))
+    }
+}
+
+let host_tool = SdkHostTool::new(
+    HostToolDefinition {
+        name: "my_custom_tool".into(),
+        description: "Custom host app capability".into(),
+        kind: ToolKind::Read,
+        input_schema: json!({ "type": "object" }),
+    },
+    Arc::new(MyTool),
+);
+
+// Register during engine build
+let engine = NaviEngineBuilder::from_project(".")
+    .host_tool(Arc::new(host_tool))
+    .build()?;
+```
+
+Host tools go through the same `ToolExecutor` and `SecurityPolicy` as built-in
+tools. They receive the tool invocation id and model-produced JSON input.
+
+## TypeScript / NAPI
+
+The `navi-napi` crate exposes the SDK to Node clients without native plugin
+libraries. A host can register TypeScript tools and lifecycle hooks before
+starting a session:
+
+```ts
+import { NaviNapiEngineBuilder } from "@navi/napi";
+
+const builder = new NaviNapiEngineBuilder(process.cwd());
+builder.onSessionStart(({ sessionId }) => analytics.track("session_started", { sessionId }));
+builder.onToolCall(({ invocation }) => analytics.track("tool_called", invocation));
+builder.onToolResult(({ result }) => db.toolResults.insert(result));
+builder.hostTool(
+  {
+    name: "lookup_docs",
+    description: "Look up project documentation",
+    kind: "read",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string" },
+      },
+      required: ["topic"],
+    },
+  },
+  async ({ invocationId, input }) => {
+    const material = await docsDb.lookup(input.topic);
+    return {
+      ok: true,
+      output: { invocationId, material },
+    };
+  },
+);
+
+const engine = builder.build();
+const models = engine.listModels();
+const session = await engine.startSession();
+const events = engine.subscribeEvents(session.id);
+await engine.addContextPacket(session.id, {
+  source: "File",
+  title: "README",
+  content: "Project overview...",
+  priority: 5,
+});
+const response = await engine.sendTurn(session.id, "Summarize the project");
+const firstEvent = await events.next();
+```
+
+The callback receives `{ invocationId, input }` and returns a promise for
+`{ ok, output }`. The tool is registered through the same SDK `SdkHostTool`
+adapter used by Rust hosts, so it is visible to the model without changing
+`navi-core` or depending on `navi-tui`. `subscribeEvents(sessionId)` returns a
+stream object whose `next()` method resolves to the next serialized
+`RuntimeEvent`, or `null` when the stream closes. The NAPI engine also exposes
+runtime control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
+`listModels`, `listTuiComponents`, and `setModel`. Lifecycle hook callbacks
+are fire-and-forget: the runtime emits JSON payloads through Node's event loop
+and does not block the agent turn waiting for asynchronous analytics or
+persistence work.
+
+## Native Plugin Policies
+
+Native plugins can call `register_agent_policy(name)`. The SDK consumes known
+policy names before constructing the session runtime:
+
+| Policy | Effect |
+|---|---|
+| `default`, `code_agent` | Uses `RuntimeComponents::default()`. |
+
+Unknown policy names are reported as plugin warnings and do not replace the
+host-configured runtime components. `register_tui_component(...)` remains a
+TUI-scoped declaration. The SDK preserves declared component names per session
+through `list_tui_components(...)` / `listTuiComponents(...)`; `navi-tui`
+decides whether a name maps to an actual terminal widget.
+
+## Runtime Customization
+
+`NaviEngineBuilder` can replace runtime components while keeping the default
+code-agent behavior available through `RuntimeComponents::default()`:
+
+```rust
+use std::sync::Arc;
+use navi_core::{PermissiveSecurityPolicy, RuntimeComponents};
+use navi_sdk::NaviEngineBuilder;
+
+let engine = NaviEngineBuilder::from_project(".")
+    .security(Arc::new(PermissiveSecurityPolicy))
+    .host_tool(Arc::new(host_tool))
+    .build()?;
+```
+
+Custom components can replace:
+
+| Component | Purpose |
+|---|---|
+| `ToolSecurityPolicy` | Tool approval/deny behavior. |
+| `HarnessDriver` | Tool filtering, loop-stop decisions, and tool-result observations. |
+| `PromptBuilder` | System prompt construction. |
+| `CompactionStrategy` | Micro-compact and auto-compact behavior. |
+| `SessionHooks` | Session, turn, and tool lifecycle callbacks. |
+
+The default composition preserves NAVI's terminal code-agent behavior. A host
+that wants full tool autonomy should opt in explicitly with
+`PermissiveSecurityPolicy`; permissive security is never the default.
+
+## Context Injection
+
+Inject external context into an active session:
+
+```rust
+use navi_core::ContextPacket;
+
+engine.add_context_packet(&session_id, ContextPacket {
+    source: "external".into(),
+    content: "Relevant context for the agent...".into(),
+    priority: ContextPriority::High,
+}).await?;
+```
+
+Context packets are included in the next turn's model request.
+
+## Auto-Memory API
+
+`NaviEngine` exposes 8 methods for programmatic access to the auto-memory system:
+
+```rust
+use navi_sdk::{NaviEngine, MemoryType, MemoryStatus};
+
+// Save a memory
+engine.memory_write("redis_tests", MemoryType::Feedback, "Redis for Tests",
+    "Tests need Redis running", "Start Redis before pnpm test")?;
+
+// Read by id
+let entry = engine.memory_read("redis_tests")?;
+
+// List all active memories
+let memories = engine.memory_list(Some(MemoryStatus::Active))?;
+
+// Search (semantic if embeddings available, text fallback)
+let results = engine.memory_search("redis", 10)?;
+
+// Update fields and/or status
+engine.memory_update("redis_tests", None, None, Some("updated body"),
+    Some(MemoryStatus::Obsolete))?;
+
+// Delete
+engine.memory_delete("redis_tests")?;
+
+// Count active
+let count = engine.memory_count()?;  // → 42
+
+// Markdown index for prompt injection
+let index = engine.memory_index();
+```
+
+All methods are also available as `#[napi]` bindings for Node.js/Electron clients:
+
+```typescript
+engine.memoryWrite("redis_tests", "feedback", "Redis for Tests", "...", "...");
+const entry = engine.memoryRead("redis_tests");
+const memories = engine.memoryList({ status: "active" });
+const results = engine.memorySearch("redis", 20);
+engine.memoryUpdate("redis_tests", { body: "new body", status: "obsolete" });
+engine.memoryDelete("redis_tests");
+const count = engine.memoryCount();
+const index = engine.memoryIndex();
+```
+
+See [Auto-Memory](auto-memory.md) for the full system documentation.
+
+## ACP V2 Dual-Stack & App Profile Boundary (ADR 0018, ADR 0019, ADR 0023)
+
+`navi-sdk` provides native support for exposing a `NaviEngine` instance as an **ACP Server** (`NaviAcpServer`) supporting both **v1** and **v2 draft** protocol versions.
+
+```rust
+use navi_sdk::{NaviEngineBuilder, NaviAcpServer};
+
+let engine = NaviEngineBuilder::from_project(".").build()?;
+let acp_server = NaviAcpServer::new(engine);
+
+// Serve ACP over stdio or duplex stream:
+acp_server.serve_stdio().await?;
+```
+
+### Feature Flag: `acp-v2`
+
+Enable the `acp-v2` cargo feature on `navi-acp` and `navi-sdk` to unlock v2 capabilities:
+
+```toml
+[dependencies]
+navi-sdk = { path = "../navi-sdk", features = ["acp-v2"] }
+```
+
+### App Profile Negotiation & Storage Scoping (`_meta["navi.dev"].app`)
+
+Per ADR 0018 and ADR 0019, clients driving NAVI (e.g. Tutor, organize-anything) negotiate an application profile during v2 `initialize`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "initialize",
+  "params": {
+    "protocolVersion": 2,
+    "capabilities": {},
+    "info": { "name": "tutor-app", "version": "0.1.0" },
+    "_meta": {
+      "navi.dev": {
+        "app": {
+          "id": "tutor",
+          "version": "1.0.0",
+          "requiresEngine": ">=0.7 <1.0",
+          "harness": { "ref": "tutor/install" },
+          "prompt": { "text": "You are a helpful tutor." },
+          "tools": { "profile": "app_only", "allow": [], "deny": [] },
+          "storage": { "namespace": "tutor", "shareCredentials": true },
+          "model": { "provider": "openai", "name": "gpt-4o", "userOverridable": true }
+        }
+      }
+    }
+  }
+}
+```
+
+When an `app.id` is supplied:
+1. `AppScope` validates the ID against `^[a-z0-9][a-z0-9._-]{0,63}$` and path-jail security constraints.
+2. If `requiresEngine` is present, the engine version is checked against the semver range (e.g. `>=0.7 <1.0`). Initialization fails with a protocol error if the constraint is not satisfied.
+3. Sessions, plans, auto-memory, harness packs, skills, sprints, and traces are isolated under `{data_dir}/apps/<app-id>/` (ADR 0019). The scope is set on the engine's `LoadedConfig` and propagated to all runtime stores.
+4. User credentials, provider registry cache, plugins, voice, and browser data remain centrally shared under `{data_dir}/`.
+5. The security policy enforces cross-app isolation: an agent in app `A` cannot access app `B`'s scoped directory.
+6. Resolved app capabilities are echoed back in `initialize.result.capabilities._meta["navi.dev"].app`.
+7. The scope is immutable for the connection's lifetime after `initialize` (ADR 0019).
+
+### App profile fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` (required) | App identifier, validated against `^[a-z0-9][a-z0-9._-]{0,63}$` |
+| `version` | `string` | App version |
+| `requiresEngine` | `string` | Semver range constraint (e.g. `>=0.7 <1.0`, `*`) |
+| `harness` | `{ "ref": string } \| { "inline": object }` | Harness pack reference or inline definition |
+| `prompt` | `{ "text": string }` | System prompt override |
+| `tools` | `{ "profile": string, "allow": string[], "deny": string[] }` | Tool filter policy |
+| `storage` | `{ "namespace": string, "shareCredentials": boolean }` | Storage scoping settings |
+| `model` | `{ "provider": string, "name": string, "userOverridable": boolean }` | Model selection preference |
+
+### CLI: app lifecycle
+
+```bash
+navi app list              # list installed app namespaces with size and session count
+navi app remove <id>       # remove an app namespace and all its scoped data
+navi app remove <id> --force  # skip confirmation prompt
+```
+
+App removal deletes `{data_dir}/apps/<app-id>/` only. Shared credentials, registry, plugins, voice, and browser data are never touched.
+
+## Error Handling
+
+All engine methods return `Result<T, NaviError>`. `NaviError` variants:
+
+| Variant | Description |
+|---|---|
+| `MissingCredential` | Provider has no resolved API key. |
+| `UnknownProvider` | Requested provider id not in catalog. |
+| `SessionNotFound` | Session id does not exist. |
+| `TurnInProgress` | Cannot start a new turn while one is active. |
+| `Config` | Configuration error. |
+| `Internal` | Underlying runtime error. |
+
+`NaviError` implements `std::error::Error` and can be downcast from `anyhow::Error`.
+
+## Configuration for Embedding
+
+When embedding NAVI, you typically:
+
+1. Set `NaviConfig` programmatically or load from a known path.
+2. Configure the provider with explicit `api_key_env` and `base_url` if not using defaults.
+3. Register host tools for application-specific capabilities.
+4. Set `SecurityConfig` to match your application's trust model.
+5. Disable TUI-specific features (modals, keybindings) — these are not part of the SDK.
+
+## Crate Dependencies
+
+Depend on `navi-sdk` by path:
+
+```toml
+[dependencies]
+navi-sdk = { path = "../navi-sdk" }
+```
+
+`navi-sdk` re-exports the necessary types from `navi-core` for constructing configs, handling events, and registering tools. Do not depend on `navi-core` or `navi-tui` directly unless you need internals not exposed by the SDK.
+
+## Testing
+
+Run SDK-specific tests:
+
+```bash
+just test-crate navi-sdk
+```
+
+Run the full suite with resource limits:
+
+```bash
+just test
+```
+
+## See Also
+
+- [AGENTS.md](../AGENTS.md) — Full technical reference for the NAVI codebase.
+- [User Guide](user-guide.md) — Configuration, providers, tools, and security from the user's perspective.

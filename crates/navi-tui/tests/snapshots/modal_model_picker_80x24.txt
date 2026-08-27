@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+    ╭  ────────────────────────────────────────────────────────────────────╮
+    │                                                                  esc │
+    │ > Choose a model or provider                                         │
+    │                                                                      │
+    │                                                                      │
+    │   No models available.                                               │
+    │                                                                      │
+    │   Configure a provider to get started:                               │
+    │                                                                      │
+    │   1. ctrl+p → Providers to add an API key                            │
+    │   2. Set an env var like OPENAI_API_KEY                              │
+    │   3. Or add a [providers] entry in config.toml                       │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+  ╭─│ ↑/↓ choose  ·  connect provider ctrl+e  ·  favorite ctrl+f           │─╮
+  │ ╰──────────────────────────────────────────────────────────────────────╯ │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                                   model (thinking on) · 0 / 200k · restricted

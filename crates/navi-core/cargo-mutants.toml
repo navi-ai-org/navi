@@ -1,0 +1,14 @@
+# Mutation testing config for the ATIF exporter.
+# Scoped to the `atif` module to keep run-time bounded; the full crate has
+# 1000+ tests and mutation-testing it wholesale would take hours.
+#
+# Run with:
+#   TMPDIR=/path/to/large/disk cargo mutants -p navi-core \
+#     --file crates/navi-core/src/atif.rs -j 1 -- -- --test-threads=4
+#
+# The PBT suite (tests/atif_pbt.rs) + contract suite (tests/atif_contract.rs)
+# + unit tests (atif::tests) together form the test oracle that should catch
+# every viable mutant in the fold logic.
+#
+# Note: cargo-mutants copies the workspace to a scratch dir, so TMPDIR must
+# point to a disk with enough space (~2GB for this workspace).

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NAVI Benchmark Report</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">N</span>
+        <strong>NAVI Benchmarks</strong>
+      </div>
+      <nav class="top-nav" aria-label="Report sections">
+        <a href="#breakdown">Breakdown</a>
+        <a href="#cases">Cases</a>
+        <a href="#trace">Trace</a>
+        <a href="#artifacts">Artifacts</a>
+      </nav>
+      <div class="actions">
+        <label class="file-button">
+          Add JSON
+          <input id="fileInput" type="file" accept="application/json,.json" multiple />
+        </label>
+        <button id="clearButton" type="button">Clear</button>
+      </div>
+    </header>
+
+    <div id="dropZone" class="app-shell">
+      <aside class="sidebar" aria-label="Loaded benchmark navigation">
+        <div class="sidebar-section">
+          <span class="sidebar-label">Checkpoints</span>
+          <div id="runList" class="nav-list"></div>
+        </div>
+        <div class="sidebar-section">
+          <span class="sidebar-label">Cases</span>
+          <div id="caseNav" class="nav-list"></div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section id="emptyState" class="empty-state">
+          <div>
+            <span class="square"></span>
+            <h1>Benchmark Breakdown</h1>
+            <p>No indexed benchmark runs found. Run `just bench-report` or drop JSON checkpoints here.</p>
+          </div>
+        </section>
+
+        <section id="dashboard" class="dashboard hidden" aria-live="polite">
+          <section id="breakdown" class="hero-row">
+            <div>
+              <span class="square"></span>
+              <h1>Benchmark Breakdown</h1>
+              <p id="loadedSummary">No checkpoints loaded.</p>
+            </div>
+            <div id="summaryCards" class="summary-grid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Visual Overview</h2>
+                <p>Outcome distribution, checkpoint deltas, and per-case cost profile.</p>
+              </div>
+            </div>
+            <div id="overviewCharts" class="visual-grid"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Checkpoint Comparisons</h2>
+                <p>One checkpoint per bar. Higher pass rate is better; lower cost/trace metrics are better.</p>
+              </div>
+            </div>
+            <div id="benchmarkCharts" class="chart-grid"></div>
+          </section>
+
+          <section id="cases" class="panel">
+            <div class="panel-header">
+              <div>
+                <h2>Case Matrix</h2>
+                <p>Pass/fail heatmap across all loaded checkpoints. Select a case for trace analysis.</p>
+              </div>
+            </div>
+            <div id="caseMatrix" class="case-matrix"></div>
+          </section>
+
+          <section id="caseDetails" class="panel"></section>
+        </section>
+      </main>
+    </div>
+
+    <template id="cardTemplate">
+      <article class="metric-card">
+        <span class="metric-label"></span>
+        <strong class="metric-value"></strong>
+        <span class="metric-note"></span>
+      </article>
+    </template>
+
+    <script src="../runs/index.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

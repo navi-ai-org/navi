@@ -1,0 +1,12 @@
+version = 1
+id = "b1-repo-intelligence"
+title = "repo intelligence tools are registered"
+category = "multi_file_refactor"
+mode = "verifier-first"
+task = "Verify that structured repo intelligence exists and exposes AST, symbol, dependency, test discovery, and churn tools."
+tags = ["beyond", "b1", "repo-intelligence"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/repo_intelligence.rs && test -f crates/navi-core/src/tool/builtin/repo_intelligence.rs && rg -q 'ast.search|symbol.goto|symbol.references|dependency_graph.query|test_discovery|ownership_churn.query' crates/navi-core/src/tool/builtin/metadata.rs"
+required = true

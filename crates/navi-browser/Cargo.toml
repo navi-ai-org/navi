@@ -1,0 +1,42 @@
+[package]
+name = "navi-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CDP-only browser backend for the NAVI `browser` tool."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[features]
+default = ["cdp-fallback"]
+# CDP/Chrome process backend.
+cdp-fallback = [
+    "dep:base64",
+    "dep:futures-util",
+    "dep:reqwest",
+    "dep:tokio-tungstenite",
+]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url = "2"
+
+# Optional CDP fallback stack
+base64 = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+tokio-tungstenite = { version = "0.30", default-features = false, optional = true, features = [
+    "connect",
+    "rustls-tls-webpki-roots",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

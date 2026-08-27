@@ -1,0 +1,46 @@
+//! Remote provider registry backed by a local SQLite cache.
+//!
+//! The NAVI repo pins a commit of `navi-ai-org/navi-registry` in
+//! `crates/navi-core/registry.lock`; `build.rs` fetches and embeds that snapshot
+//! into the binary. At startup the engine loads the local SQLite cache; if the
+//! cache is stale (> 24 h or empty) it fetches the latest manifest and provider
+//! files from the remote registry database repo and updates the cache. If both
+//! the fetch and the cache fail, the embedded snapshot is used as a last-resort
+//! fallback.
+
+mod aggregator;
+mod embedded;
+mod extends;
+mod fetcher;
+mod inherit;
+mod resolve;
+mod store;
+pub mod types;
+mod update;
+
+pub use aggregator::sync_aggregator_models;
+pub use embedded::{
+    embedded_manifest, embedded_model_catalog, embedded_provider_schema, embedded_providers,
+    embedded_transcription_provider_schema, embedded_transcription_providers,
+};
+pub use extends::{deep_merge, parse_provider_json, resolve_extends_value};
+pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
+pub use inherit::{
+    apply_canonical_metadata, apply_provider_attachment_defaults_to_config_model,
+    enrich_synced_registry_model, enrich_synced_registry_model_with_catalog,
+    provider_registry_attachment_defaults, provider_registry_defaults,
+};
+pub use resolve::{ModelCatalog, resolve_provider_refs};
+pub use store::{LOCAL_API_SYNC_SHA, RegistryStore, registry_provider_to_config};
+pub use types::{
+    CanonicalModel, ModelCapability, ModelPricing, RegistryTranscriptionModel,
+    RegistryTranscriptionProvider, TranscriptionModelPricing, TranscriptionProviderKind,
+};
+pub use update::{
+    LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,
+    apply_registry_update_atomically_with_transcription, check_registry_manifest,
+    download_registry_updates, download_transcription_updates, load_cached_registry,
+    load_embedded_registry, load_registry, registry_check_interval_with_jitter,
+    run_registry_update_check, save_registry_metadata, should_check_registry_update,
+    validate_registry_hashes, validate_registry_schema,
+};

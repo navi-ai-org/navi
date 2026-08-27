@@ -1,0 +1,29 @@
+[package]
+name = "navi-core-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+navi-core = { path = ".." }
+serde_json = "1"
+
+[[bin]]
+name = "fold_arbitrary_events"
+path = "fuzz_targets/fold_arbitrary_events.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip_json"
+path = "fuzz_targets/roundtrip_json.rs"
+test = false
+doc = false
+
+[workspace]
+# Fuzz crate is excluded from the main workspace to avoid pulling
+# libfuzzer-sys into regular builds.

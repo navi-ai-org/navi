@@ -1,0 +1,30 @@
+{
+  "name": "@navi-agent/navi-linux-x64",
+  "version": "0.4.4",
+  "description": "Linux x64 prebuilt binary for @navi-agent/navi.",
+  "license": "Apache-2.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "navi"
+  ],
+  "bin": {
+    "navi": "navi"
+  },
+  "scripts": {
+    "prepack": "node -e \"require('node:fs').accessSync('navi')\"",
+    "prepublishOnly": "node -e \"require('node:fs').accessSync('navi')\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/navi-ai-org/navi.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

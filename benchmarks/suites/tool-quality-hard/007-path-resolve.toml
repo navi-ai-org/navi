@@ -1,0 +1,34 @@
+version = 1
+id = "hard-path-resolve"
+title = "Hard: VFS path normalize, symlink, mounts, sandbox"
+category = "tool_quality_hard"
+fixture = "benchmarks/fixtures/hard-path-resolve"
+task = """
+Fix virtual path resolution:
+
+- `..` normalization at root
+- relative symlinks resolve against the link's parent directory
+- nested mounts use longest-prefix match
+- sandbox escape must be rejected
+
+Multiple subtle bugs interact. Run `cargo test` until all pass.
+"""
+max_turns = 18
+max_tool_calls = 90
+timeout_ms = 600000
+tags = ["tool-quality", "hard", "paths"]
+
+[metadata]
+difficulty = "hard"
+focus = "path edge cases + mount precedence"
+eval_axis = "filesystem_semantics"
+
+[agent]
+mode = "parity"
+profile = "medium"
+
+[[verifiers]]
+verifier_type = "command"
+command = "cargo test --quiet"
+timeout_ms = 120000
+required = true

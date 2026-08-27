@@ -1,0 +1,515 @@
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type ToolKind = 'read' | 'write' | 'command' | 'custom';
+
+export interface SessionInfo {
+  id: string;
+  projectDir: string;
+  model: string;
+  provider: string;
+}
+
+export interface TurnResponse {
+  sessionId: string;
+  text: string;
+}
+
+export interface HostToolDefinition {
+  name: string;
+  description: string;
+  kind?: ToolKind;
+  inputSchema?: JsonValue;
+}
+
+export interface HostToolInvocation {
+  invocationId: string;
+  input: JsonValue;
+}
+
+export interface HostToolResult {
+  ok?: boolean;
+  output?: JsonValue;
+}
+
+export type ContextSource =
+  | 'File'
+  | 'Project'
+  | 'UserSelection'
+  | 'CanvasNode'
+  | 'StudyBlock'
+  | 'FocusThread'
+  | 'MaterialExcerpt'
+  | 'SessionSummary'
+  | 'Decision'
+  | 'MemorySearch'
+  | { Other: string };
+
+export interface ContextPacket {
+  id?: string | null;
+  source: ContextSource;
+  title?: string | null;
+  content: string;
+  priority?: number;
+  metadata?: JsonValue;
+}
+
+export interface HookPayload {
+  sessionId?: string;
+  task?: string;
+  output?: string;
+  invocation?: JsonValue;
+  result?: JsonValue;
+}
+
+export type RuntimeEvent = {
+  version: number;
+  kind: JsonValue;
+};
+
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; media_type: string; data: string }
+  | { type: 'audio'; media_type: string; data: string; name?: string | null }
+  | { type: 'video'; media_type: string; data: string; name?: string | null }
+  | { type: 'document'; media_type: string; data: string; name?: string | null };
+
+export type HostToolHandler = (invocation: HostToolInvocation) => Promise<HostToolResult | JsonValue>;
+export type HookHandler = (payload: HookPayload) => void;
+
+/** Full session seed surface (camelCase). All fields optional. */
+export interface StartSessionRequest {
+  sessionId?: string | null;
+  projectDir?: string | null;
+  contextPackets?: ContextPacket[];
+  activeSkills?: string[];
+  initialMessages?: JsonValue[];
+  initialEvents?: JsonValue[];
+  initialCreatedAt?: number | null;
+  initialUpdatedAt?: number | null;
+  initialGoal?: JsonValue | null;
+  /**
+   * Per-session system prompt override. Replaces the base identity for this
+   * session only. Skills, context packets, and memory injection still attach
+   * as developer messages on top. When omitted, the engine's prompt profile
+   * (code_agent / assistant / custom) is used.
+   */
+  systemPrompt?: string | null;
+}
+
+/** Custom OpenAI-compatible provider upsert (e.g. Ollama). */
+export interface ProviderUpsert {
+  id: string;
+  label?: string | null;
+  description?: string | null;
+  /** `openai-chat-completions` (default) or `openai-responses`. */
+  kind?: string | null;
+  baseUrl?: string | null;
+  apiKeyEnv?: string | null;
+  models?: string[];
+}
+
+/** Tool profile for host embeddings. */
+export type ToolProfile = 'code_agent' | 'host_tools_only' | 'chat_only';
+/** Prompt profile for host embeddings. */
+export type PromptProfile = 'code_agent' | 'assistant' | 'custom';
+/** Security posture for host embeddings. */
+export type SecurityProfile = 'code_agent' | 'host_app';
+
+export class NaviNapiEngineBuilder {
+  constructor(projectDir: string);
+  /** Durable app data dir (sessions, credentials, plugins, registry). */
+  dataDir(path: string): void;
+  /**
+   * Inject config: bare `NaviConfig` JSON, or
+   * `{ config, dataDir?, globalConfigPath?, projectConfigPath? }`.
+   * Invalid payloads fail at `build()` with a clear error (no panic).
+   */
+  loadedConfig(config: JsonValue): void;
+  /** `code_agent` | `host_tools_only` | `chat_only` */
+  toolProfile(profile: ToolProfile | string): void;
+  allowTools(names: string[]): void;
+  denyTools(names: string[]): void;
+  /** `code_agent` | `assistant` */
+  promptProfile(profile: PromptProfile | string): void;
+  /**
+   * Custom system prompt — replaces the base identity entirely.
+   * Skills, context packets, and memory injection still attach as developer
+   * messages on top of this custom base. Overrides any prior `promptProfile`.
+   */
+  customPromptProfile(prompt: string): void;
+  /** `code_agent` | `host_app` (restricted writes) */
+  securityProfile(profile: SecurityProfile | string): void;
+  /** `restricted` | `accept-edits` | `auto` | `yolo` */
+  permissionMode(mode: string): void;
+  onSessionStart(handler: HookHandler): void;
+  onTurnStart(handler: HookHandler): void;
+  onToolCall(handler: HookHandler): void;
+  onToolResult(handler: HookHandler): void;
+  onTurnEnd(handler: HookHandler): void;
+  onSessionEnd(handler: HookHandler): void;
+  hostTool(definition: HostToolDefinition, handler: HostToolHandler): void;
+  build(): NaviNapiEngine;
+}
+
+/** Effort / thinking level for a turn. Prefer model-specific `effortOptions` from `listModels()`. */
+export type EffortLevel =
+  | 'max'
+  | 'high'
+  | 'medium'
+  | 'low'
+  | 'off'
+  /** Binary "thinking on" when the model has no multi-level efforts (maps to max). */
+  | 'on';
+
+export interface EffortOption {
+  /** Config/API value (`off`, `medium`, `high`, …). */
+  value: EffortLevel | string;
+  /** User-facing label (`thinking on`, `thinking off`, or the value). */
+  label: string;
+}
+
+/** One model from `listModels()` (JSON shape; camelCase). */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  providerId: string;
+  providerLabel: string;
+  taskSize: string;
+  contextWindowTokens?: number;
+  supportsThinking?: boolean;
+  /** Raw registry levels (e.g. none/low/medium/high/xhigh). */
+  reasoningLevels?: string[];
+  defaultReasoningEffort?: string;
+  /**
+   * Resolved picker options for this model.
+   * Use these instead of inventing a global effort list.
+   */
+  effortOptions: EffortOption[];
+  /** When true, options are only thinking on / thinking off. */
+  effortBinary: boolean;
+}
+
+export interface TurnOptions {
+  contentParts?: ContentPart[] | JsonValue[];
+  contextPackets?: JsonValue[];
+  /** Effort level for this turn (overrides session default). */
+  thinking?: EffortLevel;
+}
+
+export type SaveTarget = 'auto' | 'project' | 'global' | 'none';
+
+export interface ModelSelectionResult {
+  providerId: string;
+  model: string;
+  contextWindowTokens?: number;
+  providerConfigured: boolean;
+  savedTo?: string;
+}
+
+export interface ProviderSyncReport {
+  savedTo?: string;
+  updated: JsonValue[];
+  failed: JsonValue[];
+  skipped: JsonValue[];
+}
+
+export interface ModelRef {
+  provider: string;
+  name: string;
+}
+
+export interface UpdateInfo {
+  version: string;
+  repo?: string | null;
+  downloadUrl?: string | null;
+  releaseNotes?: string | null;
+  prerelease?: boolean;
+}
+
+export interface EngineConfig {
+  model: { provider: string; name: string };
+  attachmentModels?: {
+    image?: ModelRef | null;
+    audio?: ModelRef | null;
+    video?: ModelRef | null;
+    document?: ModelRef | null;
+  };
+  tui?: {
+    theme: string;
+    showThinking: boolean;
+    fullToolView: boolean;
+    compactToolVisibleLimit: number;
+    thinkingLevel: string;
+    yoloMode: boolean;
+    llmRecap: boolean;
+    desktopNotifications: boolean;
+  };
+  updates?: {
+    checkEnabled: boolean;
+    autoUpdate: boolean;
+    includePrerelease: boolean;
+    checkIntervalHours: number;
+    repo: string;
+  };
+  globalConfigPath?: string;
+  projectConfigPath?: string;
+  dataDir: string;
+  mcpServers?: JsonValue[];
+}
+
+export interface ActiveSessions {
+  sessionIds: string[];
+  activeSessionId?: string | null;
+}
+
+export class NaviNapiEngine {
+  constructor(projectDir: string);
+  /**
+   * Start a session. Prefer a full request object; string first-arg form
+   * (`sessionId`, optional `projectDir`) is kept for backward compatibility.
+   */
+  startSession(
+    request?: string | StartSessionRequest | null,
+    projectDir?: string | null,
+  ): Promise<SessionInfo>;
+  /** Full `NaviSessionRequest` surface. */
+  startSessionWithRequest(request: StartSessionRequest): Promise<SessionInfo>;
+  /**
+   * Reopen a saved session snapshot JSON with full history.
+   * Attachment bytes rehydrate from project path or `{dataDir}/attachments/`.
+   */
+  startSessionFromSnapshot(snapshot: JsonValue): Promise<SessionInfo>;
+  /** Force-compact history; returns `{ tokensSaved, summary, keptRecentMessages }`. */
+  compactSession(sessionId: string): Promise<JsonValue>;
+  /** Tool names after host tool-profile filtering. */
+  listSessionTools(sessionId: string): Promise<string[]>;
+  toolProfile(): string;
+  promptProfile(): string;
+  securityProfile(): string;
+  /** Upsert OpenAI-compatible provider (Ollama, local proxies, …). */
+  upsertProvider(provider: ProviderUpsert, saveTarget?: SaveTarget): JsonValue;
+  /** Configured ACP external agents (not model providers). */
+  listAcpAgents(): JsonValue;
+  /** Delegate a turn to an ACP peer: `{ agentId, prompt, cwd?, sessionId? }`. */
+  delegateAcpTurn(request: JsonValue): Promise<JsonValue>;
+  delegateAcpTurnSimple(agentId: string, prompt: string): Promise<JsonValue>;
+  sendTurn(sessionId: string, message: string, options?: TurnOptions): Promise<TurnResponse>;
+  snapshotSession(sessionId: string): Promise<string>;
+  closeSession(sessionId: string): Promise<boolean>;
+  cancelTurn(sessionId: string): Promise<void>;
+  /** Rewind live history: keep the first `keepUserTurns` user turns, drop the rest. */
+  rewindSession(sessionId: string, keepUserTurns: number): Promise<number>;
+  resolveApproval(sessionId: string, approvalId: string, approved: boolean): Promise<boolean>;
+  resolveQuestion(sessionId: string, response: JsonValue): Promise<boolean>;
+  /** Resolve plan review: { id, planId, decision: "approve"|"request_changes"|"quit", comments?, freeform? } */
+  resolvePlanReview(sessionId: string, response: JsonValue): Promise<boolean>;
+  /** Resolve sudo: { kind: "submitted", id, password } | { kind: "cancelled", id } */
+  resolveSudoPassword(sessionId: string, response: JsonValue): Promise<boolean>;
+  addContextPacket(sessionId: string, packet: ContextPacket): Promise<void>;
+  /** Available models with per-model `effortOptions` / `effortBinary`. */
+  listModels(): ModelInfo[];
+  listTuiComponents(sessionId: string): string[];
+  /** Installed packages that ship a host-mediated `tui.json` extension. */
+  listTuiExtensions(): JsonValue;
+  /** Flattened palette commands from all installed `tui.json` specs. */
+  listTuiExtensionCommands(): JsonValue;
+  setModel(sessionId: string, provider: string, model: string): Promise<void>;
+  selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
+  setAttachmentModel(modality: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
+  clearAttachmentModel(modality: string, saveTarget?: SaveTarget): JsonValue;
+  subscribeEvents(sessionId: string): NaviNapiEventStream;
+  // Thread goals (host API). While Active, sendTurn auto-continues until
+  // complete/blocked/budget-limited/paused/cleared. Model tools: get_goal,
+  // create_goal, update_goal (complete|blocked only).
+  /** Current goal object or null. */
+  getGoal(sessionId: string): Promise<JsonValue>;
+  /**
+   * Set/replace the thread goal.
+   * @param tokenBudget Optional positive token budget (omit/null = unbounded).
+   * @param shortDescription Optional compact UI label (max 40 chars).
+   */
+  setGoal(
+    sessionId: string,
+    objective: string,
+    tokenBudget?: number | null,
+    shortDescription?: string | null,
+  ): Promise<JsonValue>;
+  /**
+   * Set/replace the thread goal and return a start-prompt for the first
+   * model turn. Returns `{ goal, startPrompt }`.
+   * @param tokenBudget Optional positive token budget (omit/null = unbounded).
+   * @param shortDescription Optional compact UI label (max 40 chars).
+   */
+  setGoalForHostTurn(
+    sessionId: string,
+    objective: string,
+    tokenBudget?: number | null,
+    shortDescription?: string | null,
+  ): Promise<JsonValue>;
+  /** Model-facing first-turn text after a host `setGoal` (no side effects). */
+  buildHostSetGoalUserPrompt(objective: string): string;
+  /** Clear the goal and stop auto-continue. */
+  clearGoal(sessionId: string): Promise<void>;
+  /**
+   * Host/system status: `active` | `paused` | `blocked` | `usage_limited` |
+   * `budget_limited` | `complete` (aliases: `completed`, `done`).
+   */
+  updateGoalStatus(sessionId: string, status: string): Promise<JsonValue>;
+  /** Host-only optional checklist (not required for completion). */
+  updateGoalChecklist(sessionId: string, tasks: JsonValue): Promise<JsonValue>;
+  /** Host-only single checklist task status. */
+  updateGoalTaskStatus(sessionId: string, taskId: number, status: string): Promise<JsonValue>;
+  // Plan mode
+  /** Current agent mode: `normal` | `plan`. */
+  agentMode(sessionId: string): string;
+  /** Enter plan mode (read-only exploration, no writes until approved). */
+  enterPlanMode(sessionId: string): Promise<void>;
+  /** Exit plan mode and resume normal execution. */
+  exitPlanMode(sessionId: string): Promise<void>;
+  // Background tasks
+  listBackgroundCommands(sessionId: string): Promise<JsonValue>;
+  pollBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;
+  cancelBackgroundCommand(sessionId: string, taskId: string): Promise<JsonValue>;
+  // Providers & credentials
+  listProviderAccounts(): JsonValue;
+  credentialStatus(providerId: string): JsonValue;
+  setProviderApiKey(providerId: string, apiKey: string): void;
+  deleteProviderApiKey(providerId: string): boolean;
+  listCredentialAccounts(providerId: string): JsonValue;
+  addProviderAccount(providerId: string, apiKey: string, label?: string | null): JsonValue;
+  selectProviderAccount(providerId: string, accountId: string): JsonValue;
+  deleteProviderAccount(providerId: string, accountId: string): boolean;
+  providerSupportsDeviceOauth(providerId: string): boolean;
+  /**
+   * Device/browser OAuth. Blocks until complete; returns optional secondary token.
+   *
+   * `onStarted` is a napi-rs ThreadsafeFunction with CalleeHandled errors:
+   * Node-style error-first `(err, info)`, not a single `info` argument.
+   * Treating the first arg as the payload leaves URI/code empty.
+   */
+  startDeviceOauth(
+    providerId: string,
+    onStarted?: (
+      err: Error | null,
+      info?: { verificationUri: string; userCode: string },
+    ) => void
+  ): Promise<string | null>;
+  /** Device OAuth without a progress callback. */
+  startDeviceOauthSimple(providerId: string): Promise<string | null>;
+  syncProviderModels(providerId: string, saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
+  syncModels(saveTarget?: SaveTarget): Promise<ProviderSyncReport>;
+  // Usage
+  usageReport(): Promise<JsonValue>;
+  // Skills
+  listSkills(): JsonValue;
+  /** Load one skill including full SKILL.md instructions. */
+  getSkill(skillId: string): JsonValue;
+  /**
+   * Create/update a skill as standard SKILL.md.
+   * params: { id?, name, description?, version?, author?, tags?, requires?, instructions, scope?: "user"|"project" }
+   */
+  saveSkill(params: JsonValue): JsonValue;
+  deleteSkill(skillId: string): JsonValue;
+  setSessionSkills(sessionId: string, skills: string[]): Promise<void>;
+  // MCP
+  listMcpServers(sessionId: string): JsonValue;
+  listMcpTools(sessionId: string): string[];
+  /** Configured MCP servers from TOML (not live session connections). */
+  listMcpConfig(): JsonValue;
+  setMcpEnabled(enabled: boolean, saveTarget?: SaveTarget): JsonValue;
+  upsertMcpServer(server: JsonValue, saveTarget?: SaveTarget): JsonValue;
+  removeMcpServer(serverId: string, saveTarget?: SaveTarget): JsonValue;
+  setMcpConfig(mcp: JsonValue, saveTarget?: SaveTarget): JsonValue;
+  // Registry & plugins
+  syncRegistry(force?: boolean): Promise<boolean>;
+  listRegistry(): JsonValue;
+  pluginList(): JsonValue;
+  pluginInfo(pluginId: string): JsonValue;
+  pluginSearch(query?: string): Promise<JsonValue>;
+  /** Install from local path; confirm must be true (non-interactive approval). */
+  pluginInstallPath(path: string, confirm: boolean): JsonValue;
+  /** Install with explicit trust (`local-dev`|`community`|`signed`|`core`) and kind (`plugin`|`skill`|`mcp`|`integration`). */
+  pluginInstallPathWithMeta(path: string, confirm: boolean, trust?: string, kind?: string): JsonValue;
+  pluginInstallMarketplace(pluginId: string, confirm: boolean): Promise<JsonValue>;
+  pluginUpdatePath(path: string, force?: boolean, confirm?: boolean): JsonValue;
+  pluginUpdateMarketplace(pluginId: string, force?: boolean, confirm?: boolean): Promise<JsonValue>;
+  pluginRemove(pluginId: string): void;
+  reloadWasmPlugins(): Promise<string[]>;
+  // Saved sessions
+  listSavedSessions(): Promise<JsonValue>;
+  loadSavedSession(sessionId: string): Promise<JsonValue>;
+  deleteSavedSession(sessionId: string): Promise<boolean>;
+  renameSavedSession(sessionId: string, title: string): Promise<boolean>;
+  renameSavedSessionAsync(sessionId: string, title: string): Promise<boolean>;
+  /** Export a saved session as an ATIF v1.7 trajectory JSON string (SFT/RL). */
+  exportSessionAtif(sessionId: string, redact: boolean): Promise<string>;
+  exportSessionAtifAsync(sessionId: string, redact: boolean): Promise<string>;
+  // Auto-memory CRUD
+  memoryWrite(id: string, memoryType: string, name: string, description: string, body: string): void;
+  memoryRead(id: string): JsonValue;
+  memoryList(status?: string): JsonValue;
+  memorySearch(query: string, limit?: number): JsonValue;
+  memoryUpdate(id: string, name?: string, description?: string, body?: string, status?: string): void;
+  memoryDelete(id: string): void;
+  memoryCount(): number;
+  memoryIndex(): string;
+  // Auto-memory ops
+  memoryStatus(): JsonValue;
+  memoryDoctor(): JsonValue;
+  memoryInit(embeddings?: boolean, force?: boolean): Promise<JsonValue>;
+  memoryHistorySearch(query: string, sessionId?: string, limit?: number): JsonValue;
+  memoryDream(apply?: boolean, sessions?: number, instructions?: string): Promise<JsonValue>;
+  memoryDistill(): Promise<void>;
+  memoryCheckpoint(): Promise<string>;
+  memoryRebuildPreview(): string;
+  // Permission mode
+  getPermissionMode(): string;
+  setPermissionMode(mode: string): void;
+  // Session management
+  sessionIds(): string[];
+  loadedConfig(): EngineConfig;
+  // TUI panels
+  takeTuiPanels(sessionId: string): JsonValue[];
+  // Saved sessions (async variants)
+  listSavedSessionsAsync(): Promise<JsonValue>;
+  loadSavedSessionAsync(sessionId: string): Promise<JsonValue>;
+  deleteSavedSessionAsync(sessionId: string): Promise<boolean>;
+  exportSessionAtifAsync(sessionId: string, redact: boolean): Promise<string>;
+  // Notifications / self-update
+  notify(title: string, body: string, desktop?: boolean, urgency?: string, category?: string): JsonValue;
+  notifySimple(title: string, body: string, desktop?: boolean): JsonValue;
+  openUrl(url: string): void;
+  appVersion(): string;
+  checkForUpdate(): Promise<UpdateInfo | null>;
+  checkForUpdateWith(current: string, repo?: string, includePrerelease?: boolean): Promise<UpdateInfo | null>;
+  applyUpdate(info: UpdateInfo): Promise<void>;
+  autoUpdateEnabled(): boolean;
+  setAutoUpdate(enabled: boolean): void;
+  // Computer use (OS automation — ADR 0016)
+  /** Whether the `computer-use` feature is compiled into this build. */
+  computerUseAvailable(): boolean;
+  /** Platform backend name (`"windows"`, `"macos"`, `"linux"`, or `"unsupported"`). */
+  computerUsePlatform(): string;
+  /** Snapshot of the computer-use configuration (feature flag, platform, deny-list). */
+  computerUseConfig(): JsonValue;
+  /** Replaces the computer-use deny-list in the in-memory config. For persistence, use config save APIs. */
+  setComputerUseDenyApps(apps: string[]): void;
+  /** Create an ACP server backed by this engine (speaks Agent Client Protocol over stdio). */
+  acpServer(): NaviNapiAcpServer;
+}
+
+/** ACP server backed by the engine. Speaks Agent Client Protocol over stdio. */
+export class NaviNapiAcpServer {
+  /** Serve ACP over the current process stdio until the peer disconnects. */
+  serveStdio(): Promise<void>;
+}
+
+export class NaviNapiEventStream {
+  next(): Promise<RuntimeEvent | null>;
+}

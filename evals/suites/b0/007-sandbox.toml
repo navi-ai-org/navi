@@ -1,0 +1,12 @@
+version = 1
+id = "b0-sandbox"
+title = "snapshot sandbox module exists"
+category = "flaky_recovery_task"
+task = "Verify that workspace snapshot and rollback support is available."
+tags = ["b0", "sandbox", "rollback"]
+
+[[verifiers]]
+verifier_type = "command"
+command = "test -f crates/navi-core/src/sandbox.rs"
+required = true
+

@@ -1,0 +1,712 @@
+# Release workflow — tests, then builds portable navi binaries, publishes a
+# GitHub Release, then publishes @navi-agent/navi to npm (via publish-npm.yml).
+#
+# Trigger: push a version tag
+#   git tag v0.2.1
+#   git push origin v0.2.1
+#
+# Gates: `test` must pass before any platform build or publish step.
+# After the GitHub Release job succeeds, `publish-npm` runs (skips prereleases).
+#
+# Linux builds use Alpine (musl) containers so the binary runs on:
+#   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
+#
+# Assets (names must match scripts/install.sh and scripts/install.ps1):
+#   navi-linux-x64.tar.gz
+#   navi-linux-arm64.tar.gz
+#   navi-darwin-x64.tar.gz
+#   navi-darwin-arm64.tar.gz
+#   navi-win32-x64.zip
+#   SHA256SUMS.txt
+#   SHA256SUMS.txt.sigstore.json
+#
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to build and release (e.g. v0.2.1)"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Always embed the latest navi-registry snapshot in release binaries.
+  NAVI_REGISTRY_REF: refs/heads/main
+  # Do not cap CARGO_BUILD_JOBS — multi-platform builds need full runner cores.
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Quality gate (must pass before multi-platform builds) ─────────────────
+  #
+  # Hosted runners OOM compiling/testing navi-core (and the old sequential
+  # gate that also `cargo check`ed sdk/tui/cli). Keep a light parallel matrix
+  # for smaller crates only. navi-core / full product graph are covered by the
+  # multi-platform release builds + binary smoke tests below, and by CI on PRs.
+
+  fmt:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+  test-pkg:
+    name: Test ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          # Omit navi-core: cold unit-test graph OOMs ubuntu-latest (~7GB)
+          # after 40m+. Platform build jobs compile navi-cli → navi-core.
+          - navi-openai
+          - navi-providers
+          - navi-vfs
+          - navi-lite
+    env:
+      # Cap rustc parallelism so peak RAM stays under the hosted-runner limit.
+      CARGO_BUILD_JOBS: "2"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-test-${{ matrix.package }}
+          shared-key: release-test
+
+      - name: Unit tests
+        run: cargo test --locked --lib --bins -p "${{ matrix.package }}" -- --test-threads=2
+
+  test:
+    name: Test (gate)
+    runs-on: ubuntu-latest
+    needs: [fmt, test-pkg]
+    steps:
+      - name: Gate passed
+        run: echo "fmt + lean package unit tests passed"
+
+  # ── NAPI native addon builds (Node.js bindings: @navi-agent/napi) ───────────
+  #
+  # Builds .node shared libraries for each platform. These are Node native
+  # addons (not CLI binaries), so we use glibc on Linux (not musl) and need
+  # Node.js available for napi-rs headers.
+  # Runs in parallel with the CLI build → release → publish-npm pipeline.
+
+  build-napi:
+    name: Build NAPI ${{ matrix.npm_platform }}
+    needs: [test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_platform: linux-x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            npm_platform: linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_platform: win32-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: napi-${{ matrix.target }}
+          shared-key: napi-build
+
+      - name: Build NAPI native addon (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd crates/navi-napi
+          node scripts/build-native.mjs --release --target ${{ matrix.target }}
+          ls -la npm/${{ matrix.npm_platform }}/
+
+      - name: Build NAPI native addon (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location crates/navi-napi
+          node scripts/build-native.mjs --release --target ${{ matrix.target }}
+          Get-ChildItem npm/${{ matrix.npm_platform }}/
+
+      - name: Stage NAPI binary with release asset name
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          src=$(find crates/navi-napi/npm/${{ matrix.npm_platform }} -maxdepth 1 -type f \( -name '*.node' -o -name '*.dll' \) | head -1)
+          if [[ -z "$src" ]]; then
+            echo "error: no .node/.dll produced for ${{ matrix.npm_platform }}" >&2
+            ls -la crates/navi-napi/npm/${{ matrix.npm_platform }}/ >&2
+            exit 1
+          fi
+          ext="${src##*.}"
+          cp "$src" "dist/navi-napi-${{ matrix.npm_platform }}.$ext"
+          ls -lh dist/
+
+      - name: Upload NAPI binary artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: napi-dist-${{ matrix.npm_platform }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── Publish @navi-agent/napi to npm ─────────────────────────────────────────
+  #
+  # Handled by publish-npm.yml (same trusted-publisher workflow as the CLI
+  # packages). The release job below attaches the napi-dist-* binaries to the
+  # GitHub Release, and the publish-npm job dispatches publish-npm.yml, which
+  # downloads them and publishes @navi-agent/napi*.
+
+  # ── Linux x64 musl (Alpine container — JS actions only work on x64) ────────
+
+  build-linux-x64:
+    name: Build navi-linux-x64
+    needs: [test]
+    runs-on: ubuntu-latest
+    container: rust:1-alpine
+    steps:
+      - name: Install Alpine build deps
+        run: |
+          set -eu
+          apk add --no-cache \
+            build-base clang lld make protoc pkgconfig \
+            git curl ca-certificates file tar
+
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-musl-x64
+          shared-key: release-musl
+
+      # Host triple on rust:1-alpine is musl → target/release/navi
+      - name: Build release binaries (musl)
+        run: cargo build -p navi-cli -p navi-lite --locked --release
+
+      - name: Strip + smoke test
+        run: |
+          set -eu
+          BIN=target/release/navi
+          LITE_BIN=target/release/navi-lite
+          strip "$BIN" || true
+          strip "$LITE_BIN" || true
+          file "$BIN"
+          file "$LITE_BIN"
+          ldd "$BIN" 2>&1 || true
+          ldd "$LITE_BIN" 2>&1 || true
+          "$BIN" --help >/dev/null
+          "$LITE_BIN" --help >/dev/null
+          ls -lh "$BIN"
+          ls -lh "$LITE_BIN"
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p dist
+          tar -C target/release -czf dist/navi-linux-x64.tar.gz navi
+          tar -C target/release -czf dist/navi-lite-linux-x64.tar.gz navi-lite
+          for a in navi-linux-x64.tar.gz navi-lite-linux-x64.tar.gz; do
+            members=$(tar -tzf "dist/$a")
+            case "$a" in
+              navi-linux-*) test "$members" = "navi" ;;
+              navi-lite-*) test "$members" = "navi-lite" ;;
+            esac
+            ls -lh "dist/$a"
+          done
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v5
+        with:
+          name: navi-linux-x64
+          path: |
+            dist/navi-linux-x64.tar.gz
+            dist/navi-lite-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stage + upload npm binary
+        run: |
+          set -eu
+          cp target/release/navi npm/navi/npm/linux-x64/navi
+          chmod +x npm/navi/npm/linux-x64/navi
+      - uses: actions/upload-artifact@v5
+        with:
+          name: npm-linux-x64
+          path: npm/navi/npm/linux-x64/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── Linux arm64 musl via Docker Alpine (GHA Alpine containers break JS actions on arm) ─
+
+  build-linux-arm64:
+    name: Build navi-linux-arm64
+    needs: [test]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Build inside rust:1-alpine (native arm64 musl)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD":/src:rw \
+            -w /src \
+            -e CARGO_HOME=/tmp/cargo-home \
+            -e CARGO_TARGET_DIR=/tmp/target-musl \
+            -e NAVI_REGISTRY_REF \
+            rust:1-alpine \
+            sh -c '
+              set -eu
+              apk add --no-cache \
+                build-base clang lld make protoc pkgconfig \
+                git curl ca-certificates file tar
+              cargo build -p navi-cli -p navi-lite --locked --release
+              strip /tmp/target-musl/release/navi || true
+              strip /tmp/target-musl/release/navi-lite || true
+              file /tmp/target-musl/release/navi
+              file /tmp/target-musl/release/navi-lite
+              ldd /tmp/target-musl/release/navi 2>&1 || true
+              ldd /tmp/target-musl/release/navi-lite 2>&1 || true
+              /tmp/target-musl/release/navi --help >/dev/null
+              /tmp/target-musl/release/navi-lite --help >/dev/null
+              mkdir -p /src/target/release
+              cp /tmp/target-musl/release/navi /src/target/release/navi
+              cp /tmp/target-musl/release/navi-lite /src/target/release/navi-lite
+            '
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C target/release -czf dist/navi-linux-arm64.tar.gz navi
+          tar -C target/release -czf dist/navi-lite-linux-arm64.tar.gz navi-lite
+          for a in navi-linux-arm64.tar.gz navi-lite-linux-arm64.tar.gz; do
+            members=$(tar -tzf "dist/$a")
+            case "$a" in
+              navi-linux-*) test "$members" = "navi" ;;
+              navi-lite-*) test "$members" = "navi-lite" ;;
+            esac
+            ls -lh "dist/$a"
+          done
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v5
+        with:
+          name: navi-linux-arm64
+          path: |
+            dist/navi-linux-arm64.tar.gz
+            dist/navi-lite-linux-arm64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stage + upload npm binary
+        run: |
+          set -euo pipefail
+          cp target/release/navi npm/navi/npm/linux-arm64/navi
+          chmod +x npm/navi/npm/linux-arm64/navi
+      - uses: actions/upload-artifact@v5
+        with:
+          name: npm-linux-arm64
+          path: npm/navi/npm/linux-arm64/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── macOS + Windows ────────────────────────────────────────────────────────
+
+  build-desktop:
+    name: Build ${{ matrix.archive }}
+    needs: [test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: navi-darwin-x64
+            npm_platform: darwin-x64
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: navi-darwin-arm64
+            npm_platform: darwin-arm64
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: navi-win32-x64
+            npm_platform: win32-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          shared-key: release-desktop
+
+      - name: Build release binaries
+        run: cargo build -p navi-cli -p navi-lite --locked --release --target ${{ matrix.target }}
+
+      - name: Strip binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          BIN="target/${{ matrix.target }}/release/navi"
+          LITE_BIN="target/${{ matrix.target }}/release/navi-lite"
+          strip "$BIN" || true
+          strip "$LITE_BIN" || true
+          ls -lh "$BIN"
+          ls -lh "$LITE_BIN"
+          file "$BIN" || true
+          file "$LITE_BIN" || true
+
+      - name: Smoke test binary (native arch only)
+        if: |
+          (runner.os == 'macOS' && matrix.target == 'aarch64-apple-darwin' && runner.arch == 'ARM64') ||
+          (runner.os == 'macOS' && matrix.target == 'x86_64-apple-darwin' && runner.arch == 'X64') ||
+          runner.os == 'Windows'
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            "./target/${{ matrix.target }}/release/navi.exe" --help >/dev/null
+            "./target/${{ matrix.target }}/release/navi-lite.exe" --help >/dev/null
+          else
+            "./target/${{ matrix.target }}/release/navi" --help >/dev/null
+            "./target/${{ matrix.target }}/release/navi-lite" --help >/dev/null
+          fi
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.archive }}.tar.gz" navi
+          # navi-lite archive name: navi-lite-darwin-x64 / navi-lite-darwin-arm64
+          lite_archive=$(echo "${{ matrix.archive }}" | sed 's/^navi-/navi-lite-/')
+          tar -C "target/${{ matrix.target }}/release" -czf "dist/${lite_archive}.tar.gz" navi-lite
+          members=$(tar -tzf "dist/${{ matrix.archive }}.tar.gz")
+          lite_members=$(tar -tzf "dist/${lite_archive}.tar.gz")
+          if [[ "$members" != "navi" || "$lite_members" != "navi-lite" ]]; then
+            echo "invalid archive members: navi=[$members] lite=[$lite_members]" >&2
+            exit 1
+          fi
+          ls -lh "dist/${{ matrix.archive }}.tar.gz" "dist/${lite_archive}.tar.gz"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path "target/${{ matrix.target }}/release/navi.exe" `
+            -DestinationPath "dist/${{ matrix.archive }}.zip" -Force
+          Compress-Archive -Path "target/${{ matrix.target }}/release/navi-lite.exe" `
+            -DestinationPath "dist/navi-lite-win32-x64.zip" -Force
+          Get-Item "dist/${{ matrix.archive }}.zip" | Format-List Name, Length
+          Get-Item "dist/navi-lite-win32-x64.zip" | Format-List Name, Length
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.archive }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Stage npm binary (unix)
+        if: runner.os != 'Windows'
+        run: |
+          cp "target/${{ matrix.target }}/release/navi" "npm/navi/npm/${{ matrix.npm_platform }}/navi"
+          chmod +x "npm/navi/npm/${{ matrix.npm_platform }}/navi"
+
+      - name: Stage npm binary (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item "target/${{ matrix.target }}/release/navi.exe" `
+            "npm/navi/npm/${{ matrix.npm_platform }}/navi.exe" -Force
+
+      - name: Upload npm package tree
+        uses: actions/upload-artifact@v5
+        with:
+          name: npm-${{ matrix.npm_platform }}
+          path: npm/navi/npm/${{ matrix.npm_platform }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── Publish GitHub Release ──────────────────────────────────────────────────
+
+  release:
+    name: GitHub Release
+    needs: [build-linux-x64, build-linux-arm64, build-desktop, build-napi]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Validate tag matches workspace version
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          TAG="${TAG#v}"
+          CARGO_VERSION=$(
+            awk '
+              /^\[workspace\.package\]/ { in_pkg=1; next }
+              /^\[/ { in_pkg=0 }
+              in_pkg && /^version[[:space:]]*=/ {
+                gsub(/"/, "", $3); print $3; exit
+              }
+            ' Cargo.toml
+          )
+          if [[ -z "$CARGO_VERSION" ]]; then
+            echo "Could not read workspace.package.version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "tag version:    $TAG"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [[ "$TAG" != "$CARGO_VERSION" ]]; then
+            echo "error: tag v$TAG does not match Cargo.toml version $CARGO_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Download archives
+        uses: actions/download-artifact@v5
+        with:
+          pattern: navi-*
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Download NAPI binaries
+        uses: actions/download-artifact@v5
+        with:
+          pattern: napi-dist-*
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd artifacts
+          expected=(
+            navi-linux-x64.tar.gz
+            navi-linux-arm64.tar.gz
+            navi-darwin-x64.tar.gz
+            navi-darwin-arm64.tar.gz
+            navi-win32-x64.zip
+            navi-lite-linux-x64.tar.gz
+            navi-lite-linux-arm64.tar.gz
+            navi-lite-darwin-x64.tar.gz
+            navi-lite-darwin-arm64.tar.gz
+            navi-lite-win32-x64.zip
+          )
+          for f in "${expected[@]}"; do
+            if [[ ! -f "$f" ]]; then
+              echo "missing required archive: $f" >&2
+              ls -la
+              exit 1
+            fi
+          done
+          # sha256sum prints "HASH  name" (two spaces); do not use a dummy field.
+          sha256sum "${expected[@]}" | tee SHA256SUMS.txt
+          while read -r hash name; do
+            name="${name#\*}" # strip optional binary-mode marker
+            [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { echo "bad hash: $hash"; exit 1; }
+            [[ -n "$name" && -f "$name" ]] || { echo "sums name missing file: [$name]"; exit 1; }
+          done < SHA256SUMS.txt
+          # NAPI addons ride along as release assets (not checksummed above;
+          # consumers install them via npm, which fetches from this release).
+          for plat in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64; do
+            if ! ls "navi-napi-$plat".* >/dev/null 2>&1; then
+              echo "warning: missing NAPI binary for $plat" >&2
+            fi
+          done
+          ls -lh
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.8.1
+
+      - name: Sign SHA256SUMS with Sigstore (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --bundle artifacts/SHA256SUMS.txt.sigstore.json \
+            artifacts/SHA256SUMS.txt
+          cosign verify-blob \
+            --bundle artifacts/SHA256SUMS.txt.sigstore.json \
+            --certificate-identity-regexp "https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@refs/tags/v.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            artifacts/SHA256SUMS.txt
+
+      - name: Build release notes body
+        id: notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ env.RELEASE_TAG }}"
+          VER="${TAG#v}"
+          NOTES_FILE=".github/release-notes-v${VER}.md"
+          BODY=release-body.md
+
+          if [[ -f "$NOTES_FILE" ]]; then
+            echo "Using $NOTES_FILE"
+            cp "$NOTES_FILE" "$BODY"
+          else
+            echo "Extracting CHANGELOG.md section for ${VER}"
+            awk -v ver="$VER" '
+              $0 ~ ("^## \\[" ver "\\]") { grab=1; next }
+              grab && /^## \[/ { exit }
+              grab { print }
+            ' CHANGELOG.md > "$BODY"
+            if [[ ! -s "$BODY" ]]; then
+              echo "error: no .github/release-notes-v${VER}.md and no CHANGELOG section for ${VER}" >&2
+              exit 1
+            fi
+          fi
+
+          # Ensure install section exists.
+          if ! grep -q '## Install' "$BODY"; then
+            {
+              echo ""
+              echo "## Install"
+              echo ""
+              echo '```bash'
+              echo "curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | sh -s -- --version ${VER}"
+              echo '```'
+            } >> "$BODY"
+          fi
+
+          # Ensure full-changelog link exists.
+          if ! grep -q 'Full [Cc]hangelog' "$BODY"; then
+            {
+              echo ""
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/releases"
+            } >> "$BODY"
+          fi
+
+          echo "----- release body preview -----"
+          head -n 80 "$BODY"
+          echo "----- end preview -----"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: NAVI ${{ env.RELEASE_TAG }}
+          # Prefer hand-written notes; do not clobber with empty GitHub auto notes.
+          generate_release_notes: false
+          body_path: release-body.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.zip
+            artifacts/navi-napi-*.node
+            artifacts/navi-napi-*.dll
+            artifacts/SHA256SUMS.txt
+            artifacts/SHA256SUMS.txt.sigstore.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Publish npm packages (after GitHub Release assets exist) ────────────────
+  #
+  # Dispatch publish-npm.yml as a *top-level* run (not workflow_call).
+  # npm Trusted Publishing OIDC is bound to workflow filename `publish-npm.yml`;
+  # calling it as a reusable workflow from release.yml produced 404 on
+  # `npm publish` (token/permission mismatch). workflow_dispatch matches the
+  # trusted publisher config on npmjs.com.
+  # Skips prerelease tags (contain '-').
+
+  publish-npm:
+    name: Publish npm
+    needs: [release]
+    if: ${{ !contains(github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch publish-npm.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          echo "Dispatching publish-npm.yml for $TAG"
+          gh workflow run publish-npm.yml \
+            --repo "${{ github.repository }}" \
+            -f "tag=$TAG"

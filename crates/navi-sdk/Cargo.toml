@@ -1,0 +1,48 @@
+[package]
+name = "navi-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["io-std"] }
+toml.workspace = true
+tracing.workspace = true
+navi-acp.workspace = true
+navi-core.workspace = true
+navi-mcp.workspace = true
+navi-plugin-broker.workspace = true
+navi-plugin-manifest.workspace = true
+navi-plugin-orchestrator = { workspace = true, optional = true, features = ["wasm-runtime"] }
+navi-providers.workspace = true
+navi-plugin-api = { workspace = true, features = ["tui"] }
+navi-voice.workspace = true
+copland.workspace = true
+navi-computer-use = { workspace = true, optional = true }
+
+[features]
+# WASM plugin runtime is on by default (marketplace + LocalDev packages).
+default = ["wasm-plugins", "computer-use"]
+wasm-plugins = ["dep:navi-plugin-orchestrator"]
+# Optional ONNX Runtime ASR (not portable to musl / all hosts).
+voice-onnx = ["navi-voice/onnx"]
+# OS automation (computer use — ADR 0016). Forwards to
+# `navi-core/computer-use` which registers the native tools.
+computer-use = ["navi-core/computer-use", "dep:navi-computer-use"]
+# ACP v2 draft surface (ADR 0023). Forwards to `navi-acp/acp-v2`.
+# Disabled by default; v1 behaviour is unchanged when off.
+acp-v2 = ["navi-acp/acp-v2"]
+
+[dev-dependencies]
+tempfile.workspace = true
+toml.workspace = true

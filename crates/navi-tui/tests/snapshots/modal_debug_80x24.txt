@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+
+    ╭ Debug ───────────────────────────────────────────────────────────────╮
+    │ Log file: /tmp/navi-test-data/logs/navi.log                          │
+    │ Session:  session-test                                               │
+    │ Project:  /tmp/navi-test-project                                     │
+    │ Model:    gpt-5.5 via OpenAI                                         │
+    │ API key:  Mock                                                       │
+    │ State:    idle                                                       │
+    │ Terminal: Kitty progressive enhancement · free-motion off            │
+    │                                                                      │
+    │ Recent diagnostics                                                   │
+    │ none                                                                 │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+  ╭─╰──────────────────────────────────────────────────────────────────────╯─╮
+  │ ›                                                                        │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                                         gpt-5.5 (max) · 0 / 200k · restricted

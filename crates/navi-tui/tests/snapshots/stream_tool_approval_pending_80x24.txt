@@ -1,0 +1,24 @@
+  main  /tmp/navi-test-project
+
+   › read the file
+
+   ◆ Read src/main.rs · 0ms
+
+    ╭ Tool Approval ───────────────────────────────────────────────────────╮
+    │ Tool: unknown                                                        │
+    │                                                                      │
+    │ {  "summary": "read src/main.rs"}                                    │
+    │                                                                      │
+    │ y approve  •  n deny  •  shift+tab permission mode                   │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    │                                                                      │
+    ╰──────────────────────────────────────────────────────────────────────╯
+    φ__(． ． ) Waiting for approval: tool · 0s (esc to interrupt)
+
+  ╭──────────────────────────────────────────────────────────────────────────╮
+  │ › Type to queue (ctrl+enter) · esc cancels turn                          │
+  ╰──────────────────────────────────────────────────────────────────────────╯
+                                        gpt-5.5 (max) · 18 / 200k · restricted
