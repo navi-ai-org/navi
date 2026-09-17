@@ -9,8 +9,6 @@ pub use types::*;
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
     #[test]
@@ -30,15 +28,9 @@ mod tests {
             security: SecurityConfig::default(),
             logging: LoggingConfig::default(),
             providers: Vec::new(),
-            plugins: vec![PluginConfig {
-                path: PathBuf::from("/global/plugin.so"),
-                enabled: true,
-            }],
             memory: MemoryConfig::default(),
             skills: SkillsConfig::default(),
             mcp: McpConfig::default(),
-            wasm_plugins: Vec::new(),
-            plugin_marketplace: PluginMarketplaceConfig::default(),
             registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             goals: GoalsConfig::default(),
@@ -69,10 +61,6 @@ mod tests {
                 ..LoggingConfig::default()
             },
             providers: Vec::new(),
-            plugins: vec![PluginConfig {
-                path: PathBuf::from("./project-plugin.so"),
-                enabled: true,
-            }],
             memory: MemoryConfig::default(),
             skills: SkillsConfig::default(),
             mcp: McpConfig {
@@ -89,8 +77,6 @@ mod tests {
                     timeout_ms: None,
                 }],
             },
-            wasm_plugins: Vec::new(),
-            plugin_marketplace: PluginMarketplaceConfig::default(),
             registry: RegistryConfig::default(),
             tui: TuiConfig::default(),
             goals: GoalsConfig::default(),
@@ -102,14 +88,12 @@ mod tests {
             workflow: WorkflowConfig::default(),
             shell: ShellConfig::default(),
         };
-        project.plugins.clear();
         project.mcp = McpConfig::default();
         global.merge(project);
 
         assert_eq!(global.model.name, "gpt-5.4");
         assert!(!global.approvals.require_for_writes);
         assert_eq!(global.logging.level, "debug");
-        assert_eq!(global.plugins.len(), 1);
         assert!(!global.mcp.enabled);
     }
 
@@ -182,7 +166,7 @@ permission_mode = "accept-edits"
 allow_tools = ["read_file"]
 allow_tool_regex = ["^repo_"]
 ask_tools = ["run"]
-ask_tool_regex = ["^plugin__"]
+ask_tool_regex = ["^custom__"]
 deny_tools = ["write_file"]
 deny_tool_regex = ["^danger_"]
 "#,
@@ -193,7 +177,7 @@ deny_tool_regex = ["^danger_"]
         assert_eq!(config.security.allow_tools, vec!["read_file"]);
         assert_eq!(config.security.allow_tool_regex, vec!["^repo_"]);
         assert_eq!(config.security.ask_tools, vec!["run"]);
-        assert_eq!(config.security.ask_tool_regex, vec!["^plugin__"]);
+        assert_eq!(config.security.ask_tool_regex, vec!["^custom__"]);
         assert_eq!(config.security.deny_tools, vec!["write_file"]);
         assert_eq!(config.security.deny_tool_regex, vec!["^danger_"]);
     }

@@ -1,5 +1,5 @@
 //! Extended C ABI surface: voice, memory ops, skills CRUD, plan mode,
-//! plugins marketplace, MCP config, permissions, notify/update, registry list.
+//! MCP config, permissions, notify/update, registry list.
 //!
 //! Complements `engine.rs` so Dart/mobile can reach the full SDK.
 
@@ -456,43 +456,6 @@ pub unsafe extern "C" fn navi_engine_voice_doctor(engine: *mut NaviDartEngine) -
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_engine_installed(
-    engine: *mut NaviDartEngine,
-    engine_id: *const c_char,
-) -> i32 {
-    let engine = unsafe { &*engine };
-    let id = unsafe { cstr_to_str(engine_id) };
-    match engine.inner.voice_engine_installed(id) {
-        Ok(true) => 1,
-        Ok(false) => 0,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            -1
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_init(
-    engine: *mut NaviDartEngine,
-    engine_id: *const c_char,
-    force: i32,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let id = unsafe { cstr_to_str(engine_id) }.map(|s| s.to_string());
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner.voice_init(id.as_deref(), force != 0).await {
-            Ok(path) => ctx.success(&path.display().to_string()),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_voice_transcribe_file(
     engine: *mut NaviDartEngine,
     path: *const c_char,
@@ -520,76 +483,6 @@ pub unsafe extern "C" fn navi_engine_voice_transcribe_file(
             Err(e) => ctx.error(&e.to_string()),
         }
     });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_start_stream(
-    engine: *mut NaviDartEngine,
-    language: *const c_char,
-) -> i32 {
-    let engine = unsafe { &*engine };
-    let lang = unsafe { cstr_to_str(language) };
-    match engine.inner.voice_start_stream(lang) {
-        Ok(()) => 0,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            -1
-        }
-    }
-}
-
-/// `samples_json` is a JSON array of f32 samples (16 kHz mono).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_push_pcm(
-    engine: *mut NaviDartEngine,
-    samples_json: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let raw = match unsafe { cstr_to_str(samples_json) } {
-        Some(s) => s,
-        None => {
-            set_last_error("samples_json is null");
-            return ptr::null_mut();
-        }
-    };
-    let samples: Vec<f32> = match serde_json::from_str(raw) {
-        Ok(s) => s,
-        Err(e) => {
-            set_last_error(&format!("invalid samples: {e}"));
-            return ptr::null_mut();
-        }
-    };
-    match engine.inner.voice_push_pcm(&samples) {
-        Ok(delta) => to_json_ptr(&delta),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_end_stream(engine: *mut NaviDartEngine) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.voice_end_stream() {
-        Ok(text) => to_json_ptr(&text),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_cancel_stream(engine: *mut NaviDartEngine) -> i32 {
-    let engine = unsafe { &*engine };
-    match engine.inner.voice_cancel_stream() {
-        Ok(()) => 0,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            -1
-        }
-    }
 }
 
 // ── Memory ─────────────────────────────────────────────────────────
@@ -753,8 +646,6 @@ pub unsafe extern "C" fn navi_engine_memory_doctor(engine: *mut NaviDartEngine) 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn navi_engine_memory_init(
     engine: *mut NaviDartEngine,
-    embeddings: i32,
-    force: i32,
     callback: NaviAsyncCallback,
     user_data: *mut c_void,
 ) {
@@ -762,7 +653,7 @@ pub unsafe extern "C" fn navi_engine_memory_init(
     let ctx = CallbackCtx::new(callback, user_data);
     let inner = engine.inner.clone();
     engine.runtime.spawn(async move {
-        match inner.memory_init(embeddings != 0, force != 0).await {
+        match inner.memory_init().await {
             Ok(r) => ctx.success(&r),
             Err(e) => ctx.error(&e.to_string()),
         }
@@ -858,126 +749,6 @@ pub unsafe extern "C" fn navi_engine_memory_rebuild_preview(
         Err(e) => {
             set_last_error(&e.to_string());
             ptr::null_mut()
-        }
-    }
-}
-
-// ── Plugins marketplace ────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_list(engine: *mut NaviDartEngine) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.plugin_list() {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_info(
-    engine: *mut NaviDartEngine,
-    plugin_id: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let id = match parse_str(plugin_id, "plugin_id") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    match engine.inner.plugin_info(&id) {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_search(
-    engine: *mut NaviDartEngine,
-    query: *const c_char,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let query = unsafe { cstr_to_str(query) }.map(|s| s.to_string());
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner.plugin_search(query.as_deref()).await {
-            Ok(v) => ctx.success(&v),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_install_path(
-    engine: *mut NaviDartEngine,
-    path: *const c_char,
-    confirm: i32,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let path = match parse_str(path, "path") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    match engine
-        .inner
-        .plugin_install_path(std::path::Path::new(&path), confirm != 0)
-    {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_install_marketplace(
-    engine: *mut NaviDartEngine,
-    plugin_id: *const c_char,
-    confirm: i32,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let id = match unsafe { cstr_to_str(plugin_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            ctx.error("plugin_id is null");
-            return;
-        }
-    };
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner.plugin_install_marketplace(&id, confirm != 0).await {
-            Ok(v) => ctx.success(&v),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_remove(
-    engine: *mut NaviDartEngine,
-    plugin_id: *const c_char,
-) -> i32 {
-    let engine = unsafe { &*engine };
-    let id = match parse_str(plugin_id, "plugin_id") {
-        Some(s) => s,
-        None => return -1,
-    };
-    match engine.inner.plugin_remove(&id) {
-        Ok(()) => 0,
-        Err(e) => {
-            set_last_error(&e.to_string());
-            -1
         }
     }
 }
@@ -1524,181 +1295,6 @@ pub unsafe extern "C" fn navi_engine_clear_attachment_model(
     let target = parse_save_target(unsafe { cstr_to_str(save_target) });
     match engine.inner.clear_attachment_model(&modality, target) {
         Ok(path) => to_json_ptr(&path_json(path)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_install_path_with_meta(
-    engine: *mut NaviDartEngine,
-    path: *const c_char,
-    confirm: i32,
-    trust: *const c_char,
-    kind: *const c_char,
-) -> *mut c_char {
-    use navi_plugin_manifest::{PluginCatalogKind, TrustLevel};
-    let engine = unsafe { &*engine };
-    let path = match parse_str(path, "path") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    let trust = match unsafe { cstr_to_str(trust) }.unwrap_or("local-dev") {
-        "local-dev" | "local_dev" | "localdev" => TrustLevel::LocalDev,
-        "community" => TrustLevel::Community,
-        "signed" => TrustLevel::Signed,
-        "core" => TrustLevel::Core,
-        other => {
-            set_last_error(&format!(
-                "invalid trust level '{other}' (expected local-dev|community|signed|core)"
-            ));
-            return ptr::null_mut();
-        }
-    };
-    let kind = match unsafe { cstr_to_str(kind) }.unwrap_or("plugin") {
-        "plugin" => PluginCatalogKind::Plugin,
-        "skill" => PluginCatalogKind::Skill,
-        "mcp" => PluginCatalogKind::Mcp,
-        "integration" => PluginCatalogKind::Integration,
-        other => {
-            set_last_error(&format!(
-                "invalid package kind '{other}' (expected plugin|skill|mcp|integration)"
-            ));
-            return ptr::null_mut();
-        }
-    };
-    match engine.inner.plugin_install_path_with_meta(
-        std::path::Path::new(&path),
-        confirm != 0,
-        trust,
-        kind,
-    ) {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_update_path(
-    engine: *mut NaviDartEngine,
-    path: *const c_char,
-    force: i32,
-    confirm: i32,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let path = match parse_str(path, "path") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    match engine
-        .inner
-        .plugin_update_path(std::path::Path::new(&path), force != 0, confirm != 0)
-    {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_plugin_update_marketplace(
-    engine: *mut NaviDartEngine,
-    plugin_id: *const c_char,
-    force: i32,
-    confirm: i32,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let id = match unsafe { cstr_to_str(plugin_id) } {
-        Some(s) => s.to_string(),
-        None => {
-            ctx.error("plugin_id is null");
-            return;
-        }
-    };
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner
-            .plugin_update_marketplace(&id, force != 0, confirm != 0)
-            .await
-        {
-            Ok(v) => ctx.success(&v),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_list_tui_extensions(
-    engine: *mut NaviDartEngine,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.list_tui_extensions() {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_list_tui_extension_commands(
-    engine: *mut NaviDartEngine,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.list_tui_extension_commands() {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_list_tui_components(
-    engine: *mut NaviDartEngine,
-    session_id: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let sid = match parse_str(session_id, "session_id") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    match engine.inner.list_tui_components(&sid) {
-        Ok(v) => to_json_ptr(&v),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_take_tui_panels(
-    engine: *mut NaviDartEngine,
-    session_id: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let sid = match parse_str(session_id, "session_id") {
-        Some(s) => s,
-        None => return ptr::null_mut(),
-    };
-    match engine.inner.take_tui_panels(&sid) {
-        Ok(panels) => {
-            let ids: Vec<String> = panels.iter().map(|p| p.id().to_string()).collect();
-            to_json_ptr(&ids)
-        }
         Err(e) => {
             set_last_error(&e.to_string());
             ptr::null_mut()

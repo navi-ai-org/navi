@@ -111,9 +111,6 @@ navi/
 │   ├── navi-core/         # Core domain: config, tools, security, runtime
 │   ├── navi-mcp/          # MCP client integration
 │   ├── navi-openai/       # OpenAI-compatible provider implementation
-│   ├── navi-plugin-api/   # Plugin trait and API version
-│   ├── navi-plugin-runtime/  # WASM plugin runtime (wasmtime)
-│   ├── navi-plugin-orchestrator/  # Install/load orchestration
 │   ├── navi-providers/    # Provider facade
 │   ├── navi-sdk/          # Public embedding facade
 │   └── navi-tui/          # Terminal UI

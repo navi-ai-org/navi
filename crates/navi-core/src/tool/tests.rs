@@ -2963,22 +2963,6 @@ fn clear_tools_removes_all_entries() {
     assert!(executor.definitions().is_empty());
 }
 
-#[test]
-fn unregister_plugin_tools_only_removes_plugin_prefixed() {
-    let tempdir = tempfile::tempdir().expect("tempdir");
-    let mut executor = executor(tempdir.path());
-    // Register a fake plugin tool
-    executor.register_tool(Arc::new(PluginTestTool));
-    assert!(executor.definition("plugin__test").is_some());
-    assert!(executor.definition("read_file").is_some());
-    executor.unregister_plugin_tools();
-    assert!(executor.definition("plugin__test").is_none());
-    assert!(
-        executor.definition("read_file").is_some(),
-        "builtin tools should remain"
-    );
-}
-
 // ── Tool fork edge cases ──────────────────────────────────────────────────
 
 #[test]
@@ -3203,27 +3187,4 @@ async fn permissive_policy_allows_all_tools() {
             != Some("security_denied"),
         "Permissive policy should not security-deny"
     );
-}
-
-/// Minimal `Tool` impl used to exercise plugin-prefixed registration/removal.
-struct PluginTestTool;
-
-#[async_trait::async_trait]
-impl Tool for PluginTestTool {
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition::new(
-            "plugin__test",
-            "test plugin tool",
-            ToolKind::Custom,
-            json!({"type": "object", "properties": {}, "additionalProperties": false}),
-        )
-    }
-
-    async fn invoke(&self, invocation: ToolInvocation) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult {
-            invocation_id: invocation.id,
-            ok: true,
-            output: json!({"ok": true}),
-        })
-    }
 }

@@ -9,8 +9,8 @@
 //!   input, sidebar, etc.).
 //! - **Overlay panels** float on top — modals, popovers, notifications.
 //!
-//! This design allows plugins to register custom panels without modifying
-//! the host application's render code.
+//! This design allows host applications to register custom panels without
+//! modifying the host application's render code.
 
 use std::any::Any;
 

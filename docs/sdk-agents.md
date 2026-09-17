@@ -4,7 +4,7 @@ This document covers the technical API for embedding NAVI in other applications 
 
 ## Overview
 
-`navi-sdk` is the stable Rust embedding facade. It wraps core runtime, provider setup, plugin loading, host tools, MCP, sessions, and events into a single entry point: `NaviEngine`.
+`navi-sdk` is the stable Rust embedding facade. It wraps core runtime, provider setup, host tools, MCP, sessions, and events into a single entry point: `NaviEngine`.
 
 ```
 Your App (Tauri, CLI, etc.)
@@ -14,7 +14,6 @@ navi-sdk (NaviEngine)
     |
     +-- navi-core (runtime, tools, security, sessions)
     +-- navi-providers (navi-openai facade)
-    +-- navi-plugin-orchestrator / navi-plugin-runtime (WASM plugins)
     +-- navi-mcp (MCP client)
 ```
 
@@ -25,7 +24,7 @@ use navi_sdk::{
     NaviEngineBuilder, NaviEngine, NaviToolProfile, NaviPromptProfile, NaviSecurityProfile,
 };
 
-// From a project directory (loads config, providers, plugins, MCP)
+// From a project directory (loads config, providers, MCP)
 let engine = NaviEngineBuilder::from_project(".")
     .build()
     .expect("engine");
@@ -287,9 +286,8 @@ tools. They receive the tool invocation id and model-produced JSON input.
 
 ## TypeScript / NAPI
 
-The `navi-napi` crate exposes the SDK to Node clients without native plugin
-libraries. A host can register TypeScript tools and lifecycle hooks before
-starting a session:
+The `navi-napi` crate exposes the SDK to Node clients. A host can register
+TypeScript tools and lifecycle hooks before starting a session:
 
 ```ts
 import { NaviNapiEngineBuilder } from "@navi/napi";
@@ -341,25 +339,10 @@ adapter used by Rust hosts, so it is visible to the model without changing
 stream object whose `next()` method resolves to the next serialized
 `RuntimeEvent`, or `null` when the stream closes. The NAPI engine also exposes
 runtime control methods for `cancelTurn`, `resolveApproval`, `addContextPacket`,
-`listModels`, `listTuiComponents`, and `setModel`. Lifecycle hook callbacks
+`listModels`, and `setModel`. Lifecycle hook callbacks
 are fire-and-forget: the runtime emits JSON payloads through Node's event loop
 and does not block the agent turn waiting for asynchronous analytics or
 persistence work.
-
-## Native Plugin Policies
-
-Native plugins can call `register_agent_policy(name)`. The SDK consumes known
-policy names before constructing the session runtime:
-
-| Policy | Effect |
-|---|---|
-| `default`, `code_agent` | Uses `RuntimeComponents::default()`. |
-
-Unknown policy names are reported as plugin warnings and do not replace the
-host-configured runtime components. `register_tui_component(...)` remains a
-TUI-scoped declaration. The SDK preserves declared component names per session
-through `list_tui_components(...)` / `listTuiComponents(...)`; `navi-tui`
-decides whether a name maps to an actual terminal widget.
 
 ## Runtime Customization
 
@@ -424,7 +407,7 @@ let entry = engine.memory_read("redis_tests")?;
 // List all active memories
 let memories = engine.memory_list(Some(MemoryStatus::Active))?;
 
-// Search (semantic if embeddings available, text fallback)
+// Search (text match)
 let results = engine.memory_search("redis", 10)?;
 
 // Update fields and/or status

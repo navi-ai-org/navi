@@ -785,6 +785,7 @@ mod annotate_tests {
             is_password,
             children,
             children_truncated: false,
+            element_id: None,
         }
     }
 

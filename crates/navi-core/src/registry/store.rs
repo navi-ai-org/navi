@@ -3,8 +3,8 @@
 use crate::config::types::{
     ModelTaskSize, ProviderConfig, ProviderKind, ProviderModelConfig, ToolCallingMode,
 };
+use crate::db::{Db, DbConnection, params};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -19,10 +19,11 @@ use super::types::{
 /// hash as permission to replace the list.
 pub const LOCAL_API_SYNC_SHA: &str = "local-api-sync";
 
-/// Removes `registry.db` plus SQLite sidecar files (`-wal`, `-shm`, `-journal`).
+/// Removes `registry.db` plus SQLite sidecar files (`-wal`, `-shm`, `-journal`)
+/// and turso's multi-process WAL coordination file (`-tshm`).
 fn remove_registry_db_files(db_path: &Path) {
     let path_str = db_path.as_os_str().to_string_lossy();
-    for suffix in ["", "-wal", "-shm", "-journal"] {
+    for suffix in ["", "-wal", "-shm", "-tshm", "-journal"] {
         let path = Path::new(&format!("{path_str}{suffix}")).to_path_buf();
         match std::fs::remove_file(&path) {
             Ok(()) => tracing::info!(path = %path.display(), "removed broken registry DB file"),
@@ -38,10 +39,10 @@ fn remove_registry_db_files(db_path: &Path) {
 
 /// SQLite-backed registry store.
 ///
-/// Thread-safe via internal `Mutex<Connection>` — registry operations are
+/// Thread-safe via internal `Mutex<DbConnection>` — registry operations are
 /// short-lived and infrequent so contention is negligible.
 pub struct RegistryStore {
-    conn: Mutex<Connection>,
+    conn: Mutex<DbConnection>,
 }
 
 impl RegistryStore {
@@ -79,22 +80,22 @@ impl RegistryStore {
     }
 
     fn open_at_path(db_path: &Path) -> Result<Self> {
-        let conn = Connection::open(db_path)
+        let db = Db::open(db_path)
             .with_context(|| format!("failed to open registry DB at {}", db_path.display()))?;
+        // WAL mode for concurrent reads, faster writes; foreign keys enforced.
+        let conn = db.connect().with_context(|| {
+            format!("failed to connect to registry DB at {}", db_path.display())
+        })?;
 
         // Fail fast on truncated/corrupt caches before schema init. SQLite can
         // open a header-only file and only error later on the first query.
-        conn.query_row("PRAGMA schema_version", [], |row| row.get::<_, i64>(0))
+        conn.query_row("PRAGMA schema_version", (), |row| row.get::<i64>(0))
             .with_context(|| {
                 format!(
                     "registry DB at {} failed integrity probe",
                     db_path.display()
                 )
             })?;
-
-        // WAL mode for concurrent reads, faster writes.
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -144,8 +145,8 @@ impl RegistryStore {
     /// Opens an in-memory database (for testing).
     #[cfg(test)]
     pub fn open_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let db = Db::open_in_memory()?;
+        let conn = db.connect()?;
         let store = Self {
             conn: Mutex::new(conn),
         };
@@ -244,14 +245,11 @@ impl RegistryStore {
     /// Returns the value of a metadata key, or `None`.
     pub fn meta_get(&self, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn
-            .prepare("SELECT value FROM registry_meta WHERE key = ?1")
-            .context("prepare meta_get")?;
-        let mut rows = stmt.query_map(params![key], |row| row.get(0))?;
-        match rows.next() {
-            Some(Ok(v)) => Ok(Some(v)),
-            _ => Ok(None),
-        }
+        conn.query_row_optional(
+            "SELECT value FROM registry_meta WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        )
     }
 
     /// Sets a metadata key-value pair (upsert).
@@ -269,46 +267,39 @@ impl RegistryStore {
     /// Returns `true` if the providers table is empty.
     pub fn is_empty(&self) -> Result<bool> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM providers", (), |row| row.get(0))?;
         Ok(count == 0)
     }
 
     /// Returns the number of providers in the cache.
     pub fn provider_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM providers", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM providers", (), |row| row.get(0))?;
         Ok(count as usize)
     }
 
     /// Returns the total number of models across all providers.
     pub fn model_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM models", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM models", (), |row| row.get(0))?;
         Ok(count as usize)
     }
 
     /// Returns the stored SHA-256 hash for a provider, or `None`.
     pub fn provider_sha256(&self, provider_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT sha256 FROM providers WHERE id = ?1")?;
-        let mut rows =
-            stmt.query_map(params![provider_id], |row| row.get::<_, Option<String>>(0))?;
-        match rows.next() {
-            Some(Ok(v)) => Ok(v),
-            _ => Ok(None),
-        }
+        conn.query_row_optional(
+            "SELECT sha256 FROM providers WHERE id = ?1",
+            params![provider_id],
+            |row| row.get(0),
+        )
     }
 
     /// Returns the set of provider ids currently in the cache.
     pub fn provider_ids(&self) -> Result<std::collections::HashSet<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id FROM providers")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        let mut ids = std::collections::HashSet::new();
-        for row in rows {
-            ids.insert(row?);
-        }
-        Ok(ids)
+        let ids: Vec<String> = conn.query_rows("SELECT id FROM providers", (), |row| row.get(0))?;
+        Ok(ids.into_iter().collect())
     }
 
     /// Loads existing models for a provider from the cache, keyed by model name.
@@ -319,49 +310,48 @@ impl RegistryStore {
         provider_id: &str,
     ) -> Result<std::collections::HashMap<String, RegistryModel>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
+        let rows: Vec<RegistryModel> = conn.query_rows(
             "SELECT name, task_size, context_window_tokens, max_output_tokens, recommended_temperature, supports_thinking, supports_images, supports_audio, supports_video, supports_documents, reasoning_levels, default_reasoning_effort
              FROM models WHERE provider_id = ?1",
+            params![provider_id],
+            |row| {
+                let name: String = row.get(0)?;
+                let task_size_str: Option<String> = row.get(1)?;
+                let ctx: Option<i64> = row.get(2)?;
+                let max_out: Option<i64> = row.get(3)?;
+                let temp: Option<f64> = row.get(4)?;
+                let thinking: Option<i64> = row.get(5)?;
+                let images: Option<i64> = row.get(6)?;
+                let audio: Option<i64> = row.get(7)?;
+                let video: Option<i64> = row.get(8)?;
+                let documents: Option<i64> = row.get(9)?;
+                let levels_json: Option<String> = row.get(10)?;
+                let default_effort: Option<String> = row.get(11)?;
+
+                Ok(RegistryModel {
+                    model_ref: None,
+                    api_name: None,
+                    name: name.clone(),
+                    task_size: task_size_str,
+                    context_window_tokens: ctx.map(|v| v as u64),
+                    max_output_tokens: max_out.map(|v| v as u64),
+                    recommended_temperature: temp,
+                    supports_thinking: thinking.map(|v| v != 0),
+                    reasoning_levels: parse_reasoning_levels_json(levels_json.as_deref()),
+                    default_reasoning_effort: default_effort,
+                    supports_images: images.map(|v| v != 0),
+                    supports_audio: audio.map(|v| v != 0),
+                    supports_video: video.map(|v| v != 0),
+                    supports_documents: documents.map(|v| v != 0),
+                    supports_attachments: None,
+                    attachments: RegistryAttachments::default(),
+                    capabilities: Vec::new(),
+                    pricing: None,
+                })
+            },
         )?;
-        let rows = stmt.query_map(params![provider_id], |row| {
-            let name: String = row.get(0)?;
-            let task_size_str: Option<String> = row.get(1)?;
-            let ctx: Option<i64> = row.get(2)?;
-            let max_out: Option<i64> = row.get(3)?;
-            let temp: Option<f64> = row.get(4)?;
-            let thinking: Option<i64> = row.get(5)?;
-            let images: Option<i64> = row.get(6)?;
-            let audio: Option<i64> = row.get(7)?;
-            let video: Option<i64> = row.get(8)?;
-            let documents: Option<i64> = row.get(9)?;
-            let levels_json: Option<String> = row.get(10)?;
-            let default_effort: Option<String> = row.get(11)?;
-
-            Ok(RegistryModel {
-                model_ref: None,
-                api_name: None,
-                name: name.clone(),
-                task_size: task_size_str,
-                context_window_tokens: ctx.map(|v| v as u64),
-                max_output_tokens: max_out.map(|v| v as u64),
-                recommended_temperature: temp,
-                supports_thinking: thinking.map(|v| v != 0),
-                reasoning_levels: parse_reasoning_levels_json(levels_json.as_deref()),
-                default_reasoning_effort: default_effort,
-                supports_images: images.map(|v| v != 0),
-                supports_audio: audio.map(|v| v != 0),
-                supports_video: video.map(|v| v != 0),
-                supports_documents: documents.map(|v| v != 0),
-                supports_attachments: None,
-                attachments: RegistryAttachments::default(),
-                capabilities: Vec::new(),
-                pricing: None,
-            })
-        })?;
-
         let mut map = std::collections::HashMap::new();
-        for row in rows {
-            let model = row?;
+        for model in rows {
             map.insert(model.name.clone(), model);
         }
         Ok(map)
@@ -371,15 +361,13 @@ impl RegistryStore {
     /// Used during sync to remove providers that were deleted from the remote registry.
     pub fn delete_providers_not_in(&self, keep: &std::collections::HashSet<&str>) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id FROM providers")?;
-        let to_delete: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
+        let ids: Vec<String> = conn.query_rows("SELECT id FROM providers", (), |row| row.get(0))?;
+        let to_delete: Vec<String> = ids
+            .into_iter()
             .filter(|id| !keep.contains(id.as_str()))
             .collect();
-        drop(stmt);
         for id in &to_delete {
-            conn.execute("DELETE FROM providers WHERE id = ?1", params![id])?;
+            conn.execute("DELETE FROM providers WHERE id = ?1", params![id.as_str()])?;
         }
         if !to_delete.is_empty() {
             tracing::info!(
@@ -409,7 +397,7 @@ impl RegistryStore {
         conn.execute(
             "INSERT OR REPLACE INTO transcription_providers (id, json, sha256, updated_at)
              VALUES (?1, ?2, ?3, datetime('now'))",
-            params![provider.id, json, sha256],
+            params![provider.id.as_str(), json.as_str(), sha256],
         )?;
         Ok(())
     }
@@ -417,22 +405,23 @@ impl RegistryStore {
     /// SHA-256 of a cached transcription provider, if known.
     pub fn transcription_provider_sha256(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT sha256 FROM transcription_providers WHERE id = ?1")?;
-        let mut rows = stmt.query_map(params![id], |row| row.get::<_, Option<String>>(0))?;
-        match rows.next() {
-            Some(Ok(v)) => Ok(v),
-            _ => Ok(None),
-        }
+        conn.query_row_optional(
+            "SELECT sha256 FROM transcription_providers WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
     }
 
     /// Loads all cached transcription providers.
     pub fn load_transcription_providers(&self) -> Result<Vec<RegistryTranscriptionProvider>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT json FROM transcription_providers ORDER BY id")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let rows = conn.query_rows(
+            "SELECT json FROM transcription_providers ORDER BY id",
+            (),
+            |row| row.get::<String>(0),
+        )?;
         let mut out = Vec::new();
-        for row in rows {
-            let json = row?;
+        for json in rows {
             match serde_json::from_str::<RegistryTranscriptionProvider>(&json) {
                 Ok(p) => out.push(p),
                 Err(err) => {
@@ -449,17 +438,18 @@ impl RegistryStore {
         keep: &std::collections::HashSet<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id FROM transcription_providers")?;
-        let to_delete: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
+        let ids: Vec<String> =
+            conn.query_rows("SELECT id FROM transcription_providers", (), |row| {
+                row.get(0)
+            })?;
+        let to_delete: Vec<String> = ids
+            .into_iter()
             .filter(|id| !keep.contains(id.as_str()))
             .collect();
-        drop(stmt);
         for id in &to_delete {
             conn.execute(
                 "DELETE FROM transcription_providers WHERE id = ?1",
-                params![id],
+                params![id.as_str()],
             )?;
         }
         Ok(())
@@ -479,7 +469,7 @@ impl RegistryStore {
         conn.execute(
             "INSERT OR REPLACE INTO canonical_models (id, json, sha256, updated_at)
              VALUES (?1, ?2, ?3, datetime('now'))",
-            params![id, json, sha256],
+            params![id, json.as_str(), sha256],
         )?;
         Ok(())
     }
@@ -487,26 +477,23 @@ impl RegistryStore {
     /// Returns the SHA-256 of a cached canonical model, if any.
     pub fn canonical_model_sha256(&self, id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT sha256 FROM canonical_models WHERE id = ?1")?;
-        let mut rows = stmt.query_map(params![id], |row| row.get::<_, Option<String>>(0))?;
-        match rows.next() {
-            Some(Ok(v)) => Ok(v),
-            _ => Ok(None),
-        }
+        conn.query_row_optional(
+            "SELECT sha256 FROM canonical_models WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
     }
 
     /// Loads the full canonical model catalog from the cache.
     pub fn load_canonical_model_catalog(&self) -> Result<super::resolve::ModelCatalog> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id, json FROM canonical_models ORDER BY id")?;
-        let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let json: String = row.get(1)?;
-            Ok((id, json))
-        })?;
+        let rows: Vec<(String, String)> = conn.query_rows(
+            "SELECT id, json FROM canonical_models ORDER BY id",
+            (),
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
         let mut catalog = std::collections::HashMap::new();
-        for row in rows {
-            let (id, json) = row?;
+        for (id, json) in rows {
             match serde_json::from_str::<super::types::CanonicalModel>(&json) {
                 Ok(model) => {
                     catalog.insert(id, model);
@@ -525,14 +512,17 @@ impl RegistryStore {
         keep: &std::collections::HashSet<&str>,
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT id FROM canonical_models")?;
-        let to_delete: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
+        let ids: Vec<String> =
+            conn.query_rows("SELECT id FROM canonical_models", (), |row| row.get(0))?;
+        let to_delete: Vec<String> = ids
+            .into_iter()
             .filter(|id| !keep.contains(id.as_str()))
             .collect();
         for id in to_delete {
-            conn.execute("DELETE FROM canonical_models WHERE id = ?1", params![id])?;
+            conn.execute(
+                "DELETE FROM canonical_models WHERE id = ?1",
+                params![id.as_str()],
+            )?;
         }
         Ok(())
     }
@@ -540,7 +530,7 @@ impl RegistryStore {
     /// Number of cached canonical models.
     pub fn canonical_model_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM canonical_models", [], |row| {
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM canonical_models", (), |row| {
             row.get(0)
         })?;
         Ok(count as usize)
@@ -550,7 +540,7 @@ impl RegistryStore {
     pub fn transcription_provider_count(&self) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM transcription_providers", [], |row| {
+            conn.query_row("SELECT COUNT(*) FROM transcription_providers", (), |row| {
                 row.get(0)
             })?;
         Ok(count as usize)
@@ -659,19 +649,21 @@ impl RegistryStore {
             .collect();
 
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare("SELECT name FROM models WHERE provider_id = ?1")?;
-        let to_delete: Vec<String> = stmt
-            .query_map(params![provider_id], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
+        let names: Vec<String> = conn.query_rows(
+            "SELECT name FROM models WHERE provider_id = ?1",
+            params![provider_id],
+            |row| row.get(0),
+        )?;
+        let to_delete: Vec<String> = names
+            .into_iter()
             .filter(|name| !keep_lower.contains(&name.to_ascii_lowercase()))
             .collect();
-        drop(stmt);
 
         let removed = to_delete.len();
         for name in &to_delete {
             conn.execute(
                 "DELETE FROM models WHERE provider_id = ?1 AND name = ?2",
-                params![provider_id, name],
+                params![provider_id, name.as_str()],
             )?;
         }
         if removed > 0 {
@@ -727,10 +719,10 @@ impl RegistryStore {
                     canonical.max_output_tokens.map(|v| v as i64),
                     canonical.recommended_temperature,
                     canonical.supports_thinking.map(|v| v as i64),
-                    levels_json,
-                    canonical.default_reasoning_effort,
-                    name,
-                ])?;
+                    levels_json.as_str(),
+                    canonical.default_reasoning_effort.as_deref(),
+                    name.as_str(),
+                ])? as usize;
             }
         }
 
@@ -758,13 +750,13 @@ impl RegistryStore {
             "INSERT OR REPLACE INTO providers (id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, sha256, aggregator, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))",
             params![
-                provider.id,
-                provider.label,
-                provider.description,
-                provider.kind,
-                provider.api_key_env,
-                provider.base_url,
-                provider.tool_calling_mode,
+                provider.id.as_str(),
+                provider.label.as_str(),
+                provider.description.as_str(),
+                provider.kind.as_str(),
+                provider.api_key_env.as_str(),
+                provider.base_url.as_deref(),
+                provider.tool_calling_mode.as_deref(),
                 serde_json::to_string(&provider.request_options)?,
                 sha256,
                 provider.aggregator as i64,
@@ -774,7 +766,7 @@ impl RegistryStore {
         // Delete existing models for this provider, then re-insert.
         tx.execute(
             "DELETE FROM models WHERE provider_id = ?1",
-            params![provider.id],
+            params![provider.id.as_str()],
         )?;
 
         {
@@ -788,9 +780,9 @@ impl RegistryStore {
                 let levels_json =
                     serde_json::to_string(&model.reasoning_levels).unwrap_or_else(|_| "[]".into());
                 stmt.execute(params![
-                    provider.id,
-                    model.name,
-                    model.task_size,
+                    provider.id.as_str(),
+                    model.name.as_str(),
+                    model.task_size.as_deref(),
                     model.context_window_tokens.map(|v| v as i64),
                     model.max_output_tokens.map(|v| v as i64),
                     model.recommended_temperature,
@@ -799,8 +791,8 @@ impl RegistryStore {
                     registry_model_supports_audio(model, attachment_defaults).map(|v| v as i64),
                     registry_model_supports_video(model, attachment_defaults).map(|v| v as i64),
                     registry_model_supports_documents(model, attachment_defaults).map(|v| v as i64),
-                    levels_json,
-                    model.default_reasoning_effort,
+                    levels_json.as_str(),
+                    model.default_reasoning_effort.as_deref(),
                 ])?;
             }
         }
@@ -808,7 +800,7 @@ impl RegistryStore {
         // Seed/refresh pricing from registry JSON (per 1M token rates).
         tx.execute(
             "DELETE FROM model_pricing WHERE provider_id = ?1",
-            params![provider.id],
+            params![provider.id.as_str()],
         )?;
         {
             let mut price_stmt = tx.prepare(
@@ -824,8 +816,8 @@ impl RegistryStore {
                 }
                 let model_id = format!("{}:{}", provider.id, model.name);
                 price_stmt.execute(params![
-                    model_id,
-                    provider.id,
+                    model_id.as_str(),
+                    provider.id.as_str(),
                     pricing.input_per_1m,
                     pricing.output_per_1m,
                     pricing.currency.as_deref().unwrap_or("USD"),
@@ -843,38 +835,48 @@ impl RegistryStore {
     pub fn load_all_providers(&self) -> Result<Vec<ProviderConfig>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut stmt = conn.prepare(
+        let provider_rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<i64>,
+        )> = conn.query_rows(
             "SELECT id, label, description, kind, api_key_env, base_url, tool_calling_mode, request_options, aggregator FROM providers ORDER BY id",
+            (),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
         )?;
-
-        let provider_rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-                row.get::<_, Option<String>>(5)?,
-                row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, Option<i64>>(8)?,
-            ))
-        })?;
 
         let mut providers = Vec::new();
 
-        for row in provider_rows {
-            let (
-                id,
-                label,
-                description,
-                kind_str,
-                api_key_env,
-                base_url,
-                tool_calling_mode_str,
-                request_options_json,
-                aggregator_val,
-            ) = row?;
+        for (
+            id,
+            label,
+            description,
+            kind_str,
+            api_key_env,
+            base_url,
+            tool_calling_mode_str,
+            request_options_json,
+            aggregator_val,
+        ) in provider_rows
+        {
             let kind = parse_provider_kind(&kind_str);
             let request_options = serde_json::from_str(&request_options_json).ok();
             let tool_calling_mode = tool_calling_mode_str
@@ -882,7 +884,7 @@ impl RegistryStore {
                 .map(parse_tool_calling_mode);
             let aggregator = aggregator_val.unwrap_or(0) != 0;
 
-            let mut model_stmt = conn.prepare(
+            let models: Vec<ProviderModelConfig> = conn.query_rows(
                 "SELECT m.name, m.task_size, m.context_window_tokens, m.max_output_tokens,
                         m.recommended_temperature, m.supports_thinking, m.supports_images,
                         m.supports_audio, m.supports_video, m.supports_documents,
@@ -893,10 +895,8 @@ impl RegistryStore {
                    ON pr.model_id = (m.provider_id || ':' || m.name)
                  WHERE m.provider_id = ?1
                  ORDER BY m.rowid",
-            )?;
-
-            let models = model_stmt
-                .query_map(params![id], |row| {
+                params![id.as_str()],
+                |row| {
                     let name: String = row.get(0)?;
                     let task_size_str: Option<String> = row.get(1)?;
                     let ctx: Option<i64> = row.get(2)?;
@@ -934,8 +934,8 @@ impl RegistryStore {
                         pricing_input_per_1m: input_price,
                         pricing_output_per_1m: output_price,
                     })
-                })?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
+                },
+            )?;
 
             providers.push(ProviderConfig {
                 id,
@@ -960,8 +960,8 @@ impl RegistryStore {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
 
         // Wipe existing data.
-        conn.execute("DELETE FROM models", [])?;
-        conn.execute("DELETE FROM providers", [])?;
+        conn.execute("DELETE FROM models", ())?;
+        conn.execute("DELETE FROM providers", ())?;
 
         drop(conn); // release lock before per-provider upsert
 
@@ -1017,7 +1017,7 @@ impl RegistryStore {
                  VALUES (?1, ?2, ?3, ?4)",
             )?;
             for (cap, value) in capabilities {
-                stmt.execute(params![model_id, provider_id, cap, value])?;
+                stmt.execute(params![model_id, provider_id, cap.as_str(), value.as_str()])?;
             }
         }
         tx.commit()?;
@@ -1027,20 +1027,19 @@ impl RegistryStore {
     /// Loads all capabilities for a model.
     pub fn load_capabilities(&self, model_id: &str) -> Result<Vec<ModelCapability>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
+        let rows: Vec<ModelCapability> = conn.query_rows(
             "SELECT model_id, provider_id, capability, value
              FROM model_capabilities WHERE model_id = ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![model_id], |row| {
+            params![model_id],
+            |row| {
                 Ok(ModelCapability {
                     model_id: row.get(0)?,
                     provider_id: row.get(1)?,
                     capability: row.get(2)?,
                     value: row.get(3)?,
                 })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            },
+        )?;
         Ok(rows)
     }
 
@@ -1066,23 +1065,20 @@ impl RegistryStore {
     /// Loads pricing for a model.
     pub fn load_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
+        conn.query_row_optional(
             "SELECT model_id, provider_id, input_price, output_price, currency
              FROM model_pricing WHERE model_id = ?1",
-        )?;
-        let mut rows = stmt.query_map(params![model_id], |row| {
-            Ok(ModelPricing {
-                model_id: row.get(0)?,
-                provider_id: row.get(1)?,
-                input_price: row.get(2)?,
-                output_price: row.get(3)?,
-                currency: row.get(4)?,
-            })
-        })?;
-        match rows.next() {
-            Some(Ok(p)) => Ok(Some(p)),
-            _ => Ok(None),
-        }
+            params![model_id],
+            |row| {
+                Ok(ModelPricing {
+                    model_id: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    input_price: row.get(2)?,
+                    output_price: row.get(3)?,
+                    currency: row.get(4)?,
+                })
+            },
+        )
     }
 }
 
@@ -1234,16 +1230,20 @@ fn registry_model_supports_documents(
         .or(defaults.documents)
 }
 
-fn ensure_provider_request_options_column(conn: &Connection) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
-    let has_column = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .any(|name| matches!(name, Ok(name) if name == "request_options"));
+/// Column names of `table`, in `PRAGMA table_info` order.
+fn table_columns(conn: &DbConnection, table: &str) -> Result<Vec<String>> {
+    conn.query_rows(&format!("PRAGMA table_info({table})"), (), |row| {
+        row.get::<String>(1)
+    })
+}
 
-    if !has_column {
+fn ensure_provider_request_options_column(conn: &DbConnection) -> Result<()> {
+    let columns = table_columns(conn, "providers")?;
+
+    if !columns.iter().any(|name| name == "request_options") {
         conn.execute(
             "ALTER TABLE providers ADD COLUMN request_options TEXT NOT NULL DEFAULT '{}'",
-            [],
+            (),
         )?;
     }
 
@@ -1257,101 +1257,91 @@ fn parse_reasoning_levels_json(raw: Option<&str>) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(raw).unwrap_or_default()
 }
 
-fn ensure_model_output_columns(conn: &Connection) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(models)")?;
-    let columns: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .filter_map(|r| r.ok())
-        .collect();
+fn ensure_model_output_columns(conn: &DbConnection) -> Result<()> {
+    let columns = table_columns(conn, "models")?;
 
     if !columns.contains(&"max_output_tokens".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN max_output_tokens INTEGER",
-            [],
+            (),
         )?;
     }
     if !columns.contains(&"recommended_temperature".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN recommended_temperature REAL",
-            [],
+            (),
         )?;
     }
     if !columns.contains(&"supports_thinking".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN supports_thinking INTEGER",
-            [],
+            (),
         )?;
     }
     if !columns.contains(&"supports_images".to_string()) {
-        conn.execute("ALTER TABLE models ADD COLUMN supports_images INTEGER", [])?;
+        conn.execute("ALTER TABLE models ADD COLUMN supports_images INTEGER", ())?;
     }
     if !columns.contains(&"supports_audio".to_string()) {
-        conn.execute("ALTER TABLE models ADD COLUMN supports_audio INTEGER", [])?;
+        conn.execute("ALTER TABLE models ADD COLUMN supports_audio INTEGER", ())?;
     }
     if !columns.contains(&"supports_video".to_string()) {
-        conn.execute("ALTER TABLE models ADD COLUMN supports_video INTEGER", [])?;
+        conn.execute("ALTER TABLE models ADD COLUMN supports_video INTEGER", ())?;
     }
     if !columns.contains(&"supports_documents".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN supports_documents INTEGER",
-            [],
+            (),
         )?;
     }
     if !columns.contains(&"reasoning_levels".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN reasoning_levels TEXT NOT NULL DEFAULT '[]'",
-            [],
+            (),
         )?;
     }
     if !columns.contains(&"default_reasoning_effort".to_string()) {
         conn.execute(
             "ALTER TABLE models ADD COLUMN default_reasoning_effort TEXT",
-            [],
+            (),
         )?;
     }
 
     Ok(())
 }
 
-fn ensure_provider_tool_calling_mode_column(conn: &Connection) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
-    let has_column = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .any(|name| matches!(name, Ok(name) if name == "tool_calling_mode"));
+fn ensure_provider_tool_calling_mode_column(conn: &DbConnection) -> Result<()> {
+    let columns = table_columns(conn, "providers")?;
+    let has_column = columns.iter().any(|name| name == "tool_calling_mode");
 
     if !has_column {
         conn.execute(
             "ALTER TABLE providers ADD COLUMN tool_calling_mode TEXT",
-            [],
+            (),
         )?;
     }
 
     Ok(())
 }
 
-fn ensure_provider_sha256_column(conn: &Connection) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
-    let has_column = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .any(|name| matches!(name, Ok(name) if name == "sha256"));
+fn ensure_provider_sha256_column(conn: &DbConnection) -> Result<()> {
+    let columns = table_columns(conn, "providers")?;
+    let has_column = columns.iter().any(|name| name == "sha256");
 
     if !has_column {
-        conn.execute("ALTER TABLE providers ADD COLUMN sha256 TEXT", [])?;
+        conn.execute("ALTER TABLE providers ADD COLUMN sha256 TEXT", ())?;
     }
 
     Ok(())
 }
 
-fn ensure_provider_aggregator_column(conn: &Connection) -> Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(providers)")?;
-    let has_column = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .any(|name| matches!(name, Ok(name) if name == "aggregator"));
+fn ensure_provider_aggregator_column(conn: &DbConnection) -> Result<()> {
+    let columns = table_columns(conn, "providers")?;
+    let has_column = columns.iter().any(|name| name == "aggregator");
 
     if !has_column {
         conn.execute(
             "ALTER TABLE providers ADD COLUMN aggregator INTEGER NOT NULL DEFAULT 0",
-            [],
+            (),
         )?;
     }
 
@@ -1361,17 +1351,14 @@ fn ensure_provider_aggregator_column(conn: &Connection) -> Result<()> {
 /// Migrates the `models` table from an older schema where `task_size` was
 /// `NOT NULL` to the current nullable version. SQLite doesn't support
 /// `ALTER COLUMN`, so we rebuild the table.
-fn relax_models_task_size_not_null(conn: &Connection) -> Result<()> {
+fn relax_models_task_size_not_null(conn: &DbConnection) -> Result<()> {
     // Check if task_size has a NOT NULL constraint.
-    let mut stmt = conn.prepare("PRAGMA table_info(models)")?;
-    let has_not_null: bool = stmt
-        .query_map([], |row| {
-            let name: String = row.get(1)?;
-            let notnull: i64 = row.get(3)?;
-            Ok((name, notnull))
-        })?
-        .filter_map(|r| r.ok())
-        .any(|(name, notnull)| name == "task_size" && notnull != 0);
+    let columns: Vec<(String, i64)> = conn.query_rows("PRAGMA table_info(models)", (), |row| {
+        Ok((row.get::<String>(1)?, row.get::<i64>(3)?))
+    })?;
+    let has_not_null: bool = columns
+        .iter()
+        .any(|(name, notnull)| name == "task_size" && *notnull != 0);
 
     if !has_not_null {
         return Ok(());
@@ -2059,6 +2046,7 @@ mod tests {
         std::fs::write(&db_path, b"not a sqlite database").expect("write corrupt db");
         std::fs::write(dir.path().join("registry.db-wal"), []).expect("wal");
         std::fs::write(dir.path().join("registry.db-shm"), vec![0u8; 32_768]).expect("shm");
+        std::fs::write(dir.path().join("registry.db-tshm"), vec![0u8; 4096]).expect("tshm");
 
         let store = RegistryStore::open(dir.path()).expect("open should recreate");
         assert!(

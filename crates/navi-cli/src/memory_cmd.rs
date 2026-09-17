@@ -218,7 +218,7 @@ pub async fn handle_memory_command(
             .await?;
             println!("Distill maintenance finished successfully.");
         }
-        crate::MemoryAction::Init { embeddings, force } => {
+        crate::MemoryAction::Init => {
             println!("Initializing auto-memory system...");
 
             let memory_root = &manager.store.memory_root;
@@ -229,125 +229,10 @@ pub async fn handle_memory_command(
                 println!("  [OK] Memory root exists: {:?}", memory_root);
             }
 
-            let models_dir = memory_root.join("models");
-            if !models_dir.exists() {
-                std::fs::create_dir_all(&models_dir)?;
-                println!("  [OK] Created models directory: {:?}", models_dir);
-            } else {
-                println!("  [OK] Models directory exists: {:?}", models_dir);
-            }
-
             let db_path = manager.auto_memory.db_path.clone();
             let count = manager.auto_memory.count_active().unwrap_or(0);
             println!("  [OK] Auto-memory database: {:?}", db_path);
             println!("  [OK] Active memories: {}", count);
-
-            if embeddings {
-                println!();
-                println!("Embedding model setup:");
-
-                let model_file = navi_core::memory::DEFAULT_MODEL_FILE;
-                let model_repo = navi_core::memory::DEFAULT_MODEL_REPO;
-                let tokenizer_file = navi_core::memory::DEFAULT_TOKENIZER_FILE;
-                let tokenizer_repo = navi_core::memory::DEFAULT_TOKENIZER_REPO;
-                let model_path = models_dir.join(model_file);
-                let tokenizer_path = models_dir.join(tokenizer_file);
-
-                if model_path.exists() && !force {
-                    let size = std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
-                    println!("  [OK] Embedding model already exists: {:?}", model_path);
-                    println!("       Size: {:.1} MB", size as f64 / 1_048_576.0);
-                    if tokenizer_path.exists() {
-                        println!("  [OK] Tokenizer exists: {:?}", tokenizer_path);
-                    } else {
-                        println!("  [WARN] Tokenizer missing — downloading...");
-                        let tok_url = format!(
-                            "https://huggingface.co/{}/resolve/main/{}",
-                            tokenizer_repo, tokenizer_file
-                        );
-                        let client = reqwest::Client::builder()
-                            .timeout(std::time::Duration::from_secs(60))
-                            .build()?;
-                        let resp = client.get(&tok_url).send().await?;
-                        if resp.status().is_success() {
-                            std::fs::write(&tokenizer_path, resp.bytes().await?)?;
-                            println!("  [OK] Tokenizer downloaded.");
-                        } else {
-                            println!("  [WARN] Tokenizer download failed: HTTP {}", resp.status());
-                        }
-                    }
-                    println!("       (use --force to re-download)");
-                } else {
-                    if force && model_path.exists() {
-                        println!("  [..] Removing existing model ( --force )...");
-                        std::fs::remove_file(&model_path)?;
-                    }
-
-                    let client = reqwest::Client::builder()
-                        .timeout(std::time::Duration::from_secs(600))
-                        .build()?;
-
-                    // Download model
-                    let url = format!(
-                        "https://huggingface.co/{}/resolve/main/{}",
-                        model_repo, model_file
-                    );
-                    println!("  [..] Downloading embedding model...");
-                    println!("       URL: {}", url);
-                    println!("       Dest: {:?}", model_path);
-                    println!("       This is a one-time download (~400MB Q8_0 GGUF).");
-
-                    let response = client.get(&url).send().await?;
-                    if !response.status().is_success() {
-                        anyhow::bail!("Download failed: HTTP {} from {}", response.status(), url);
-                    }
-
-                    let total = response.content_length();
-                    if let Some(t) = total {
-                        println!("       Total size: {:.1} MB", t as f64 / 1_048_576.0);
-                    }
-
-                    let bytes = response.bytes().await?;
-                    std::fs::write(&model_path, &bytes)?;
-
-                    let size = std::fs::metadata(&model_path).map(|m| m.len()).unwrap_or(0);
-                    println!(
-                        "  [OK] Model downloaded: {:.1} MB",
-                        size as f64 / 1_048_576.0
-                    );
-
-                    // Download tokenizer
-                    let tok_url = format!(
-                        "https://huggingface.co/{}/resolve/main/{}",
-                        tokenizer_repo, tokenizer_file
-                    );
-                    println!("  [..] Downloading tokenizer...");
-                    let tok_resp = client.get(&tok_url).send().await?;
-                    if tok_resp.status().is_success() {
-                        std::fs::write(&tokenizer_path, tok_resp.bytes().await?)?;
-                        println!("  [OK] Tokenizer downloaded: {:?}", tokenizer_path);
-                    } else {
-                        println!(
-                            "  [WARN] Tokenizer download failed: HTTP {}",
-                            tok_resp.status()
-                        );
-                        println!(
-                            "         Semantic search requires the tokenizer. Download manually:"
-                        );
-                        println!(
-                            "         huggingface-cli download {} {}",
-                            tokenizer_repo, tokenizer_file
-                        );
-                    }
-
-                    println!("       Semantic search is now available.");
-                }
-            } else {
-                println!();
-                println!("  [INFO] Embedding model not requested ( --embeddings ).");
-                println!("         Text matching (LIKE) will be used for memory search.");
-                println!("         Run `navi memory init --embeddings` to enable semantic search.");
-            }
 
             println!();
             println!("Auto-memory initialization complete.");

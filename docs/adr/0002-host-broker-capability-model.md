@@ -1,3 +1,5 @@
+> **Status: Superseded** — o sistema de plugins WASM foi removido na v0.8.0.
+
 # ADR 0002 — All Sensitive Access Goes Through Host Brokers
 
 ## Status

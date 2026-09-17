@@ -1035,26 +1035,6 @@ pub unsafe extern "C" fn navi_engine_sync_registry(
     });
 }
 
-// ── Plugins ────────────────────────────────────────────────────────
-
-/// Reloads WASM plugin tools on every active session.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_reload_wasm_plugins(
-    engine: *mut NaviDartEngine,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner.reload_wasm_plugins().await {
-            Ok(warnings) => ctx.success(&warnings),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
 // ── Saved Sessions ─────────────────────────────────────────────────
 
 /// Lists all persisted sessions.

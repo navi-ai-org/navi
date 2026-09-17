@@ -26,22 +26,15 @@ pub struct NaviConfig {
     pub logging: LoggingConfig,
     /// Provider definitions (built-in overrides and custom providers).
     pub providers: Vec<ProviderConfig>,
-    /// Native plugin library paths.
-    pub plugins: Vec<PluginConfig>,
     /// Session memory settings.
     pub memory: MemoryConfig,
-    /// Local voice / dictation settings (optional).
+    /// Voice / dictation settings (optional).
     #[serde(default)]
     pub voice: VoiceConfig,
     /// Skill discovery and activation.
     pub skills: SkillsConfig,
     /// MCP server configuration.
     pub mcp: McpConfig,
-    /// WASM plugin directory paths.
-    pub wasm_plugins: Vec<WasmPluginConfig>,
-    /// Plugin marketplace registry (catalog repository).
-    #[serde(default)]
-    pub plugin_marketplace: PluginMarketplaceConfig,
     /// Provider registry update settings.
     #[serde(default)]
     pub registry: RegistryConfig,
@@ -268,14 +261,6 @@ impl Default for TuiConfig {
     }
 }
 
-/// Plugin marketplace / registry repository settings.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PluginMarketplaceConfig {
-    /// URL to `catalog.json` in the registry repository (`https://` or `file://`).
-    pub registry_url: Option<String>,
-}
-
 /// Provider registry update settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -493,8 +478,6 @@ pub struct SecurityConfig {
     pub protect_git_metadata: bool,
     /// Redact secrets (API keys, tokens) from saved session events.
     pub redact_secrets_in_sessions: bool,
-    /// Allow loading native plugins from configured paths.
-    pub allow_external_plugins: bool,
     /// Commands that are always denied (e.g. `"rm -rf /"`).
     pub blocked_commands: Vec<String>,
     /// Commands that require approval outside YOLO mode. For `git`, only
@@ -865,30 +848,6 @@ pub struct ModelOption {
     pub default_reasoning_effort: Option<String>,
 }
 
-/// Legacy native plugin library path (`.so` / `.dylib`).
-///
-/// **Deprecated:** native in-process plugins are no longer loaded. Configure
-/// WASM packages via `navi plugin install` or `[[wasm_plugins]]` scan roots.
-/// Present `[[plugins]]` entries emit a warning and are ignored.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginConfig {
-    /// Path to the `.so` or `.dylib` plugin library (ignored at runtime).
-    pub path: PathBuf,
-    /// Whether this entry would have been loaded (ignored; still triggers a warn).
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-/// A WASM plugin directory path with an enable toggle.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WasmPluginConfig {
-    /// Path to the WASM plugin directory (containing plugin.toml and .wasm binary).
-    pub path: PathBuf,
-    /// Whether this plugin is loaded.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
 /// Skill discovery and catalog settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1002,48 +961,37 @@ impl Default for HistoryConfig {
 
 /// Voice / dictation settings (`[voice]` in config.toml).
 ///
-/// Supports **local** ONNX engines and **remote** transcription providers from
-/// the registry (OpenAI Whisper, Groq Whisper). When
-/// [`Self::provider`] is empty or `"local"`, the local `engine` is used.
+/// Transcription uses **remote** providers from the registry (OpenAI Whisper,
+/// Groq Whisper). An empty or `"local"` [`Self::provider`] means dictation is
+/// not configured.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct VoiceConfig {
     /// Master switch — dictation remains opt-in.
     pub enabled: bool,
-    /// Transcription backend: `"local"` (default) or a registry transcription
-    /// provider id (`openai`, `groq`, …).
+    /// Transcription provider id from the registry (`openai`, `groq`, …).
+    /// Empty or `"local"` → dictation not configured.
     pub provider: String,
-    /// Remote model id when `provider` is not local (e.g. `whisper-1`,
-    /// `whisper-large-v3-turbo`). Empty → provider default from registry.
+    /// Remote model id (e.g. `whisper-1`, `whisper-large-v3-turbo`).
+    /// Empty → provider default from registry.
     pub model: String,
-    /// Active local ASR engine id (`nemotron_streaming` | `distil_whisper`).
-    /// Ignored when `provider` is a remote transcription provider.
-    pub engine: String,
     /// Language hint (`auto`, `en-US`, `pt-BR`, …).
     pub language: String,
     /// `toggle` or `hold`.
     pub capture: String,
     /// `auto` or explicit recorder (`pw-record`, `parec`, `arecord`).
     pub recorder: String,
-    /// Override model root; empty = `{data_dir}/voice/models/<engine>/`.
-    pub model_dir: String,
-    /// Hugging Face repo for the Nemotron ONNX package.
-    pub hf_repo_nemotron: String,
 }
 
 impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider: "local".to_string(),
+            provider: String::new(),
             model: String::new(),
-            engine: "nemotron_streaming".to_string(),
             language: "auto".to_string(),
             capture: "toggle".to_string(),
             recorder: "auto".to_string(),
-            model_dir: String::new(),
-            hf_repo_nemotron: "navi-org/navi-voice-nemotron-3.5-asr-streaming-0.6b-onnx"
-                .to_string(),
         }
     }
 }
@@ -1085,15 +1033,6 @@ pub struct MemoryConfig {
     /// Interval in days for the distill/SOPS maintenance job.
     #[serde(default = "default_distill_interval_days")]
     pub distill_interval_days: u64,
-    /// Path to the embedding model GGUF file for semantic memory search.
-    /// When empty, the default path under `{data_dir}/memory/{project_hash}/models/` is used.
-    /// Download with `navi memory init --embeddings`.
-    #[serde(default)]
-    pub embedding_model_path: String,
-    /// Path to the tokenizer.json file for the embedding model.
-    /// When empty, the default path under the models directory is used.
-    #[serde(default)]
-    pub embedding_tokenizer_path: String,
     /// History database configuration.
     #[serde(default)]
     pub history: HistoryConfig,

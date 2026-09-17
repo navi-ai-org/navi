@@ -1,3 +1,5 @@
+> **Status: Superseded** — o sistema de plugins WASM foi removido na v0.8.0.
+
 # ADR 0009 — Plugin Marketplace and Distribution
 
 ## Status

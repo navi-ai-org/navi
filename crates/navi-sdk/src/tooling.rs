@@ -4,13 +4,7 @@ use navi_core::{
     SecurityPolicy, ToolExecutor, model_can_run_publicly, resolve_provider_api_key,
     resolve_provider_api_key_for_project, resolve_provider_config,
 };
-#[cfg(feature = "wasm-plugins")]
-use navi_plugin_manifest::{SecurityDefaults, aggregate_lockfile_path, installed_plugins_dir};
-#[cfg(feature = "wasm-plugins")]
-use navi_plugin_orchestrator::PluginOrchestrator;
 use navi_providers::OpenAiProvider;
-#[cfg(feature = "wasm-plugins")]
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,181 +20,13 @@ pub(crate) fn build_local_tooling(
         loaded_config.data_dir.clone(),
         loaded_config.config.effective_security_config(),
     )?;
-    #[allow(unused_mut)] // mut when feature `wasm-plugins` loads into the executor
-    let mut tool_executor =
+    let tool_executor =
         ToolExecutor::with_security_policy(security_policy, runtime_components.security.clone());
-
-    let mut warnings = Vec::new();
-
-    // Native .so/.dylib plugins (libloading) are retired. WASM is the only runtime.
-    if let Some(warning) = native_plugins_deprecated_warning(&loaded_config.config.plugins) {
-        tracing::warn!(warning = %warning, "native plugins ignored");
-        warnings.push(warning);
-    }
-
-    // Load WASM plugins from the data-dir store and any configured scan roots.
-    #[cfg(feature = "wasm-plugins")]
-    {
-        let security_defaults = SecurityDefaults::default();
-        for plugin_dir in
-            wasm_plugin_scan_roots(&loaded_config.data_dir, &loaded_config.config.wasm_plugins)
-        {
-            load_wasm_plugins_from_root(
-                &plugin_dir,
-                &project_dir,
-                &security_defaults,
-                &mut tool_executor,
-                &mut warnings,
-            );
-        }
-    }
-
-    #[cfg(not(feature = "wasm-plugins"))]
-    if loaded_config
-        .config
-        .wasm_plugins
-        .iter()
-        .any(|plugin| plugin.enabled)
-    {
-        warnings.push(wasm_plugins_disabled_warning());
-    }
 
     Ok(NaviRuntimeTooling {
         tool_executor: Arc::new(tool_executor),
-        warnings,
-        agent_policies: Vec::new(),
-        tui_components: Vec::new(),
-        tui_panels: Vec::new(),
+        warnings: Vec::new(),
     })
-}
-
-/// Warn when legacy `[[plugins]]` native library paths are present in config.
-fn native_plugins_deprecated_warning(plugins: &[navi_core::PluginConfig]) -> Option<String> {
-    let enabled: Vec<String> = plugins
-        .iter()
-        .filter(|p| p.enabled)
-        .map(|p| p.path.display().to_string())
-        .collect();
-    if enabled.is_empty() {
-        return None;
-    }
-    Some(format!(
-        "native plugins are no longer loaded (WASM-only); ignoring [[plugins]] paths: {}",
-        enabled.join(", ")
-    ))
-}
-
-/// Directories to scan for installed WASM plugin subfolders.
-#[cfg(feature = "wasm-plugins")]
-fn wasm_plugin_scan_roots(
-    data_dir: &Path,
-    configured: &[navi_core::WasmPluginConfig],
-) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let mut seen = HashSet::new();
-
-    let installed = installed_plugins_dir(data_dir);
-    if seen.insert(installed.clone()) {
-        roots.push(installed);
-    }
-
-    for wasm_config in configured {
-        if !wasm_config.enabled {
-            continue;
-        }
-        if seen.insert(wasm_config.path.clone()) {
-            roots.push(wasm_config.path.clone());
-        }
-    }
-
-    roots
-}
-
-/// Reload WASM plugins into an existing executor (unregisters prior `plugin__*` tools first).
-#[cfg(feature = "wasm-plugins")]
-pub fn reload_wasm_plugins_on_executor(
-    executor: &mut ToolExecutor,
-    data_dir: &Path,
-    project_dir: &Path,
-    wasm_plugins: &[navi_core::WasmPluginConfig],
-) -> Vec<String> {
-    executor.unregister_plugin_tools();
-    let mut warnings = Vec::new();
-    let security_defaults = SecurityDefaults::default();
-    for plugin_dir in wasm_plugin_scan_roots(data_dir, wasm_plugins) {
-        load_wasm_plugins_from_root(
-            &plugin_dir,
-            project_dir,
-            &security_defaults,
-            executor,
-            &mut warnings,
-        );
-    }
-    warnings
-}
-
-/// Reload WASM plugins into an existing executor.
-#[cfg(not(feature = "wasm-plugins"))]
-pub fn reload_wasm_plugins_on_executor(
-    executor: &mut ToolExecutor,
-    _data_dir: &Path,
-    _project_dir: &Path,
-    _wasm_plugins: &[navi_core::WasmPluginConfig],
-) -> Vec<String> {
-    executor.unregister_plugin_tools();
-    vec![wasm_plugins_disabled_warning()]
-}
-
-#[cfg(feature = "wasm-plugins")]
-fn load_wasm_plugins_from_root(
-    plugin_dir: &Path,
-    project_dir: &Path,
-    security_defaults: &SecurityDefaults,
-    tool_executor: &mut ToolExecutor,
-    warnings: &mut Vec<String>,
-) {
-    let lockfile_path = aggregate_lockfile_path(plugin_dir);
-
-    let mut orchestrator = PluginOrchestrator::new(
-        project_dir.to_path_buf(),
-        plugin_dir.to_path_buf(),
-        lockfile_path,
-        security_defaults.clone(),
-    );
-
-    match orchestrator.load_plugins(tool_executor) {
-        Ok(report) => {
-            for warning in &report.warnings {
-                tracing::warn!(
-                    path = %plugin_dir.display(),
-                    warning = %warning,
-                    "WASM plugin warning"
-                );
-            }
-            for loaded in &report.loaded {
-                tracing::info!(
-                    plugin = %loaded.plugin_id,
-                    tools = loaded.tool_count,
-                    risk = %loaded.risk_level,
-                    "loaded WASM plugin"
-                );
-            }
-            warnings.extend(report.warnings);
-        }
-        Err(err) => {
-            warnings.push(format!(
-                "failed to load WASM plugins from {}: {:#}",
-                plugin_dir.display(),
-                err
-            ));
-        }
-    }
-}
-
-#[cfg(not(feature = "wasm-plugins"))]
-fn wasm_plugins_disabled_warning() -> String {
-    "WASM plugin runtime is disabled in this build; rebuild `navi-sdk` with feature `wasm-plugins`"
-        .to_string()
 }
 
 /// Builds a `ModelProvider` for the given loaded configuration.
@@ -402,83 +228,8 @@ mod tests {
         );
     }
 
-    // Needs a loadable wasm binary; placeholder bytes are rejected by the runtime.
     #[test]
-    #[ignore = "needs real wasm fixture"]
-    fn build_local_tooling_loads_installed_wasm_plugin_store() {
-        use navi_plugin_manifest::{
-            PluginManifest, PluginMeta, RuntimeKind, ToolDef, ToolRisk, installed_plugins_dir,
-            sign_plugin_manifest_for_tests,
-        };
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let wasm = b"minimal-wasm-bytes";
-        let plugins_root = installed_plugins_dir(tempdir.path());
-        let plugin_dir = plugins_root.join("echo");
-        std::fs::create_dir_all(&plugin_dir).unwrap();
-        let mut manifest = PluginManifest {
-            plugin: PluginMeta {
-                id: "echo".into(),
-                name: "echo".into(),
-                version: "1.0.0".into(),
-                publisher: "gh:test".into(),
-                runtime: RuntimeKind::WasmComponent,
-                entry: "plugin.wasm".into(),
-                wasm_hash: String::new(),
-                signature: String::new(),
-                public_key: None,
-                minimum_navi: "0.1.0".into(),
-            },
-            capabilities: vec![],
-            tools: vec![ToolDef {
-                id: "echo".into(),
-                summary: "Echo input".into(),
-                risk: ToolRisk::ReadOnly,
-                input_schema: None,
-                capabilities: vec![],
-            }],
-        };
-        sign_plugin_manifest_for_tests(&mut manifest, wasm);
-        std::fs::write(
-            plugin_dir.join("plugin.toml"),
-            toml::to_string(&manifest).unwrap(),
-        )
-        .unwrap();
-        std::fs::write(plugin_dir.join("plugin.wasm"), wasm).unwrap();
-
-        let entry = navi_plugin_manifest::lock_entry_from_manifest(&manifest, vec![]);
-        navi_plugin_manifest::upsert_aggregate_lock_entry(&plugins_root, entry).unwrap();
-
-        let loaded_config = LoadedConfig {
-            config: NaviConfig::default(),
-            global_config_path: None,
-            project_config_path: None,
-            data_dir: tempdir.path().to_path_buf(),
-        };
-
-        let tooling = build_local_tooling(
-            &loaded_config,
-            tempdir.path().to_path_buf(),
-            &RuntimeComponents::default(),
-        )
-        .unwrap_or_else(|e| {
-            panic!("build_local_tooling failed: {e:#}");
-        });
-
-        let names: Vec<String> = tooling
-            .tool_executor
-            .definitions()
-            .into_iter()
-            .map(|d| d.name)
-            .collect();
-        assert!(
-            names.iter().any(|n| n.contains("echo")),
-            "expected namespaced echo tool, got: {names:?}"
-        );
-    }
-
-    #[test]
-    fn build_local_tooling_returns_empty_warnings_without_plugins() {
+    fn build_local_tooling_returns_empty_warnings() {
         let tempdir = tempfile::tempdir().unwrap();
         let loaded_config = LoadedConfig {
             config: NaviConfig::default(),
@@ -496,49 +247,11 @@ mod tests {
 
         // Verify the executor can list definitions without panicking.
         let _definitions = tooling.tool_executor.definitions();
-        // No plugins configured, so warnings should be empty.
+        // No warnings expected with default config.
         assert!(
             tooling.warnings.is_empty(),
             "no warnings expected with default config"
         );
-    }
-
-    #[test]
-    fn build_local_tooling_warns_and_ignores_native_plugin_config() {
-        use navi_core::PluginConfig;
-        use std::path::PathBuf;
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let loaded_config = LoadedConfig {
-            config: NaviConfig {
-                plugins: vec![PluginConfig {
-                    path: PathBuf::from("/tmp/fake-native-plugin.so"),
-                    enabled: true,
-                }],
-                ..Default::default()
-            },
-            global_config_path: None,
-            project_config_path: None,
-            data_dir: tempdir.path().to_path_buf(),
-        };
-
-        let tooling = build_local_tooling(
-            &loaded_config,
-            tempdir.path().to_path_buf(),
-            &RuntimeComponents::default(),
-        )
-        .unwrap();
-
-        assert!(
-            tooling
-                .warnings
-                .iter()
-                .any(|w| w.contains("native plugins are no longer loaded")),
-            "expected deprecation warning, got: {:?}",
-            tooling.warnings
-        );
-        assert!(tooling.tui_panels.is_empty());
-        assert!(tooling.agent_policies.is_empty());
     }
 
     #[test]

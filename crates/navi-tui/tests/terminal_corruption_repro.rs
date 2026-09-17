@@ -25,8 +25,8 @@
 //!    crossterm stays aligned without changing normal cursor-key behavior;
 //!    parent stack is cleared with `=0u` (not push0+pop).
 //! 5. `FocusGained` reasserts keyboard/mouse/paste (pop session + re-push).
-//! 6. Free mouse motion (`?1003`) only while images can hover — cuts multi-window
-//!    motion CSI leaks.
+//! 6. Full mouse capture (`?1003`) is enabled once and disabled on exit — no
+//!    per-state toggling, so multi-window motion CSI leaks stay bounded.
 //! 7. `Event::Resize` sets `needs_draw = true`.
 
 use std::sync::Arc;

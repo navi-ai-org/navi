@@ -89,33 +89,6 @@ fn test_config() -> NaviConfig {
     config
 }
 
-#[test]
-fn known_plugin_policy_keeps_default_components_without_warning() {
-    let mut warnings = Vec::new();
-    let _components = runtime_components_for_plugin_policies(
-        RuntimeComponents::default(),
-        &["code_agent".to_string()],
-        &mut warnings,
-    );
-    assert!(
-        warnings.is_empty(),
-        "code_agent is a known policy; warnings: {warnings:?}"
-    );
-}
-
-#[test]
-fn unknown_plugin_policy_warns_without_replacing_components() {
-    let mut warnings = Vec::new();
-    let _components = runtime_components_for_plugin_policies(
-        RuntimeComponents::default(),
-        &["custom-policy".to_string()],
-        &mut warnings,
-    );
-
-    assert_eq!(warnings.len(), 1);
-    assert!(warnings[0].contains("unknown agent policy `custom_policy`"));
-}
-
 fn test_engine_with_project_config() -> (NaviEngine, tempfile::TempDir) {
     let tempdir = tempfile::tempdir().expect("tempdir");
 
@@ -825,22 +798,6 @@ async fn subscribe_events_returns_receiver() {
     // Should not panic; receiver is valid
 }
 
-#[tokio::test]
-async fn list_tui_components_returns_session_plugin_declarations() {
-    let (engine, _tempdir) = test_engine_with_key();
-
-    let session = engine
-        .start_session(NaviSessionRequest::default())
-        .await
-        .expect("start session");
-
-    let components = engine
-        .list_tui_components(&session.id)
-        .expect("tui components");
-
-    assert!(components.is_empty());
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn snapshot_session_returns_snapshot() {
     let (engine, _tempdir) = test_engine_with_key();
@@ -1052,58 +1009,21 @@ async fn start_multiple_sessions_independent() {
 }
 
 #[test]
-fn voice_status_without_model() {
+fn voice_status_reports_local_unavailable() {
     let (engine, _tempdir) = test_engine();
     let status = engine.voice_status().expect("status");
+    // Default provider is "local"; the local ONNX engine was removed.
     assert!(!status.installed);
-    assert!(!status.streaming_active);
+    assert_eq!(status.provider, "local");
     assert_eq!(status.sample_rate, 16000);
-    assert_eq!(status.chunk_samples, 8960);
-}
-
-#[test]
-fn voice_push_without_start_errors() {
-    let (engine, _tempdir) = test_engine();
-    let err = engine.voice_push_pcm(&[0.0f32; 100]).unwrap_err();
-    let msg = err.to_string();
-    assert!(
-        msg.contains("not active") || msg.contains("start"),
-        "unexpected error: {msg}"
-    );
-}
-
-#[test]
-fn voice_cancel_when_idle_ok() {
-    let (engine, _tempdir) = test_engine();
-    engine.voice_cancel_stream().expect("cancel idle");
 }
 
 #[test]
 fn voice_doctor_runs() {
     let (engine, _tempdir) = test_engine();
     let report = engine.voice_doctor().expect("doctor");
-    // Model missing → not ok, but doctor itself returns a report
+    // Recorder checks always return a report, even when no mic is available.
     assert!(!report.lines.is_empty());
-}
-
-#[test]
-fn voice_engine_installed_false_by_default() {
-    let (engine, _tempdir) = test_engine();
-    assert!(
-        !engine
-            .voice_engine_installed(Some("nemotron_streaming"))
-            .expect("installed check")
-    );
-}
-
-#[test]
-fn voice_start_without_model_errors() {
-    let (engine, _tempdir) = test_engine();
-    let err = engine.voice_start_stream(Some("en-US")).unwrap_err();
-    assert!(
-        err.to_string().contains("not installed") || err.to_string().contains("model"),
-        "unexpected: {err}"
-    );
 }
 
 #[test]
@@ -1113,13 +1033,6 @@ fn memory_status_and_doctor_without_data() {
     assert!(!status.memory_root.is_empty());
     let doctor = engine.memory_doctor().expect("memory_doctor");
     assert!(!doctor.lines.is_empty());
-}
-
-#[test]
-fn plugin_list_empty_by_default() {
-    let (engine, _tempdir) = test_engine();
-    let list = engine.plugin_list().expect("plugin_list");
-    assert!(list.is_empty());
 }
 
 #[test]
@@ -1134,15 +1047,6 @@ fn oauth_support_check() {
     let (engine, _tempdir) = test_engine();
     assert!(engine.provider_supports_device_oauth("github-copilot"));
     assert!(!engine.provider_supports_device_oauth("unknown-xyz"));
-}
-
-#[test]
-fn plugin_install_requires_confirm() {
-    let (engine, _tempdir) = test_engine();
-    let err = engine
-        .plugin_install_path(std::path::Path::new("/tmp/nope"), false)
-        .unwrap_err();
-    assert!(err.to_string().contains("confirm"));
 }
 
 // ── SDK refactor host embedding surface (docs/sdk-refactor) ─────────────

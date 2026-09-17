@@ -7,8 +7,8 @@
 //! Legacy per-plan JSON under `data_dir/plans/<project>/*.json` is still
 //! imported once via [`PlanStore::migrate_json_dir`].
 
+use crate::db::{Db, DbConnection, OpenOptions, Row, RowResult, params};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -193,7 +193,7 @@ pub struct PlanLineComment {
 /// Thread-safe SQLite plan store.
 #[derive(Clone)]
 pub struct PlanStore {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<DbConnection>>,
     pub db_path: PathBuf,
 }
 
@@ -212,8 +212,9 @@ impl PlanStore {
             fs::create_dir_all(parent)
                 .with_context(|| format!("create plan store dir {}", parent.display()))?;
         }
-        let conn = Connection::open(db_path)
-            .with_context(|| format!("open plans db {}", db_path.display()))?;
+        let db =
+            Db::open(db_path).with_context(|| format!("open plans db {}", db_path.display()))?;
+        let conn = db.connect_with(&OpenOptions::none())?;
         crate::memory::auto_memory::configure_connection(&conn)?;
         let store = Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -311,12 +312,12 @@ impl PlanStore {
                 updated_at=excluded.updated_at
             "#,
             params![
-                plan.id,
-                plan.project_id,
-                plan.session_id,
-                plan.title,
-                plan.description,
-                plan.body_markdown,
+                plan.id.as_str(),
+                plan.project_id.as_str(),
+                plan.session_id.as_str(),
+                plan.title.as_str(),
+                plan.description.as_str(),
+                plan.body_markdown.as_str(),
                 plan.status.to_string(),
                 steps_json,
                 comments_json,
@@ -329,15 +330,15 @@ impl PlanStore {
 
     pub fn get(&self, plan_id: &str) -> Result<Option<Plan>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let mut stmt = conn.prepare(
+        conn.query_row_optional(
             r#"
             SELECT id, project_id, session_id, title, description, body_markdown,
                    status, steps_json, comments_json, created_at, updated_at
             FROM plans WHERE id = ?1
             "#,
-        )?;
-        let plan = stmt.query_row(params![plan_id], row_to_plan).optional()?;
-        Ok(plan)
+            params![plan_id],
+            row_to_plan,
+        )
     }
 
     pub fn list(
@@ -348,9 +349,8 @@ impl PlanStore {
     ) -> Result<Vec<Plan>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let limit = limit.min(MAX_PLANS) as i64;
-        let mut plans = Vec::new();
         if let Some(status) = filter_status {
-            let mut stmt = conn.prepare(
+            conn.query_rows(
                 r#"
                 SELECT id, project_id, session_id, title, description, body_markdown,
                        status, steps_json, comments_json, created_at, updated_at
@@ -359,13 +359,11 @@ impl PlanStore {
                 ORDER BY updated_at DESC
                 LIMIT ?3
                 "#,
-            )?;
-            let rows = stmt.query_map(params![project_id, status, limit], row_to_plan)?;
-            for row in rows {
-                plans.push(row?);
-            }
+                params![project_id, status, limit],
+                row_to_plan,
+            )
         } else {
-            let mut stmt = conn.prepare(
+            conn.query_rows(
                 r#"
                 SELECT id, project_id, session_id, title, description, body_markdown,
                        status, steps_json, comments_json, created_at, updated_at
@@ -374,13 +372,10 @@ impl PlanStore {
                 ORDER BY updated_at DESC
                 LIMIT ?2
                 "#,
-            )?;
-            let rows = stmt.query_map(params![project_id, limit], row_to_plan)?;
-            for row in rows {
-                plans.push(row?);
-            }
+                params![project_id, limit],
+                row_to_plan,
+            )
         }
-        Ok(plans)
     }
 
     pub fn active(&self, project_id: &str) -> Result<Option<Plan>> {
@@ -407,7 +402,7 @@ impl PlanStore {
     }
 }
 
-fn row_to_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plan> {
+fn row_to_plan(row: &Row) -> RowResult<Plan> {
     let steps_json: String = row.get(7)?;
     let comments_json: String = row.get(8)?;
     let steps: Vec<PlanStep> = serde_json::from_str(&steps_json).unwrap_or_default();
@@ -424,8 +419,8 @@ fn row_to_plan(row: &rusqlite::Row<'_>) -> rusqlite::Result<Plan> {
         status,
         steps,
         comments,
-        created_at: row.get::<_, i64>(9)? as u64,
-        updated_at: row.get::<_, i64>(10)? as u64,
+        created_at: row.get::<i64>(9)? as u64,
+        updated_at: row.get::<i64>(10)? as u64,
     })
 }
 

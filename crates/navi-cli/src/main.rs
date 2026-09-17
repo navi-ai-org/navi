@@ -13,7 +13,6 @@ mod eval_cmd;
 mod harness_cmd;
 mod mcp_cmd;
 mod memory_cmd;
-mod plugin_cmd;
 mod registry_cmd;
 mod server_cmd;
 mod session_cmd;
@@ -82,11 +81,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Manage WASM plugins
-    Plugin {
-        #[command(subcommand)]
-        action: PluginAction,
-    },
     /// Manage MCP servers
     Mcp {
         #[command(subcommand)]
@@ -97,7 +91,7 @@ enum Commands {
         #[command(subcommand)]
         action: MemoryAction,
     },
-    /// Local voice / dictation models and mic diagnostics
+    /// Remote voice transcription and recorder diagnostics
     Voice {
         #[command(subcommand)]
         action: VoiceAction,
@@ -421,15 +415,8 @@ pub enum MemoryAction {
     },
     /// Run distill maintenance
     Distill,
-    /// Initialize or repair the auto-memory database and download embedding model
-    Init {
-        /// Download the embedding model for semantic search (Qwen3-Embedding-0.6B GGUF)
-        #[arg(long)]
-        embeddings: bool,
-        /// Force re-download even if the model already exists
-        #[arg(long)]
-        force: bool,
-    },
+    /// Initialize or repair the auto-memory database
+    Init,
     /// List all stored memories
     List {
         /// Filter by status: active, needs_review, obsolete
@@ -453,24 +440,15 @@ pub enum MemoryAction {
 
 #[derive(Debug, Subcommand)]
 pub enum VoiceAction {
-    /// Show voice config and install status (local + remote)
+    /// Show voice config and recorder status (remote transcription)
     Status,
     /// List remote transcription providers from the registry catalog
     Providers,
-    /// Download a local ASR engine package into {data_dir}/voice/models/
-    Init {
-        /// Engine id: nemotron_streaming (default) | distil_whisper (later)
-        #[arg(long, default_value = "nemotron_streaming")]
-        engine: String,
-        /// Force re-download even if already installed
-        #[arg(long)]
-        force: bool,
-    },
-    /// Check recorders, model files, checksums, or remote credentials
+    /// Check recorders and remote transcription credentials
     Doctor,
-    /// Transcribe a WAV file (local ONNX or remote provider from [voice])
+    /// Transcribe a WAV file with the remote provider from [voice]
     Transcribe {
-        /// Path to a WAV file (any rate; resampled to 16 kHz mono for local / remote)
+        /// Path to a WAV file (any rate; resampled to 16 kHz mono for remote)
         path: String,
         /// Language prompt: auto | en-US | pt-BR | …
         #[arg(long, default_value = "auto")]
@@ -490,59 +468,6 @@ enum RegistryAction {
     Sync,
     /// List all providers and model counts from the local cache
     List,
-}
-
-#[derive(Debug, Subcommand)]
-enum PluginAction {
-    /// Install a plugin from a local directory (developer workflow)
-    Install {
-        /// Path to the plugin directory (containing plugin.toml and .wasm)
-        path: PathBuf,
-        /// Skip the approval prompt and install non-interactively
-        #[arg(long)]
-        yes: bool,
-    },
-    /// Install a plugin from the marketplace registry by id
-    InstallMarketplace {
-        /// Plugin id from catalog.json
-        plugin_id: String,
-        /// Skip the approval prompt and install non-interactively
-        #[arg(long)]
-        yes: bool,
-    },
-    /// Update an installed plugin from a local directory (developer workflow)
-    Update {
-        /// Path to the new plugin directory (containing plugin.toml and .wasm)
-        path: PathBuf,
-        /// Force the update even when the publisher changed
-        #[arg(long)]
-        force: bool,
-    },
-    /// Update an installed plugin from the marketplace registry
-    UpdateMarketplace {
-        /// Plugin id from catalog.json
-        plugin_id: String,
-        /// Force the update even when the publisher changed
-        #[arg(long)]
-        force: bool,
-    },
-    /// Search the marketplace catalog
-    Search {
-        /// Optional search query (id, name, description)
-        query: Option<String>,
-    },
-    /// List installed plugins
-    List,
-    /// Remove an installed plugin
-    Remove {
-        /// Plugin ID to remove
-        plugin_id: String,
-    },
-    /// Show details of a plugin
-    Info {
-        /// Plugin ID or path
-        plugin_id: String,
-    },
 }
 
 #[tokio::main]
@@ -597,11 +522,6 @@ async fn main() -> Result<()> {
     // Handle harness pack subcommand early
     if let Some(Commands::Harness { action }) = cli.command {
         return harness_cmd::handle_harness_command(action, &loaded_config, &cwd);
-    }
-
-    // Handle plugin subcommand early
-    if let Some(Commands::Plugin { action }) = cli.command {
-        return plugin_cmd::handle_plugin_command(action, &loaded_config, &cwd).await;
     }
 
     // Handle mcp subcommand early

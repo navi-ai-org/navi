@@ -29,7 +29,6 @@ export default defineConfig({
       "/credentials": "http://127.0.0.1:9800",
       "/oauth": "http://127.0.0.1:9800",
       "/permission-mode": "http://127.0.0.1:9800",
-      "/plugins": "http://127.0.0.1:9800",
       "/mcp": "http://127.0.0.1:9800",
       "/routing": "http://127.0.0.1:9800",
       "/registry": "http://127.0.0.1:9800",

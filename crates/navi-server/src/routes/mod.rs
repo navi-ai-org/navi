@@ -5,7 +5,6 @@
 
 mod auth;
 mod memory;
-mod plugins;
 mod registry_models;
 mod session_ops;
 mod skills_mcp;
@@ -21,7 +20,6 @@ pub fn all_routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl
     auth::routes(state.clone(), secret)
         .or(memory::routes(state.clone(), secret))
         .or(voice::routes(state.clone(), secret))
-        .or(plugins::routes(state.clone(), secret))
         .or(session_ops::routes(state.clone(), secret))
         .or(skills_mcp::routes(state.clone(), secret))
         .or(registry_models::routes(state, secret))

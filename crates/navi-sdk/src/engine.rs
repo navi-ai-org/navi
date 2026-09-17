@@ -51,7 +51,7 @@ use crate::types::{
 pub struct NaviEngineBuilder {
     project_dir: PathBuf,
     loaded_config: Option<LoadedConfig>,
-    /// Optional durable data directory override (sessions, credentials, plugins).
+    /// Optional durable data directory override (sessions, credentials).
     data_dir: Option<PathBuf>,
     host_tools: Vec<Arc<dyn navi_core::Tool>>,
     runtime_components: RuntimeComponents,
@@ -95,7 +95,7 @@ impl NaviEngineBuilder {
         self
     }
 
-    /// Points durable NAVI state (sessions, credentials, plugins, registry) at
+    /// Points durable NAVI state (sessions, credentials, registry) at
     /// an app-controlled directory. Applied after config load / `loaded_config`.
     pub fn data_dir(mut self, data_dir: impl Into<PathBuf>) -> Self {
         self.data_dir = Some(data_dir.into());
@@ -267,28 +267,6 @@ impl NaviEngineBuilder {
     }
 }
 
-fn runtime_components_for_plugin_policies(
-    mut components: RuntimeComponents,
-    agent_policies: &[String],
-    warnings: &mut Vec<String>,
-) -> RuntimeComponents {
-    for policy in agent_policies {
-        match normalize_plugin_policy_name(policy).as_str() {
-            "default" | "code_agent" => {
-                components = RuntimeComponents::default();
-            }
-            other => warnings.push(format!(
-                "plugin registered unknown agent policy `{other}`; known policies are default and code_agent"
-            )),
-        }
-    }
-    components
-}
-
-fn normalize_plugin_policy_name(name: &str) -> String {
-    name.trim().to_ascii_lowercase().replace('-', "_")
-}
-
 /// Apply host tool profile + allow/deny lists to a session's tool executor.
 fn apply_tool_profile_filter(
     executor: &mut navi_core::ToolExecutor,
@@ -337,7 +315,7 @@ pub(crate) struct NaviEngineInner {
     runtime_components: RuntimeComponents,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
     registry_store: Option<Arc<RegistryStore>>,
-    /// Local dictation (ONNX). Engine-scoped, not per-session.
+    /// Voice event bus + runtime state. Engine-scoped, not per-session.
     pub(crate) voice: std::sync::Mutex<crate::voice::VoiceRuntime>,
 }
 
@@ -350,8 +328,6 @@ pub struct NaviSession {
     plan_review_resolver: navi_core::PlanReviewResolver,
     sudo_password_resolver: navi_core::SudoPasswordResolver,
     turn_canceller: navi_core::TurnCanceller,
-    tui_components: Vec<String>,
-    tui_panels: std::sync::Mutex<Vec<Box<dyn navi_plugin_api::TuiComponent>>>,
     mcp: LoadedMcpServers,
 }
 
@@ -423,11 +399,7 @@ impl NaviEngine {
             project_dir.clone(),
             &self.inner.runtime_components,
         )?;
-        let runtime_components = runtime_components_for_plugin_policies(
-            self.inner.runtime_components.clone(),
-            &tool_executor.agent_policies,
-            &mut tool_executor.warnings,
-        );
+        let runtime_components = self.inner.runtime_components.clone();
         for tool in &self.inner.host_tools {
             let executor = Arc::get_mut(&mut tool_executor.tool_executor).ok_or_else(|| {
                 NaviError::Config("cannot register host tool after tool executor is shared".into())
@@ -459,7 +431,7 @@ impl NaviEngine {
             ));
         }
         for warning in &tool_executor.warnings {
-            tracing::warn!(warning = %warning, "plugin load warning");
+            tracing::warn!(warning = %warning, "tooling load warning");
         }
 
         // Register tools that need a weak reference back to the executor.
@@ -545,8 +517,6 @@ impl NaviEngine {
         };
 
         let runtime_tool_executor = tool_executor.tool_executor;
-        let tui_components = tool_executor.tui_components;
-        let tui_panels = tool_executor.tui_panels;
         let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
             loaded_config: loaded_config.clone(),
             model_provider: provider,
@@ -608,8 +578,6 @@ impl NaviEngine {
                     plan_review_resolver,
                     sudo_password_resolver,
                     turn_canceller,
-                    tui_components,
-                    tui_panels: std::sync::Mutex::new(tui_panels),
                     mcp,
                 }),
             );
@@ -1417,29 +1385,6 @@ impl NaviEngine {
         Ok(session.events.resubscribe())
     }
 
-    /// Lists TUI component declarations for this session.
-    ///
-    /// Native in-process panels were removed (WASM-only plugins). This remains
-    /// for a future host-mediated UI protocol and currently returns empty unless
-    /// populated by a later extension path.
-    pub fn list_tui_components(&self, session_id: &str) -> Result<Vec<String>> {
-        let session = self.session(session_id)?;
-        Ok(session.tui_components.clone())
-    }
-
-    /// Takes ownership of TUI component panels for this session.
-    ///
-    /// Native `libloading` panels are no longer loaded. Returns empty until a
-    /// host-mediated WASM UI protocol is implemented.
-    pub fn take_tui_panels(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
-        let session = self.session(session_id)?;
-        let mut panels = session.tui_panels.lock().unwrap_or_else(|e| e.into_inner());
-        Ok(panels.drain(..).collect())
-    }
-
     // ── Auto-memory API ─────────────────────────────────────────────────
 
     /// Opens the auto-memory SQLite store for this project.
@@ -1753,59 +1698,6 @@ impl NaviEngine {
         )
         .rename_async(session_id.to_string(), title.to_string())
         .await?)
-    }
-
-    /// Reloads WASM plugin tools on every active in-memory session without restarting NAVI.
-    ///
-    /// Installed plugins are read from `{data_dir}/plugins/` plus configured `wasm_plugins` scan roots.
-    #[cfg(feature = "wasm-plugins")]
-    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
-        let loaded_config = self.loaded_config();
-        let project_dir = self.inner.project_dir.clone();
-        let mut warnings = Vec::new();
-        for session_id in self.session_ids() {
-            let session = self.session(&session_id)?;
-            let mut runtime = session.runtime.lock().await;
-            let mut fresh = build_local_tooling(
-                &loaded_config,
-                project_dir.clone(),
-                &self.inner.runtime_components,
-            )?;
-            for tool in &self.inner.host_tools {
-                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
-                    NaviError::Config("cannot register host tool during plugin reload".into())
-                })?;
-                executor.register_tool(tool.clone());
-            }
-            for tool in &session.mcp.tools {
-                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
-                    NaviError::Config("cannot register MCP tool during plugin reload".into())
-                })?;
-                executor.register_tool(tool.clone());
-            }
-            {
-                let executor = Arc::get_mut(&mut fresh.tool_executor).ok_or_else(|| {
-                    NaviError::Config(
-                        "cannot register session title tool during plugin reload".into(),
-                    )
-                })?;
-                executor.register_tool(Arc::new(SessionTitleTool::new(
-                    runtime.session_title_handle(),
-                )));
-            }
-            runtime.set_tool_executor(fresh.tool_executor);
-            warnings.extend(fresh.warnings);
-        }
-        Ok(warnings)
-    }
-
-    /// Reports that this build does not include the WASM plugin runtime.
-    #[cfg(not(feature = "wasm-plugins"))]
-    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
-        Ok(vec![
-            "WASM plugin runtime is disabled in this build; rebuild `navi-sdk` with feature `wasm-plugins`"
-                .to_string(),
-        ])
     }
 
     /// Returns the IDs of all active (in-memory) sessions.

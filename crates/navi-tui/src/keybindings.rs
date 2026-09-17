@@ -38,14 +38,12 @@ fn apply_ui_effect(app: &mut TuiApp, effect: UiEffect<ModalKind>) -> KeyOutcome 
 }
 
 pub(crate) fn open_modal(app: &mut TuiApp, modal: ModalKind) {
-    crate::view::image_preview::clear_image_hover(app);
     app.modal_stack.open(modal);
     app.mode = modal.mode();
     app.hover_index = None;
 }
 
 pub(crate) fn replace_modal(app: &mut TuiApp, modal: ModalKind) {
-    crate::view::image_preview::clear_image_hover(app);
     app.modal_stack.replace(Some(modal));
     app.mode = modal.mode();
     app.hover_index = None;
@@ -142,14 +140,7 @@ fn open_skills_picker(app: &mut TuiApp) {
     app.skill_scroll = 0;
 }
 
-fn open_plugins_picker(app: &mut TuiApp) {
-    replace_modal(app, ModalKind::Plugins);
-    app.selected_plugin_row = 0;
-    app.plugin_row_scroll = 0;
-    crate::plugins::refresh_plugin_catalog(app);
-}
-
-pub(crate) fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRoutingTab) {
+fn open_model_routing(app: &mut TuiApp, tab: crate::state::ModelRoutingTab) {
     app.model_routing_tab = tab;
     app.attachment_model_picker_active = false;
     app.attachment_model_picker_modality = None;
@@ -177,8 +168,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::Debug => self::modals::handle_debug_key(app, code),
         Mode::Help => self::modals::handle_help_key(app, code),
         Mode::Skills => self::modals::handle_skills_key(app, code, modifiers),
-        Mode::Plugins => self::modals::handle_plugins_key(app, code),
-        Mode::PluginApproval => self::modals::handle_plugin_approval_key(app, code, modifiers),
         Mode::Question => self::modals::handle_question_key(app, code, modifiers),
         Mode::ThemePicker => self::modals::handle_theme_picker_key(app, code, modifiers),
         Mode::MessageActions => self::modals::handle_message_actions_key(app, code),
@@ -205,7 +194,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         Mode::SetGoal => self::modals::handle_set_goal_key(app, code, modifiers),
         Mode::ConfirmCancelTurn => self::modals::handle_confirm_cancel_turn_key(app, code),
         Mode::ConfirmPlan => self::modals::handle_confirm_plan_key(app, code),
-        Mode::ConfirmMcpMerge => handle_confirm_mcp_merge_key(app, code),
         Mode::SudoPassword => self::modals::handle_sudo_password_key(app, code, modifiers),
         Mode::PathMentions => crate::path_mentions::handle_path_mentions_key(app, code, modifiers),
         Mode::About => self::modals::handle_about_key(app, code),
@@ -215,29 +203,6 @@ fn route_mode_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> K
         KeyOutcome::Quit
     } else {
         KeyOutcome::Handled
-    }
-}
-
-fn handle_confirm_mcp_merge_key(app: &mut TuiApp, code: KeyCode) -> bool {
-    use crate::notifications::show_notification;
-    match code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            if let Some(path) = app.pending_mcp_merge.take()
-                && let Some(msg) =
-                    navi_sdk::merge_mcp_from_package(&app.loaded_config.data_dir, &path)
-            {
-                show_notification(app, "MCP", msg);
-            }
-            app.mode = Mode::Normal;
-            false
-        }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            app.pending_mcp_merge = None;
-            app.mode = Mode::Normal;
-            show_notification(app, "MCP", "Skipped merging mcp.json.".to_string());
-            false
-        }
-        _ => false,
     }
 }
 

@@ -118,10 +118,6 @@ impl Drop for TerminalModeGuard {
 pub fn run(app: TuiApp) -> Result<()> {
     install_terminal_restore_panic_hook();
     let mut terminal_modes = TerminalModeGuard::enter()?;
-    // Probe Kitty/Sixel/iTerm2 after alternate-screen entry (before event reads).
-    crate::view::terminal_graphics::install_session_graphics(
-        crate::view::terminal_graphics::TerminalGraphics::detect(),
-    );
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -203,9 +199,9 @@ fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
         return Ok(());
     }
     enable_focus_tracking(w)?;
-    // Base mouse only (no free-motion). Free-motion is synced later when images
-    // need hover — keeps multi-window sessions from leaking motion CSI.
-    enable_mouse_capture(w, false)
+    // Full mouse capture (press/drag/any-motion) so text drag-select works on
+    // terminals that only report motion under `?1003`.
+    enable_mouse_capture(w)
 }
 
 /// Clear parent Kitty stack without the historical no-op (`>0u` then immediate pop).
@@ -359,7 +355,7 @@ where
 /// Like `enable_navi_keyboard_protocol`, the Kitty sequences are written
 /// directly instead of via crossterm commands, which would fail on Windows
 /// (they hardcode `is_ansi_code_supported() == false`).
-fn reassert_terminal_input_modes(w: &mut impl io::Write, free_motion: bool) -> io::Result<()> {
+fn reassert_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     if keyboard_enhancement_supported() {
         // Pop our previous push (ignore missing level), then re-push.
         let _ = write!(w, "\x1B[<1u");
@@ -370,7 +366,7 @@ fn reassert_terminal_input_modes(w: &mut impl io::Write, free_motion: bool) -> i
         return Ok(());
     }
     enable_focus_tracking(w)?;
-    enable_mouse_capture(w, free_motion)
+    enable_mouse_capture(w)
 }
 
 fn enable_focus_tracking(w: &mut impl io::Write) -> io::Result<()> {
@@ -403,32 +399,18 @@ fn reset_terminal_input_modes(w: &mut impl io::Write) -> io::Result<()> {
     clear_parent_keyboard_stack(w)
 }
 
-/// Whether free mouse motion (?1003) is useful right now.
-///
-/// Free-motion is the main multi-window leak source. Only enable it when image
-/// hover can actually fire (pending chips, chat images, or an open lightbox).
-pub(crate) fn wants_mouse_free_motion(app: &TuiApp) -> bool {
-    app.image_hover.is_some()
-        || !app.pending_images.is_empty()
-        || app.messages.iter().any(|m| !m.images.is_empty())
-}
-
 /// Enable mouse capture.
 ///
 /// Match crossterm's [`EnableMouseCapture`] set: press/release (`1000`),
 /// button-drag (`1002`), any-motion (`1003`), RXVT coords (`1015`), SGR
-/// (`1006`). Previously we disabled free-motion (`1003`) except for image
-/// hover — that broke text drag-select on terminals that only report motion
-/// under `1003`, so selection never extended past the click cell.
-///
-/// `free_motion` is kept for API compatibility with callers that still track
-/// image-hover intent; the wire modes are always the full capture set.
+/// (`1006`). We always request the full set so text drag-select works on
+/// terminals that only report motion under `1003`.
 ///
 /// The escape sequences are written directly (not via crossterm's
 /// [`EnableMouseCapture`] command) because on Windows crossterm reports
 /// `is_ansi_code_supported() == false` and would instead poke the legacy
 /// WinAPI console — which never emits the ANSI modes this parser expects.
-fn enable_mouse_capture(w: &mut impl io::Write, _free_motion: bool) -> io::Result<()> {
+fn enable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     write!(
         w,
         concat!(
@@ -440,27 +422,6 @@ fn enable_mouse_capture(w: &mut impl io::Write, _free_motion: bool) -> io::Resul
         )
     )?;
     w.flush()
-}
-
-/// Sync free-motion on/off when image state changes.
-///
-/// With full mouse capture always enabled, this only tracks the flag for
-/// diagnostics / future selective mode — reasserting capture is still cheap
-/// and keeps multi-window focus recovery healthy.
-pub(crate) fn sync_mouse_free_motion(app: &mut TuiApp) -> io::Result<bool> {
-    if is_desktop_tile() {
-        // Never enable mouse capture in embedded desktop tiles.
-        app.mouse_free_motion = false;
-        return Ok(false);
-    }
-    let want = wants_mouse_free_motion(app);
-    if app.mouse_free_motion == want {
-        return Ok(false);
-    }
-    let mut stdout = io::stdout();
-    enable_mouse_capture(&mut stdout, want)?;
-    app.mouse_free_motion = want;
-    Ok(true)
 }
 
 /// Disable mouse modes defensively.
@@ -627,7 +588,7 @@ mod tests {
     #[test]
     fn mouse_capture_enables_full_crossterm_set() {
         let mut out = Vec::new();
-        enable_mouse_capture(&mut out, false).expect("enable mouse capture");
+        enable_mouse_capture(&mut out).expect("enable mouse capture");
         let text = String::from_utf8(out).expect("utf8 escape sequences");
 
         // Matches crossterm EnableMouseCapture (needed for drag-select).
@@ -636,15 +597,6 @@ mod tests {
         assert!(text.contains("\x1B[?1003h")); // any-motion — required for reliable drag
         assert!(text.contains("\x1B[?1006h"));
         assert!(text.contains("\x1B[?1015h"));
-    }
-
-    #[test]
-    fn mouse_capture_free_motion_flag_still_enables_capture() {
-        let mut out = Vec::new();
-        enable_mouse_capture(&mut out, true).expect("enable free motion");
-        let text = String::from_utf8(out).expect("utf8");
-        assert!(text.contains("\x1B[?1003h"));
-        assert!(text.contains("\x1B[?1002h"));
     }
 
     #[test]
@@ -804,7 +756,7 @@ mod tests {
     fn reassert_pops_then_pushes_keyboard_enhancement() {
         with_desktop_tile_env(None, || {
             let mut out = Vec::new();
-            reassert_terminal_input_modes(&mut out, false).expect("reassert");
+            reassert_terminal_input_modes(&mut out).expect("reassert");
             let text = String::from_utf8(out).expect("utf8");
             if keyboard_enhancement_supported() {
                 assert!(text.contains("\x1B[<1u") || text.contains("\x1B[<u"));
@@ -848,7 +800,7 @@ mod tests {
     fn desktop_tile_reassert_skips_mouse_and_focus() {
         with_desktop_tile_env(Some("1"), || {
             let mut out = Vec::new();
-            reassert_terminal_input_modes(&mut out, true).expect("reassert");
+            reassert_terminal_input_modes(&mut out).expect("reassert");
             let text = String::from_utf8(out).expect("utf8");
 
             if keyboard_enhancement_supported() {
@@ -876,12 +828,6 @@ mod tests {
                 "legacy console must skip Kitty stack clear: {text:?}"
             );
         }
-    }
-
-    #[test]
-    fn wants_mouse_free_motion_only_with_images() {
-        let app = crate::tests::test_app("");
-        assert!(!wants_mouse_free_motion(&app));
     }
 
     #[test]
@@ -1009,14 +955,6 @@ where
             needs_draw = true;
         }
 
-        if crate::view::image_preview::poll_image_hover_close(app) {
-            needs_draw = true;
-        }
-
-        // Toggle ?1003 only while image hover can fire (pending/chat images or
-        // open lightbox). Avoids free-motion CSI leaks across multi-window use.
-        let _ = sync_mouse_free_motion(app);
-
         // Long-running streams do not always include a live Usage chunk. Keep
         // account-backed providers fresh while work is active (and while the
         // Usage modal is visible) without polling on every frame.
@@ -1049,7 +987,7 @@ where
             .active_plan
             .as_ref()
             .is_some_and(|p| p.is_done() && p.completed_at.is_some());
-        let mut timeout = if activity_animating || composer_animating {
+        let timeout = if activity_animating || composer_animating {
             // ~30fps is enough for active action frames and keeps CPU low.
             Duration::from_millis(33)
         } else if idle_animating {
@@ -1064,13 +1002,6 @@ where
         } else {
             Duration::from_millis(250)
         };
-        // Wake promptly to apply the image-hover leave grace period.
-        if let Some(deadline) = app.image_hover_close_deadline {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining < timeout {
-                timeout = remaining.max(Duration::from_millis(16));
-            }
-        }
 
         if input.poll(timeout)? {
             match input.read()? {
@@ -1120,10 +1051,8 @@ where
                     // 3. Full redraw for alternate-screen recovery.
                     app.terminal_focused = true;
                     leaked_terminal_sequence_filter.reset();
-                    let free_motion = wants_mouse_free_motion(app);
-                    app.mouse_free_motion = free_motion;
                     let mut stdout = io::stdout();
-                    let _ = reassert_terminal_input_modes(&mut stdout, free_motion);
+                    let _ = reassert_terminal_input_modes(&mut stdout);
                     // The surface may have been repainted by another window.
                     // Do NOT clear here: clearing in its own frame presents a
                     // blank screen for one presentation (and can stick on

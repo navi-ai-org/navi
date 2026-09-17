@@ -175,34 +175,6 @@ pub(crate) fn render_input(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
         )]));
     }
 
-    // Register hover hits for `[Image N]` chips before paint.
-    if app.mode == crate::state::Mode::Normal && !app.pending_images.is_empty() {
-        let input_owned = app.input.clone();
-        for (visible_row, line_index) in (visible_start..visible_start + painted.len()).enumerate()
-        {
-            let Some((start, end)) = ranges.get(line_index).copied() else {
-                continue;
-            };
-            if end > input_owned.len() || start > end {
-                continue;
-            }
-            let line_text = input_owned[start..end].to_string();
-            let line_area = Rect::new(
-                content.x.saturating_add(PROMPT_WIDTH as u16),
-                content.y.saturating_add(visible_row as u16),
-                content.width.saturating_sub(PROMPT_WIDTH as u16),
-                1,
-            );
-            crate::view::image_preview::register_pending_image_hits(
-                app,
-                &input_owned,
-                start,
-                &line_text,
-                line_area,
-            );
-        }
-    }
-
     frame.render_widget(
         Paragraph::new(Text::from(painted)).style(Style::default().fg(text()).bg(surface)),
         content,

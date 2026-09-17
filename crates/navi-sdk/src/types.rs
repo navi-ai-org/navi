@@ -398,20 +398,14 @@ pub struct NaviSavedSessionInfo {
     pub updated_at: u64,
 }
 
-/// Tool executor and plugin warnings assembled for a session.
+/// Tool executor assembled for a session.
 ///
 /// This is an intermediate type produced during session setup. The `tool_executor`
-/// is passed into the agent runtime; `warnings` reports any plugin load failures
-/// that occurred.
+/// is passed into the agent runtime; `warnings` reports any tooling setup
+/// problems that occurred.
 pub struct NaviRuntimeTooling {
     pub tool_executor: Arc<ToolExecutor>,
     pub warnings: Vec<String>,
-    /// Reserved for future WASM-declared agent policies (native plugin policies removed).
-    pub agent_policies: Vec<String>,
-    /// Reserved for future host-mediated TUI extension names (native panels removed).
-    pub tui_components: Vec<String>,
-    /// Reserved for future host-mediated TUI panels (native `TuiComponent` load removed).
-    pub tui_panels: Vec<Box<dyn navi_plugin_api::TuiComponent>>,
 }
 
 /// Structured error when a provider's API key cannot be resolved.

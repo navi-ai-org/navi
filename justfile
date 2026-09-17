@@ -18,7 +18,7 @@ coverage_lcov := "coverage/lcov.info"
 # Product crates (shipping binary path). Bindings excluded for fast loops.
 # navi-voice tested with --no-default-features elsewhere; omit here so onnx
 # is not feature-unified into the product graph. navi-cli omitted (bin-only).
-product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite -p navi-mcp -p navi-plugin-api -p navi-plugin-broker -p navi-plugin-manifest -p navi-plugin-orchestrator -p navi-plugin-runtime -p copland"
+product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite -p navi-mcp -p copland"
 
 # ─── Build ───────────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ check:
 
 # Verify SDK ↔ N-API binding parity (no drift between surfaces).
 parity-check:
-    cargo test -p navi-sdk --lib engine_api::tests::napi_binding_covers_all -- --test-threads={{test_threads}}
+    cargo test -p navi-sdk --lib engine_api::tests::napi_bound_matches_engine_api -- --test-threads={{test_threads}}
 
 fmt:
     cargo fmt --all
@@ -79,7 +79,7 @@ test-fast *args:
     cargo test --locked --lib --bins {{product_packages}} -- --test-threads={{test_threads}} {{args}}
 
 # Selective integration smoke used alongside test-fast (screenshots + PTY).
-# Scenarios / event_loop / terminal_corruption / plugin_install stay on `just test`.
+# Scenarios / event_loop / terminal_corruption stay on `just test`.
 test-smoke *args:
     cargo test --locked -p navi-tui --test screenshots -- --test-threads=4 {{args}}
     cargo test --locked -p navi-cli --test pty_smoke -- --test-threads=1 {{args}}

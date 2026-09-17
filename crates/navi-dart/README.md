@@ -16,7 +16,7 @@ Dart FFI bindings for the NAVI agent runtime SDK.
 
 ## Features
 
-- **Full engine surface**: sessions, turns, events, approvals, goals, background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions, config
+- **Full engine surface**: sessions, turns, events, approvals, goals, background tasks, credentials, skills, MCP, provider sync, registry, saved sessions, config
 - **Async via callbacks**: async operations use `NativeCallable.listener` for safe cross-thread notification
 - **Event streaming**: subscribe to real-time `RuntimeEvent`s via persistent callbacks
 - **JSON interchange**: complex types are serialized as JSON strings across the FFI boundary
@@ -94,7 +94,7 @@ cargo test -p navi-dart -- --test-threads=1
 
 ### And more...
 
-Background tasks, credentials, skills, MCP, provider sync, registry, plugins, saved sessions — same async callback pattern.
+Background tasks, credentials, skills, MCP, provider sync, registry, saved sessions — same async callback pattern.
 
 ## Dart Package
 

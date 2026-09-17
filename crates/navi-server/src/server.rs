@@ -712,7 +712,7 @@ impl NaviServer {
                 },
             );
 
-        // Domain modules (memory, voice, plugins, auth, session_ops, skills_mcp, registry)
+        // Domain modules (memory, voice, auth, session_ops, skills_mcp, registry)
         let domain = routes::all_routes(state.clone(), secret);
 
         // ── Static web assets (catch-all, no auth) ──────────────────────

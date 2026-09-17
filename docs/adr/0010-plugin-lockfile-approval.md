@@ -1,3 +1,5 @@
+> **Status: Superseded** — o sistema de plugins WASM foi removido na v0.8.0.
+
 # ADR 0010 — Plugin Lockfile and Approval Persistence
 
 ## Status

@@ -178,7 +178,6 @@ fn materialize(
         &default_tool_meta(),
         true,
         &[],
-        &[],
     );
 
     let mut opts = MaterializeOptions::default();

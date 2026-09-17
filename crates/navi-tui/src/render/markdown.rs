@@ -313,14 +313,6 @@ pub(crate) fn is_image_tag(text: &str) -> bool {
     !digits.is_empty() && digits.iter().all(|b| b.is_ascii_digit())
 }
 
-/// Parse 1-based image index from an `[Image N]` tag.
-pub(crate) fn parse_image_tag_index(text: &str) -> Option<usize> {
-    let trimmed = text.trim();
-    let inner = trimmed.strip_prefix("[Image ")?.strip_suffix(']')?;
-    let index = inner.parse::<usize>().ok()?;
-    (index >= 1).then_some(index)
-}
-
 fn push_block_gap(lines: &mut Vec<Line<'static>>, sources: &mut Vec<ChatLineSource>) {
     if !lines.is_empty() {
         lines.push(Line::from(""));
@@ -2709,7 +2701,6 @@ mod tests {
             media_type: "image/png".to_string(),
             width: Some(100),
             height: Some(80),
-            data: "abc".to_string(),
             label: "PNG".to_string(),
         });
 
@@ -2865,7 +2856,6 @@ mod tests {
         assert!(is_image_tag("  [Image 12]  "));
         assert!(!is_image_tag("[Image]"));
         assert!(!is_image_tag("Image 1"));
-        assert_eq!(parse_image_tag_index("[Image 3]"), Some(3));
     }
 
     #[test]

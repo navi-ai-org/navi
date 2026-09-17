@@ -212,7 +212,7 @@ pub async fn run_dream_maintenance_with_options(
         }
     }
 
-    // Consolidate auto-memory SQLite store (mechanical: mark stale, deduplicate, backfill embeddings)
+    // Consolidate auto-memory SQLite store (mechanical: mark stale, deduplicate)
     let auto_memory_report = {
         match auto_memory.consolidate(30) {
             Ok(report) => {
@@ -222,45 +222,6 @@ pub async fn run_dream_maintenance_with_options(
                     report.duplicates_merged,
                     report.remaining_active
                 );
-
-                // Backfill embeddings for memories without them
-                if crate::memory::embeddings_available() {
-                    let db_path = &auto_memory.db_path;
-                    let models_dir = db_path
-                        .parent()
-                        .unwrap_or(std::path::Path::new("."))
-                        .join("models");
-                    let model_path = models_dir.join(crate::memory::DEFAULT_MODEL_FILE);
-                    let tokenizer_path = models_dir.join(crate::memory::DEFAULT_TOKENIZER_FILE);
-
-                    if let Some(embedder) =
-                        crate::memory::embedding::get_cached_embedder(&model_path, &tokenizer_path)
-                    {
-                        let missing = auto_memory.list_without_embeddings().unwrap_or_default();
-
-                        if !missing.is_empty() {
-                            tracing::info!("backfilling embeddings for {} memories", missing.len());
-                            for m in &missing {
-                                if let Some(text) =
-                                    auto_memory.get_memory_text(&m.id).unwrap_or(None)
-                                {
-                                    match embedder.embed(&text) {
-                                        Ok(emb) => {
-                                            let _ = auto_memory.set_embedding(&m.id, &emb);
-                                        }
-                                        Err(e) => {
-                                            tracing::debug!(
-                                                "embedding backfill failed for {}: {}",
-                                                m.id,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
 
                 Some(report)
             }

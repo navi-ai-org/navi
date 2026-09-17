@@ -15,7 +15,6 @@ pub struct CapabilityInventory {
     pub goals_enabled: bool,
     pub browser_available: bool,
     pub max_auto_continue_turns: u32,
-    pub plugins: Vec<String>,
     pub mcp_servers: Vec<String>,
     pub harnesses_ready: Vec<String>,
 }
@@ -29,7 +28,6 @@ pub fn inventory_from_tool_names(
     goals_enabled: bool,
     browser_available: bool,
     max_auto_continue_turns: u32,
-    plugins: impl IntoIterator<Item = impl Into<String>>,
     mcp_servers: impl IntoIterator<Item = impl Into<String>>,
     harnesses_ready: impl IntoIterator<Item = impl Into<String>>,
 ) -> CapabilityInventory {
@@ -43,9 +41,6 @@ pub fn inventory_from_tool_names(
     for t in &deferred_tools {
         all.insert(t.clone());
     }
-    let mut plugins: Vec<String> = plugins.into_iter().map(Into::into).collect();
-    plugins.sort();
-    plugins.dedup();
     let mut mcp_servers: Vec<String> = mcp_servers.into_iter().map(Into::into).collect();
     mcp_servers.sort();
     mcp_servers.dedup();
@@ -59,7 +54,6 @@ pub fn inventory_from_tool_names(
         goals_enabled,
         browser_available,
         max_auto_continue_turns,
-        plugins,
         mcp_servers,
         harnesses_ready,
     }
@@ -109,9 +103,6 @@ pub fn capability_card(inv: &CapabilityInventory) -> String {
             inv.deferred_tools.join(", ")
         ));
     }
-    if !inv.plugins.is_empty() {
-        lines.push(format!("- plugins.installed: [{}]", inv.plugins.join(", ")));
-    }
     if !inv.mcp_servers.is_empty() {
         lines.push(format!("- mcp.connected: [{}]", inv.mcp_servers.join(", ")));
     }
@@ -135,7 +126,6 @@ mod tests {
             true,
             true,
             50,
-            ["hello-echo"],
             ["memory"],
             ["design-loop"],
         )

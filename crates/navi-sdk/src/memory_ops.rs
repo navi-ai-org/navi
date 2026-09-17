@@ -29,7 +29,6 @@ pub struct MemoryStatusReport {
     pub checkpoint_count: i64,
     pub last_checkpoint_time: Option<String>,
     pub message_event_count: i64,
-    pub embeddings_available: bool,
     pub lines: Vec<String>,
 }
 
@@ -46,10 +45,6 @@ pub struct MemoryInitReport {
     pub memory_root: String,
     pub auto_memory_db: String,
     pub active_memories: usize,
-    pub embeddings_requested: bool,
-    pub embeddings_ready: bool,
-    pub model_path: Option<String>,
-    pub tokenizer_path: Option<String>,
     pub lines: Vec<String>,
 }
 
@@ -125,9 +120,6 @@ impl NaviEngine {
             (None, 0, 0, None, 0)
         };
 
-        let embeddings_available = navi_core::memory::embeddings_available();
-        lines.push(format!("Embeddings available: {embeddings_available}"));
-
         Ok(MemoryStatusReport {
             memory_root: manager.store.memory_root.display().to_string(),
             auto_memory_db: manager.auto_memory.db_path.display().to_string(),
@@ -140,7 +132,6 @@ impl NaviEngine {
             checkpoint_count,
             last_checkpoint_time,
             message_event_count,
-            embeddings_available,
             lines,
         })
     }
@@ -187,12 +178,6 @@ impl NaviEngine {
             }
         }
 
-        if navi_core::memory::embeddings_available() {
-            lines.push("[OK] Embedding model available".into());
-        } else {
-            lines.push("[WARN] Embeddings not available — run memory_init(embeddings=true)".into());
-        }
-
         lines.push(if ok {
             "Doctor: OK".into()
         } else {
@@ -202,8 +187,8 @@ impl NaviEngine {
         Ok(MemoryDoctorReport { ok, lines })
     }
 
-    /// Ensure memory directories/DB exist; optionally download embedding model.
-    pub async fn memory_init(&self, embeddings: bool, force: bool) -> Result<MemoryInitReport> {
+    /// Ensure memory directories/DB exist.
+    pub async fn memory_init(&self) -> Result<MemoryInitReport> {
         let manager = self.memory_manager()?;
         let mut lines = Vec::new();
         let memory_root = manager.store.memory_root.clone();
@@ -216,110 +201,16 @@ impl NaviEngine {
             lines.push(format!("Memory root exists: {}", memory_root.display()));
         }
 
-        let models_dir = memory_root.join("models");
-        if !models_dir.exists() {
-            std::fs::create_dir_all(&models_dir)
-                .map_err(|e| NaviError::Config(format!("create models dir: {e}")))?;
-            lines.push(format!("Created models dir: {}", models_dir.display()));
-        }
-
         let active = manager.auto_memory.count_active().unwrap_or(0);
         lines.push(format!(
             "Auto-memory DB: {} ({active} active)",
             manager.auto_memory.db_path.display()
         ));
 
-        let mut embeddings_ready = navi_core::memory::embeddings_available();
-        let mut model_path_out = None;
-        let mut tokenizer_path_out = None;
-
-        if embeddings {
-            let model_file = navi_core::memory::DEFAULT_MODEL_FILE;
-            let model_repo = navi_core::memory::DEFAULT_MODEL_REPO;
-            let tokenizer_file = navi_core::memory::DEFAULT_TOKENIZER_FILE;
-            let tokenizer_repo = navi_core::memory::DEFAULT_TOKENIZER_REPO;
-            let model_path = models_dir.join(model_file);
-            let tokenizer_path = models_dir.join(tokenizer_file);
-            model_path_out = Some(model_path.display().to_string());
-            tokenizer_path_out = Some(tokenizer_path.display().to_string());
-
-            let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(600))
-                .build()
-                .map_err(|e| NaviError::Config(format!("http client: {e}")))?;
-
-            if model_path.exists() && !force {
-                lines.push(format!(
-                    "Embedding model already present: {}",
-                    model_path.display()
-                ));
-            } else {
-                if force && model_path.exists() {
-                    let _ = std::fs::remove_file(&model_path);
-                }
-                let url = format!("https://huggingface.co/{model_repo}/resolve/main/{model_file}");
-                lines.push(format!("Downloading embedding model from {url}"));
-                let response = client
-                    .get(&url)
-                    .send()
-                    .await
-                    .map_err(|e| NaviError::Config(format!("download model: {e}")))?;
-                if !response.status().is_success() {
-                    return Err(NaviError::Config(format!(
-                        "download failed: HTTP {} from {url}",
-                        response.status()
-                    )));
-                }
-                let bytes = response
-                    .bytes()
-                    .await
-                    .map_err(|e| NaviError::Config(format!("read model body: {e}")))?;
-                std::fs::write(&model_path, &bytes)
-                    .map_err(|e| NaviError::Config(format!("write model: {e}")))?;
-                lines.push(format!(
-                    "Model saved ({:.1} MB)",
-                    bytes.len() as f64 / 1_048_576.0
-                ));
-            }
-
-            if !tokenizer_path.exists() || force {
-                let tok_url = format!(
-                    "https://huggingface.co/{tokenizer_repo}/resolve/main/{tokenizer_file}"
-                );
-                let tok_resp = client.get(&tok_url).send().await;
-                match tok_resp {
-                    Ok(r) if r.status().is_success() => {
-                        if let Ok(bytes) = r.bytes().await {
-                            let _ = std::fs::write(&tokenizer_path, &bytes);
-                            lines.push(format!("Tokenizer saved: {}", tokenizer_path.display()));
-                        }
-                    }
-                    Ok(r) => lines.push(format!("Tokenizer download failed: HTTP {}", r.status())),
-                    Err(e) => lines.push(format!("Tokenizer download error: {e}")),
-                }
-            } else {
-                lines.push(format!(
-                    "Tokenizer already present: {}",
-                    tokenizer_path.display()
-                ));
-            }
-
-            embeddings_ready = model_path.exists() && tokenizer_path.exists();
-        } else {
-            lines.push(
-                "Embeddings not requested; text search only. Call memory_init(true) for semantic search."
-                    .into(),
-            );
-        }
-
         Ok(MemoryInitReport {
             memory_root: memory_root.display().to_string(),
             auto_memory_db: manager.auto_memory.db_path.display().to_string(),
             active_memories: active,
-            embeddings_requested: embeddings,
-            embeddings_ready,
-            model_path: model_path_out,
-            tokenizer_path: tokenizer_path_out,
             lines,
         })
     }

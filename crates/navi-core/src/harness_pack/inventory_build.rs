@@ -12,7 +12,6 @@ pub fn build_capability_inventory(
     config: &NaviConfig,
     tool_meta: &[(String, ToolExposure)],
     browser_available: bool,
-    plugins: &[String],
     mcp_servers: &[String],
 ) -> CapabilityInventory {
     let mut direct = Vec::new();
@@ -32,7 +31,6 @@ pub fn build_capability_inventory(
         config.goals.enabled,
         browser_available,
         config.goals.max_auto_continue_turns,
-        plugins.iter().cloned(),
         mcp_servers.iter().cloned(),
         harnesses,
     )

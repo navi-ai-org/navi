@@ -4,17 +4,14 @@ pub(crate) mod chat;
 pub(crate) mod command_palette;
 pub(crate) mod debug;
 pub(crate) mod help;
-pub(crate) mod image_preview;
 pub(crate) mod input;
 pub(crate) mod modals;
 pub(crate) mod model_picker;
 pub(crate) mod notification;
 pub(crate) mod plan_topbar;
-pub(crate) mod plugins;
 pub(crate) mod provider_settings;
 pub(crate) mod sessions;
 pub(crate) mod skills;
-pub(crate) mod terminal_graphics;
 pub(crate) mod update_modal;
 pub(crate) mod welcome;
 
@@ -43,12 +40,6 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     opaque_fill(frame, area, Style::default().bg(theme::bg()));
     let content_area = viewport_rect(area);
 
-    // Load plugin-registered TUI panels once after the session is started.
-    if !app.plugin_panels_loaded && !app.session_id.as_str().is_empty() {
-        crate::panels::load_plugin_panels(app);
-        app.plugin_panels_loaded = true;
-    }
-
     // Render region panels (header, chat, input, etc.) via the PanelManager.
     crate::panels::render_regions(frame, app, content_area);
 
@@ -56,7 +47,7 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
         fill_modal_scrim(frame, content_area);
     }
 
-    // Render overlay panels (modals, plugin panels) via the PanelManager.
+    // Render overlay panels (modals) via the PanelManager.
     crate::panels::render_overlays(frame, app, area);
 
     if !app.pending_approvals.is_empty() {
@@ -64,8 +55,6 @@ fn render_inner(frame: &mut Frame<'_>, app: &mut TuiApp) {
     }
 
     notification::render_notification(frame, app, area);
-    // Image hover preview sits above chat/composer (Kitty/Sixel when available).
-    image_preview::render_image_hover_modal(frame, app, content_area);
 }
 
 fn modal_backdrop_active(app: &TuiApp) -> bool {

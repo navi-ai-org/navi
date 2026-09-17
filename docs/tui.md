@@ -28,8 +28,6 @@ The TUI lives in `crates/navi-tui/src/`. Crate root `lib.rs` is now mostly modul
 | `session.rs` | Saved-session listing, timestamp formatting, title extraction |
 | `persistence.rs` | Current session save/load and preference persistence |
 | `errors.rs` | Retry logic, error classification, delay parsing, `human_duration` |
-| `plugins.rs` | Plugin listing, install, update, and reload |
-| `plugin_approval.rs` | Plugin install/update approval UI |
 | `testing/` | Test utilities and fixtures |
 | `tests.rs` | Integration and cross-module tests |
 | `ui/` | Internal Ratatui framework: `TextInput`, `ModalStack`, `SelectListState`, layout |
@@ -40,7 +38,7 @@ The event loop is synchronous ratatui/crossterm with an async bridge over `tokio
 
 - `TuiApp` stores UI state, credentials, session display state, tool approval UI state, an SDK engine handle, and async channels.
 - `AsyncEvent` carries SDK runtime events, turn completion, retry triggers, OAuth completions, and model-sync results back into the event loop.
-- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts, help, skills, plugins, plugin approval, questions, theme picker, and message actions.
+- `Mode` selects modal behavior: normal chat, commands, models, API key entry, thinking, sessions, settings, provider accounts, help, skills, questions, theme picker, and message actions.
 - `ChatMessage` is display-oriented and may contain model labels, status, usage, thinking text, tool invocation/result metadata, or normal content.
 - `ui::*` is the internal TUI framework layer. It owns reusable interaction primitives such as `TextInput`, `KeyOutcome`, `ModalStack`, `SelectListState`, `UiEffect`, and layout sizing. Keep it private to `navi-tui`; do not move ratatui abstractions into `navi-sdk`.
 
@@ -61,8 +59,6 @@ The `Mode` enum defines all modal states:
 | `Debug` | Debug information modal |
 | `Help` | Keyboard shortcuts help |
 | `Skills` | Skill management |
-| `Plugins` | Plugin marketplace |
-| `PluginApproval` | Plugin install/update approval |
 | `Question` | Interactive question modal |
 | `ThemePicker` | Theme selector |
 | `MessageActions` | Message action menu |
@@ -163,22 +159,6 @@ Provider configuration is now in the command palette as `Providers`. That modal 
 - `r` to sync models for the selected provider.
 
 The Debug modal (`ctrl+d`) shows the log path, session id, project, selected model/provider, active state, and recent diagnostics. It is intentionally read-only and should not render raw payloads or secrets.
-
-### Plugin Marketplace
-
-The Plugins modal (`ctrl+p` → "Plugins") provides:
-
-- Browse available plugins from the configured registry
-- Install plugins with approval workflow
-- Update installed plugins
-- Reload WASM plugins without restarting
-
-Plugin install/update requires approval via the `PluginApproval` modal, which shows:
-
-- Plugin capabilities and tools
-- Risk assessment (LOW/MEDIUM/HIGH/CRITICAL)
-- Publisher and version information
-- Warnings and security notes
 
 ### Message Actions
 

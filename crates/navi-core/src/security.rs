@@ -69,7 +69,7 @@ pub enum SecurityRisk {
     /// A guarded command that requires explicit approval outside YOLO mode
     /// (e.g. destructive `git` operations such as `git push` / `git rebase`).
     GuardedCommand,
-    /// Loading an external native plugin.
+    /// A custom (non-built-in) tool invocation, e.g. an MCP-provided tool.
     ExternalPlugin,
     /// OS-level UI automation (mouse/keyboard simulation via computer use).
     /// See ADR 0016 — behaves like `Command` in the permission ladder but is
@@ -311,29 +311,6 @@ impl SecurityPolicy {
         }
 
         SecurityDecision::NeedsApproval(SecurityRisk::Command)
-    }
-
-    /// Validates a plugin library path, requiring approval unless external plugins
-    /// are explicitly allowed.
-    pub fn validate_plugin_path(&self, path: &Path) -> SecurityDecision {
-        let Ok(path) = normalize_existing_or_parent(path) else {
-            return SecurityDecision::Deny(format!("failed to resolve {}", path.display()));
-        };
-
-        if self.config.allow_external_plugins {
-            return SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin);
-        }
-
-        let project_plugin_dir = self.project_root.join(".navi").join("plugins");
-        let data_plugin_dir = self.data_dir.join("plugins");
-        if path.starts_with(project_plugin_dir) || path.starts_with(data_plugin_dir) {
-            SecurityDecision::NeedsApproval(SecurityRisk::ExternalPlugin)
-        } else {
-            SecurityDecision::Deny(format!(
-                "plugin {} is outside trusted plugin directories",
-                path.display()
-            ))
-        }
     }
 
     /// Validates an MCP server id against the configured allowlist.
@@ -707,9 +684,6 @@ impl SecurityPolicy {
 
     fn is_data_dir_private_path(&self, path: &Path) -> bool {
         if !path.starts_with(&self.data_dir) {
-            return false;
-        }
-        if path.starts_with(self.data_dir.join("plugins")) {
             return false;
         }
         // Markdown plan files under data_dir/plans are agent-writable artifacts.
@@ -2177,14 +2151,14 @@ mod tests {
         std::fs::create_dir_all(&data).expect("data");
         let config = SecurityConfig {
             permission_mode: PermissionMode::Yolo,
-            ask_tool_regex: vec!["^plugin__".to_string()],
+            ask_tool_regex: vec!["^custom__".to_string()],
             ..SecurityConfig::default()
         };
         let policy = policy_with_config(project, data, config);
 
         let decision = policy.validate_tool_invocation(
-            &tool_def("plugin__deploy", ToolKind::Custom),
-            &tool_invocation("plugin__deploy", serde_json::json!({})),
+            &tool_def("custom__deploy", ToolKind::Custom),
+            &tool_invocation("custom__deploy", serde_json::json!({})),
         );
 
         assert_eq!(
@@ -2324,42 +2298,6 @@ mod tests {
         assert!(
             !matches!(decision, SecurityDecision::Deny(_)),
             "read-only bash referencing data_dir should not be denied, got: {decision:?}"
-        );
-    }
-
-    #[test]
-    fn allows_bash_reference_to_data_dir_plugins() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let project = tempdir.path().join("project");
-        let data = tempdir.path().join("data");
-        let plugins = data.join("plugins");
-        std::fs::create_dir_all(&project).expect("project");
-        std::fs::create_dir_all(&plugins).expect("plugins");
-        let policy = policy(project, data);
-
-        let decision = policy.validate_command(&format!("ls {}", plugins.display()));
-
-        assert_eq!(
-            decision,
-            SecurityDecision::NeedsApproval(SecurityRisk::Command)
-        );
-    }
-
-    #[test]
-    fn allows_data_dir_plugins_path() {
-        let tempdir = tempfile::tempdir().expect("tempdir");
-        let project = tempdir.path().join("project");
-        let data = tempdir.path().join("data");
-        let plugins = data.join("plugins");
-        std::fs::create_dir_all(&project).expect("project");
-        std::fs::create_dir_all(&plugins).expect("plugins");
-        let policy = policy(project, data);
-
-        let decision = policy.validate_path(plugins.join("plugin.wasm").as_path(), true);
-
-        assert_eq!(
-            decision,
-            SecurityDecision::NeedsApproval(SecurityRisk::Write)
         );
     }
 

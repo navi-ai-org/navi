@@ -112,7 +112,6 @@ pub enum VerifierKind {
     #[default]
     Bash,
     Browser,
-    Plugin,
     Other,
 }
 
@@ -122,7 +121,7 @@ pub enum VerifierKind {
 pub struct VerifierSpec {
     pub id: String,
     pub kind: VerifierKind,
-    /// Human-readable recipe (command, URL, or plugin tool name).
+    /// Human-readable recipe (command, URL, or tool name).
     pub recipe: String,
 }
 

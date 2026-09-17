@@ -413,22 +413,6 @@ class RuntimeEvent {
   dynamic get kindData => kind[kindName];
 }
 
-/// Voice event from `WS /voice/events`.
-class VoiceEvent {
-  final JsonMap raw;
-
-  VoiceEvent(this.raw);
-
-  factory VoiceEvent.fromJson(JsonMap json) => VoiceEvent(json);
-
-  String get kindName {
-    if (raw.containsKey('kind') && raw['kind'] is Map) {
-      return (raw['kind'] as Map).keys.firstOrNull?.toString() ?? 'Unknown';
-    }
-    return raw.keys.firstOrNull ?? 'Unknown';
-  }
-}
-
 /// Exception thrown when a NAVI remote operation fails.
 class NaviRemoteException implements Exception {
   final String message;

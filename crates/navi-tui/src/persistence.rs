@@ -226,17 +226,13 @@ pub(crate) fn load_session(app: &mut TuiApp, snapshot: &SessionSnapshot) {
                         Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs));
                 }
                 for part in content_parts.iter() {
-                    if let navi_core::model::ContentPart::Image {
-                        media_type, data, ..
-                    } = part
-                    {
+                    if let navi_core::model::ContentPart::Image { media_type, .. } = part {
                         let index = msg.images.len() + 1;
                         let chat_image = ChatImage {
                             index,
                             media_type: media_type.clone(),
                             width: None,
                             height: None,
-                            data: data.clone(),
                             label: media_type
                                 .strip_prefix("image/")
                                 .unwrap_or(media_type)

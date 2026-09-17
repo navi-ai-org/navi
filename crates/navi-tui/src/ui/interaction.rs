@@ -27,8 +27,6 @@ pub enum HitAction {
     Session(usize),
     Skill(usize),
     Setting(usize),
-    PluginInstallOrUpdate(usize),
-    PluginRefresh,
     /// Open background-task output (chevron / card body).
     BackgroundCommandOpen(usize),
     /// Cancel a running background task (✕ control).
@@ -37,8 +35,6 @@ pub enum HitAction {
     McpTool(usize),
     ToolApprove,
     ToolDeny,
-    PluginApprove,
-    PluginDeny,
     ThemeSelect(usize),
     ThemePicker,
     ChatMessage(usize),
@@ -72,16 +68,6 @@ pub enum HitAction {
     /// construction is registered when image-remove controls are drawn).
     #[allow(dead_code)] // hit-action reserved; remove-chip registration is incremental
     RemoveImage(usize),
-    /// Hover/preview a pending composer image (0-based index into `pending_images`).
-    PreviewPendingImage(usize),
-    /// Hover/preview an image on a sent chat message.
-    PreviewChatImage {
-        message_index: usize,
-        image_index: usize,
-    },
-    /// Full lightbox body: keep the image preview open while the cursor is on it.
-    /// Registered above chat hits so content under the modal does not steal hover.
-    ImageLightboxKeep,
     /// Select a row in the Help cheatsheet modal.
     HelpRow(usize),
     /// About modal link row.
@@ -107,8 +93,6 @@ pub enum ScrollTarget {
     Providers,
     Sessions,
     Skills,
-    Plugins,
-    PluginApproval,
     QuestionOptions,
     BackgroundCommands,
     BackgroundCommandOutput,

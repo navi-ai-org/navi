@@ -21,8 +21,6 @@ mod path_mentions;
 mod persistence;
 mod plan_progress;
 mod plan_review;
-mod plugin_approval;
-mod plugins;
 mod providers;
 mod render;
 mod runtime;

@@ -11,9 +11,8 @@ const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 ///
 /// - Linux: native clipboard tools (`wl-paste` / `xclip`).
 /// - Windows: `CF_DIBV5` then `CF_DIB` via the Win32 clipboard API, converted
-///   to PNG. Windows Terminal does not support inline image protocols
-///   (Kitty/Sixel/iTerm2), but the image is still attached to the message as
-///   base64 for the model, so paste is useful without inline rendering.
+///   to PNG. NAVI does not render images inline in the terminal; the image is
+///   attached to the message as base64 for the model, so paste stays useful.
 pub fn try_read_clipboard_image() -> Option<PendingImage> {
     #[cfg(target_os = "linux")]
     {
@@ -222,7 +221,7 @@ fn try_clipboard_command(program: &str, args: &[&str], media_type: &str) -> Opti
 
 fn pending_image(media_type: &str, bytes: &[u8]) -> PendingImage {
     let data = BASE64.encode(bytes);
-    let (width, height) = crate::view::terminal_graphics::peek_image_dimensions(&data)
+    let (width, height) = image_dimensions(&data)
         .map(|(w, h)| (Some(w), Some(h)))
         .unwrap_or((None, None));
     PendingImage {
@@ -231,6 +230,18 @@ fn pending_image(media_type: &str, bytes: &[u8]) -> PendingImage {
         width,
         height,
     }
+}
+
+/// Decode pixel dimensions from base64 image data (attachment metadata).
+///
+/// Unsupported formats (e.g. SVG) return `None`; the attachment is still valid.
+fn image_dimensions(data_b64: &str) -> Option<(u32, u32)> {
+    let bytes = BASE64.decode(data_b64.as_bytes()).ok()?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let img = reader.decode().ok()?;
+    Some((img.width(), img.height()))
 }
 
 // ─── Windows clipboard image (CF_DIB / CF_DIBV5 → PNG) ──────────────────────
@@ -340,4 +351,31 @@ fn dib_to_png(dib: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
     Some(png)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine as _;
+
+    #[test]
+    fn image_dimensions_reads_png() {
+        use image::{ImageBuffer, ImageEncoder, Rgb};
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(12, 8, Rgb([10, 20, 30]));
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(img.as_raw(), 12, 8, image::ExtendedColorType::Rgb8)
+            .expect("encode png");
+        let b64 = BASE64.encode(&png);
+        assert_eq!(image_dimensions(&b64), Some((12, 8)));
+    }
+
+    #[test]
+    fn image_dimensions_rejects_garbage_and_unsupported_payloads() {
+        assert_eq!(image_dimensions("not-valid-base64!!!"), None);
+        // Valid base64, but not a decodable image (SVG attachment case).
+        let svg = BASE64.encode(b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+        assert_eq!(image_dimensions(&svg), None);
+        assert_eq!(image_dimensions(""), None);
+    }
 }

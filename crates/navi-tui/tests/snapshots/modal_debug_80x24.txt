@@ -8,7 +8,7 @@
     │ Model:    gpt-5.5 via OpenAI                                         │
     │ API key:  Mock                                                       │
     │ State:    idle                                                       │
-    │ Terminal: Kitty progressive enhancement · free-motion off            │
+    │ Terminal: Kitty progressive enhancement                              │
     │                                                                      │
     │ Recent diagnostics                                                   │
     │ none                                                                 │

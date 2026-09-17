@@ -26,7 +26,6 @@ Security-sensitive areas include:
 - provider credentials and credential storage
 - tool execution, command approval, and blocked commands
 - filesystem path restrictions and `.git` protection
-- plugin loading and native library trust boundaries
 - MCP server configuration and tool registration
 - session persistence and secret redaction
 - provider request/response logging

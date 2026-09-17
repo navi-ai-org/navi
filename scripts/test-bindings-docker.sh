@@ -10,13 +10,6 @@ export NAVI_NO_REGISTRY_UPDATE=1
 export RUST_BACKTRACE=1
 export CARGO_INCREMENTAL=0
 
-# navi-napi defaults to voice-onnx (downloads ORT libs). Those prebuilts need a
-# newer glibc than Debian bookworm, so Docker / portable CI disables the feature.
-NAPI_FEATURES_ARGS=()
-if [[ "${NAVI_NAPI_NO_ONNX:-0}" == "1" ]]; then
-  NAPI_FEATURES_ARGS=(--no-default-features)
-fi
-
 run_tests() {
   echo "== cargo test navi-sdk engine_api =="
   cargo test -p navi-sdk --lib engine_api -- --test-threads=2
@@ -24,11 +17,11 @@ run_tests() {
   echo "== cargo test navi-dart (serial) =="
   cargo test -p navi-dart -- --test-threads=1
 
-  echo "== cargo test navi-napi ${NAPI_FEATURES_ARGS[*]:-} =="
-  cargo test -p navi-napi "${NAPI_FEATURES_ARGS[@]}" -- --test-threads=2
+  echo "== cargo test navi-napi =="
+  cargo test -p navi-napi -- --test-threads=2
 
-  echo "== build navi-napi cdylib ${NAPI_FEATURES_ARGS[*]:-} =="
-  cargo build -p navi-napi "${NAPI_FEATURES_ARGS[@]}"
+  echo "== build navi-napi cdylib =="
+  cargo build -p navi-napi
 
   if command -v node >/dev/null 2>&1; then
     echo "== node binding tests =="
@@ -62,13 +55,11 @@ if [[ "${DOCKER:-1}" == "1" ]]; then
     -e CARGO_HOME=/usr/local/cargo \
     -e PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     -e NAVI_NO_REGISTRY_UPDATE=1 \
-    -e NAVI_NAPI_NO_ONNX=1 \
     -w /work \
     rust:bookworm \
     bash -lc '
       set -euo pipefail
       export PATH="/usr/local/cargo/bin:${PATH:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}"
-      export NAVI_NAPI_NO_ONNX=1
       apt-get update -qq
       DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
         pkg-config libssl-dev ca-certificates curl build-essential python3 >/dev/null

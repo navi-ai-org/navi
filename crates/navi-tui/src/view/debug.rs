@@ -75,13 +75,7 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &TuiApp, area: Rect) {
         ]),
         Line::from(vec![
             Span::styled("Terminal: ", Style::default().fg(muted())),
-            Span::styled(
-                format!(
-                    "Kitty progressive enhancement · free-motion {}",
-                    if app.mouse_free_motion { "on" } else { "off" }
-                ),
-                Style::default().fg(text()),
-            ),
+            Span::styled("Kitty progressive enhancement", Style::default().fg(text())),
         ]),
         Line::from(""),
         Line::from(Span::styled(

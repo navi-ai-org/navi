@@ -8,7 +8,6 @@
 //! dynamic PanelManager.
 
 use std::any::Any;
-use std::sync::Mutex;
 
 use copland::keymap::KeyOutcome;
 use copland::panel::{Panel, PanelContext, PanelSize};
@@ -38,7 +37,6 @@ pub fn register_modal_panels(app: &mut TuiApp) {
     use view::help;
     use view::modals;
     use view::model_picker;
-    use view::plugins;
     use view::provider_settings;
     use view::sessions;
     use view::skills;
@@ -157,22 +155,6 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         72,
         20,
     )));
-    // Plugins
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "plugins",
-        Mode::Plugins,
-        plugins::render,
-        76,
-        22,
-    )));
-    // Plugin approval
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "plugin-approval",
-        Mode::PluginApproval,
-        modals::render_plugin_approval,
-        84,
-        24,
-    )));
     // Question
     pm.add_overlay(Box::new(ModalPanel::new(
         "question",
@@ -278,14 +260,6 @@ pub fn register_modal_panels(app: &mut TuiApp) {
         62,
         9,
     )));
-    // Confirm MCP config merge after plugin install
-    pm.add_overlay(Box::new(ModalPanel::new(
-        "confirm-mcp-merge",
-        Mode::ConfirmMcpMerge,
-        modals::render_confirm_mcp_merge,
-        68,
-        10,
-    )));
     // Confirm / review plan (needs &mut for mouse hits)
     pm.add_overlay(Box::new(ModalPanelMut::new(
         "confirm-plan",
@@ -330,7 +304,7 @@ pub fn render_regions(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     app.panel_manager.render_regions(frame, &ctx);
 }
 
-/// Render all overlay panels (modals, plugin panels) via the PanelManager.
+/// Render all overlay panels (modals) via the PanelManager.
 pub fn render_overlays(frame: &mut Frame, app: &mut TuiApp, area: Rect) {
     let ctx = NaviPanelContext::new(app, area);
     app.panel_manager.render_overlays(frame, &ctx);
@@ -555,88 +529,5 @@ impl Panel for ModalPanelMut {
 
     fn z_order(&self) -> i16 {
         self.z
-    }
-}
-
-/// Adapter that wraps a plugin's `TuiComponent` as a copland `Panel`.
-///
-/// This is the bridge between the plugin API's `TuiComponent` trait and
-/// copland's `Panel` trait, allowing plugin-registered components to be
-/// rendered by the `PanelManager`.
-pub struct PluginPanelAdapter {
-    id: String,
-    inner: Mutex<Box<dyn navi_plugin_api::TuiComponent>>,
-}
-
-impl PluginPanelAdapter {
-    pub fn new(component: Box<dyn navi_plugin_api::TuiComponent>) -> Self {
-        let id = component.id().to_string();
-        Self {
-            id,
-            inner: Mutex::new(component),
-        }
-    }
-}
-
-impl Panel for PluginPanelAdapter {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &dyn PanelContext) {
-        // Recover from poison: single-threaded TUI never contends this mutex.
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .render(frame, area, ctx);
-    }
-
-    fn handle_key(&self, key: &KeyEvent, ctx: &dyn PanelContext) -> KeyOutcome {
-        // Use interior mutability: Panel::handle_key takes &self, but
-        // TuiComponent::handle_key takes &mut self. The Mutex lets us
-        // get &mut access. This is safe because the TUI event loop is
-        // single-threaded — the mutex is never contended.
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        inner.handle_key(key, ctx)
-    }
-
-    fn preferred_size(&self) -> PanelSize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .preferred_size()
-    }
-
-    fn is_visible(&self) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .is_visible()
-    }
-
-    fn z_order(&self) -> i16 {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .z_order()
-    }
-}
-
-/// Load TUI component panels from native plugins and register them
-/// with the TUI's `PanelManager`.
-///
-/// This should be called after the session is started. It calls
-/// `NaviEngine::take_tui_panels` to get plugin-registered components
-/// and wraps them in `PluginPanelAdapter` for the `PanelManager`.
-pub fn load_plugin_panels(app: &mut TuiApp) {
-    if app.session_id.as_str().is_empty() {
-        return;
-    }
-    let engine = app.engine();
-    if let Ok(panels) = engine.take_tui_panels(app.session_id.as_str()) {
-        for component in panels {
-            app.panel_manager
-                .add_overlay(Box::new(PluginPanelAdapter::new(component)));
-        }
     }
 }

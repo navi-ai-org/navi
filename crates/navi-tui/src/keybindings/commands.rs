@@ -27,16 +27,6 @@ pub(crate) fn open_command_palette(app: &mut TuiApp) {
     app.command_hub = None;
     app.selected_command = 0;
     app.command_scroll = 0;
-    refresh_extension_palette(app);
-}
-
-/// Reload palette entries from installed package `tui.json` files.
-pub(crate) fn refresh_extension_palette(app: &mut TuiApp) {
-    app.extension_palette = navi_sdk::list_installed_tui_extensions(&app.loaded_config.data_dir)
-        .unwrap_or_default()
-        .into_iter()
-        .flat_map(|ext| ext.spec.commands)
-        .collect();
 }
 
 pub(crate) fn handle_command_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -103,41 +93,7 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         return false;
     };
 
-    if let CommandRow::Extension { index } = row {
-        super::close_all_modals(app);
-        if let Some(cmd) = app.extension_palette.get(index).cloned() {
-            // Resolve optional panel body from full tui.json specs.
-            let body = navi_sdk::list_installed_tui_extensions(&app.loaded_config.data_dir)
-                .ok()
-                .and_then(|exts| {
-                    for ext in exts {
-                        if let Some(panel) = ext.spec.panels.first()
-                            && ext.spec.commands.iter().any(|c| c.id == cmd.id)
-                        {
-                            return Some(panel.body.clone());
-                        }
-                    }
-                    None
-                })
-                .filter(|s| !s.is_empty());
-            let msg = match body {
-                Some(b) => format!("**{}**\n\n{b}", cmd.title),
-                None if !cmd.description.is_empty() => {
-                    format!("**{}**\n\n{}", cmd.title, cmd.description)
-                }
-                None => format!("Extension command `{}`", cmd.id),
-            };
-            app.messages
-                .push(ChatMessage::new(ChatRole::Assistant, msg));
-            show_notification(app, "Extension", format!("Ran {}", cmd.title));
-        }
-        return false;
-    }
-
-    let CommandRow::Item(command) = row else {
-        super::close_all_modals(app);
-        return false;
-    };
+    let CommandRow::Item(command) = row;
 
     match command.action {
         CommandAction::OpenHub(hub) => {
@@ -224,9 +180,6 @@ pub(crate) fn run_selected_command(app: &mut TuiApp) -> bool {
         }
         CommandAction::Skills => {
             super::open_skills_picker(app);
-        }
-        CommandAction::Plugins => {
-            super::open_plugins_picker(app);
         }
         CommandAction::McpServers => {
             crate::mcp_status::open_mcp_modal(app);

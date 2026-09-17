@@ -111,7 +111,7 @@ Bodies accept both `snake_case` and `camelCase` field names where aliases are do
 |--------|------|-------------|
 | GET | `/memory/status` | Memory system status |
 | GET | `/memory/doctor` | Diagnostics |
-| POST | `/memory/init` | Init DB (+ optional embeddings) |
+| POST | `/memory/init` | Init DB (body optional) |
 | GET | `/memory` | List memories (`?status=`) |
 | POST | `/memory` | Write memory |
 | GET | `/memory/count` | Active count |
@@ -130,31 +130,10 @@ Bodies accept both `snake_case` and `camelCase` field names where aliases are do
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/voice/status` | Voice config / install status |
-| GET | `/voice/doctor` | Mic + model diagnostics |
+| GET | `/voice/status` | Voice config / transcription status |
+| GET | `/voice/doctor` | Provider + credential diagnostics |
 | GET | `/voice/providers` | Transcription providers |
-| GET | `/voice/installed` | Engine installed? (`?engine=`) |
-| POST | `/voice/init` | Download engine package |
-| POST | `/voice/transcribe` | Transcribe WAV file |
-| POST | `/voice/stream/start` | Start PCM stream |
-| POST | `/voice/stream/pcm` | Push 16 kHz mono f32 samples |
-| POST | `/voice/stream/end` | End stream → final text |
-| POST | `/voice/stream/cancel` | Cancel stream |
-| WS | `/voice/events?secret=` | Stream `VoiceEvent` JSON |
-
-### Plugins (`routes/plugins.rs`)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/plugins` | List installed |
-| GET | `/plugins/search` | Marketplace search (`?q=`) |
-| GET | `/plugins/:id` | Plugin info |
-| POST | `/plugins/install/path` | Install from path (`confirm: true`) |
-| POST | `/plugins/install/marketplace` | Install from marketplace |
-| POST | `/plugins/update/path` | Update from path |
-| POST | `/plugins/update/marketplace` | Update from marketplace |
-| DELETE | `/plugins/:id` | Remove plugin |
-| POST | `/plugins/reload-wasm` | Reload WASM plugins |
+| POST | `/voice/transcribe` | Transcribe WAV file (remote provider) |
 
 ### Credentials / OAuth (`routes/auth.rs`)
 
@@ -203,7 +182,6 @@ Bodies accept both `snake_case` and `camelCase` field names where aliases are do
 | Path | Description |
 |------|-------------|
 | `/sessions/:id/events?secret=...` | Stream session `RuntimeEvent`s as JSON |
-| `/voice/events?secret=...` | Stream engine-global `VoiceEvent`s as JSON |
 
 WebSocket auth uses `?secret=` query parameter (browsers cannot set custom headers).
 
@@ -220,8 +198,7 @@ src/
   routes/
     auth.rs          # credentials + OAuth
     memory.rs        # auto-memory CRUD + maintenance
-    voice.rs         # voice / dictation
-    plugins.rs       # plugin lifecycle
+    voice.rs         # remote transcription
     session_ops.rs   # plan, sudo, permission, rewind, goals, bg
     skills_mcp.rs    # skills CRUD, MCP config, model routing
     registry_models.rs

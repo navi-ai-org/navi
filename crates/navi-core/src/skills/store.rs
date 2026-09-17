@@ -14,6 +14,7 @@ use super::{
     ParsedSkillFile, SkillManifest, SkillSource, SkillWriteRequest, SkillWriteResult,
     SkillWriteScope, parse_skill_md, resolve_skill_id, slugify_skill_id,
 };
+use crate::db::{Db, OpenOptions, Row, RowResult};
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -284,53 +285,39 @@ impl SkillStore {
         if !sqlite_path.is_file() {
             return Ok(());
         }
-        let conn = rusqlite::Connection::open(&sqlite_path)
+        let db = Db::open(&sqlite_path)
             .with_context(|| format!("open legacy {}", sqlite_path.display()))?;
-        let mut stmt = match conn.prepare(
-            "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
+        let conn = db.connect_with(&OpenOptions::none())?;
+
+        // Databases written before the `harness` column existed don't have it,
+        // so the query without `harness` is the fallback.
+        let with_harness = "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
                     instructions, scope,
                     COALESCE(harness, 0)
-             FROM skills",
-        ) {
-            Ok(s) => s,
-            Err(_) => conn.prepare(
-                "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
-                        instructions, scope, 0
-                 FROM skills",
-            )?,
+             FROM skills";
+        let without_harness = "SELECT id, name, description, version, author, tags, requires, allow_tools, deny_tools,
+                    instructions, scope, 0
+             FROM skills";
+        let rows = match conn.query_rows(with_harness, (), legacy_skill_row) {
+            Ok(rows) => rows,
+            Err(_) => conn.query_rows(without_harness, (), legacy_skill_row)?,
         };
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, String>(5).unwrap_or_else(|_| "[]".into()),
-                row.get::<_, String>(6).unwrap_or_else(|_| "[]".into()),
-                row.get::<_, String>(7).unwrap_or_else(|_| "[]".into()),
-                row.get::<_, String>(8).unwrap_or_else(|_| "[]".into()),
-                row.get::<_, String>(9)?,
-                row.get::<_, String>(10).unwrap_or_else(|_| "user".into()),
-                row.get::<_, i32>(11).unwrap_or(0),
-            ))
-        })?;
 
-        for row in rows {
-            let (
-                id,
-                name,
-                description,
-                version,
-                author,
-                tags_raw,
-                requires_raw,
-                allow_raw,
-                deny_raw,
-                instructions,
-                _scope_raw,
-                harness,
-            ) = row?;
+        for (
+            id,
+            name,
+            description,
+            version,
+            author,
+            tags_raw,
+            requires_raw,
+            allow_raw,
+            deny_raw,
+            instructions,
+            _scope_raw,
+            harness,
+        ) in rows
+        {
             let path = self.skill_file_path(&id, None, SkillWriteScope::User)?;
             if path.is_file() {
                 continue;
@@ -359,6 +346,39 @@ impl SkillStore {
         }
         Ok(())
     }
+}
+
+/// Row shape of the legacy `skills.sqlite` table.
+type LegacySkillRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i32,
+);
+
+fn legacy_skill_row(row: &Row) -> RowResult<LegacySkillRow> {
+    Ok((
+        row.get::<String>(0)?,
+        row.get::<String>(1)?,
+        row.get::<Option<String>>(2)?,
+        row.get::<Option<String>>(3)?,
+        row.get::<Option<String>>(4)?,
+        row.get::<String>(5).unwrap_or_else(|_| "[]".into()),
+        row.get::<String>(6).unwrap_or_else(|_| "[]".into()),
+        row.get::<String>(7).unwrap_or_else(|_| "[]".into()),
+        row.get::<String>(8).unwrap_or_else(|_| "[]".into()),
+        row.get::<String>(9)?,
+        row.get::<String>(10).unwrap_or_else(|_| "user".into()),
+        row.get::<i32>(11).unwrap_or(0),
+    ))
 }
 
 fn split_pool_skill_ref(id: &str, pool: Option<&str>) -> (Option<String>, String) {

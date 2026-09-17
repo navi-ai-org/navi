@@ -3,12 +3,9 @@ use navi_core::{
     CredentialStore, LoadedConfig, ProviderConfig, ProviderKind, find_transcription_provider,
     resolve_provider_api_key, resolve_transcription_model, transcription_provider_catalog,
 };
-#[cfg(feature = "voice-onnx")]
-use navi_voice::NemotronOnnxEngine;
 use navi_voice::{
-    AsrEngineId, DoctorInput, RemoteTranscriptionConfig, RemoteTranscriptionKind,
-    VoiceInstallOptions, download_engine, engine_installed, resolve_model_dir, run_doctor,
-    transcribe_file_remote, voice_root,
+    RecorderKind, RemoteTranscriptionConfig, RemoteTranscriptionKind, discover_recorder,
+    list_available_recorders, transcribe_file_remote,
 };
 
 pub async fn handle_voice_command(
@@ -16,25 +13,16 @@ pub async fn handle_voice_command(
     loaded_config: &LoadedConfig,
 ) -> Result<()> {
     let voice = &loaded_config.config.voice;
-    let options = VoiceInstallOptions {
-        model_dir: voice.model_dir.clone(),
-        hf_repo_nemotron: voice.hf_repo_nemotron.clone(),
-    };
     let data_dir = &loaded_config.data_dir;
 
     match action {
         crate::VoiceAction::Status => {
             println!("Voice System Status:");
             println!("  Data dir: {}", data_dir.display());
-            println!("  Voice root: {}", voice_root(data_dir).display());
             println!("  Enabled: {}", voice.enabled);
-            let provider = if voice.provider.trim().is_empty() {
-                "local"
-            } else {
-                voice.provider.as_str()
-            };
-            println!("  Provider: {provider}");
             if voice.uses_remote_transcription() {
+                let provider = voice.provider.trim();
+                println!("  Provider: {provider}");
                 if let Some(reg) = find_transcription_provider(provider) {
                     let model = resolve_transcription_model(&reg, &voice.model);
                     println!("  Remote model: {model}");
@@ -60,30 +48,24 @@ pub async fn handle_voice_command(
                     println!("  Remote model: {} (unknown provider)", voice.model);
                 }
             } else {
-                println!("  Engine (local): {}", voice.engine);
-                if !voice.model.is_empty() {
-                    println!("  Model (unused for local): {}", voice.model);
-                }
+                println!("  Provider: (none)");
+                println!("  Transcription: remote only — set [voice] provider (openai | groq)");
             }
             println!("  Language: {}", voice.language);
             println!("  Capture: {}", voice.capture);
             println!("  Recorder: {}", voice.recorder);
-            println!("  HF repo (nemotron): {}", voice.hf_repo_nemotron);
 
             println!();
-            println!("Local engines:");
-            for engine in [AsrEngineId::NemotronStreaming, AsrEngineId::DistilWhisper] {
-                let installed = engine_installed(data_dir, &options, engine);
-                println!(
-                    "  {}: {}",
-                    engine.as_str(),
-                    if installed {
-                        "installed"
-                    } else {
-                        "not installed"
-                    }
-                );
+            println!("Recorders on PATH:");
+            let available = list_available_recorders();
+            if available.is_empty() {
+                println!("  (none found — install pw-record, parec, or arecord)");
+            } else {
+                for (kind, path) in &available {
+                    println!("  {} → {}", kind.display_name(), path.display());
+                }
             }
+
             println!();
             println!("Remote transcription providers (registry):");
             for p in transcription_provider_catalog() {
@@ -116,85 +98,77 @@ pub async fn handle_voice_command(
                 }
             }
         }
-        crate::VoiceAction::Init { engine, force } => {
-            let engine = AsrEngineId::parse(&engine).with_context(|| {
-                format!("unknown engine '{engine}'. Use: nemotron_streaming | distil_whisper")
-            })?;
-            println!("Voice init — {}", engine.display_name());
-            println!("  Destination under: {}", voice_root(data_dir).display());
-            if force {
-                println!("  Force re-download: yes");
-            }
-
-            let last_file = std::sync::Mutex::new(String::new());
-            let progress = Box::new(move |downloaded: u64, total: Option<u64>, file: &str| {
-                let mut last = last_file.lock().unwrap_or_else(|e| e.into_inner());
-                if *last != file {
-                    *last = file.to_string();
-                    println!("  [..] {file}");
-                }
-                if let Some(t) = total
-                    && t > 0
-                    && downloaded == t
-                {
-                    println!("       done {:.1} MB", downloaded as f64 / 1_048_576.0);
-                }
-            });
-
-            let dir = download_engine(data_dir, &options, engine, force, Some(progress))
-                .await
-                .with_context(|| format!("download engine {}", engine.as_str()))?;
-            println!("  [OK] Engine ready at {}", dir.display());
-            println!();
-            println!("Next: set `[voice] enabled = true` in ~/.config/navi/config.toml");
-            println!("      For remote dictation, also set:");
-            println!("        provider = \"openai\"   # or groq");
-            println!("        model = \"whisper-1\"");
-        }
         crate::VoiceAction::Doctor => {
+            println!("Voice doctor");
+            let mut ok = true;
+
             if voice.uses_remote_transcription() {
-                let provider = voice.provider.as_str();
-                println!("Voice doctor (remote provider: {provider})");
-                let Some(reg) = find_transcription_provider(provider) else {
-                    bail!("unknown transcription provider '{provider}'");
-                };
-                println!("  [OK] Provider found in registry: {}", reg.label);
-                println!("  kind: {}", reg.kind);
-                println!("  models: {}", reg.models.len());
-                let store = CredentialStore::new(data_dir.clone());
-                let synthetic = ProviderConfig {
-                    id: reg.id.clone(),
-                    label: reg.label.clone(),
-                    description: reg.description.clone(),
-                    kind: ProviderKind::OpenAiChatCompletions,
-                    api_key_env: reg.api_key_env.clone(),
-                    base_url: Some(reg.base_url.clone()),
-                    ..Default::default()
-                };
-                if resolve_provider_api_key(&store, &synthetic, &reg.id).is_some() {
-                    println!("  [OK] API key resolved (${})", reg.api_key_env);
-                } else {
-                    println!("  [FAIL] Missing API key — set ${}", reg.api_key_env);
-                    bail!("voice doctor found issues");
+                let provider = voice.provider.trim();
+                println!("  Remote provider: {provider}");
+                match find_transcription_provider(provider) {
+                    Some(reg) => {
+                        println!("  [OK] Provider found in registry: {}", reg.label);
+                        println!("  kind: {}", reg.kind);
+                        println!("  models: {}", reg.models.len());
+                        let store = CredentialStore::new(data_dir.clone());
+                        let synthetic = ProviderConfig {
+                            id: reg.id.clone(),
+                            label: reg.label.clone(),
+                            description: reg.description.clone(),
+                            kind: ProviderKind::OpenAiChatCompletions,
+                            api_key_env: reg.api_key_env.clone(),
+                            base_url: Some(reg.base_url.clone()),
+                            ..Default::default()
+                        };
+                        if resolve_provider_api_key(&store, &synthetic, &reg.id).is_some() {
+                            println!("  [OK] API key resolved (${})", reg.api_key_env);
+                        } else {
+                            println!("  [FAIL] Missing API key — set ${}", reg.api_key_env);
+                            ok = false;
+                        }
+                    }
+                    None => {
+                        println!("  [FAIL] Unknown transcription provider '{provider}'");
+                        ok = false;
+                    }
                 }
-                return Ok(());
+            } else {
+                println!(
+                    "  [FAIL] No remote provider configured — set [voice] provider (openai | groq)"
+                );
+                ok = false;
             }
-            let engine = AsrEngineId::parse(&voice.engine).unwrap_or_default();
-            let report = run_doctor(
-                data_dir,
-                &DoctorInput {
-                    enabled: voice.enabled,
-                    engine,
-                    language: voice.language.clone(),
-                    capture: voice.capture.clone(),
-                    recorder: voice.recorder.clone(),
-                    options,
-                },
-            )?;
-            for line in &report.lines {
-                println!("{line}");
+
+            // Audio capture is always local, even when transcription is remote.
+            let available = list_available_recorders();
+            if available.is_empty() {
+                println!("  [FAIL] Recorder: none found on PATH");
+                for kind in RecorderKind::all() {
+                    println!("    - missing {} — {}", kind.binary(), kind.install_hint());
+                }
+                ok = false;
+            } else {
+                for (kind, path) in &available {
+                    println!(
+                        "  [OK] Recorder {} → {}",
+                        kind.display_name(),
+                        path.display()
+                    );
+                }
+                match discover_recorder(&voice.recorder) {
+                    Some((kind, path)) => println!(
+                        "  [OK] Selected recorder: {} ({})",
+                        kind.display_name(),
+                        path.display()
+                    ),
+                    None => {
+                        println!("  [FAIL] Selected recorder '{}' not found", voice.recorder);
+                        ok = false;
+                    }
+                }
             }
-            if !report.ok {
+
+            if !ok {
                 bail!("voice doctor found issues");
             }
         }
@@ -205,99 +179,64 @@ pub async fn handle_voice_command(
                 language.as_str()
             };
 
-            if voice.uses_remote_transcription() {
-                let provider_id = voice.provider.trim();
-                let reg = find_transcription_provider(provider_id)
-                    .with_context(|| format!("unknown transcription provider '{provider_id}'"))?;
-                let kind = RemoteTranscriptionKind::parse(&reg.kind)
-                    .with_context(|| format!("unsupported kind '{}'", reg.kind))?;
-                let model = resolve_transcription_model(&reg, &voice.model);
-                let store = CredentialStore::new(data_dir.clone());
-                let synthetic = ProviderConfig {
-                    id: reg.id.clone(),
-                    label: reg.label.clone(),
-                    description: reg.description.clone(),
-                    kind: ProviderKind::OpenAiChatCompletions,
-                    api_key_env: reg.api_key_env.clone(),
-                    base_url: Some(reg.base_url.clone()),
-                    ..Default::default()
-                };
-                let api_key =
-                    resolve_provider_api_key(&store, &synthetic, &reg.id).with_context(|| {
-                        format!("missing API key for '{}'. Set ${}", reg.id, reg.api_key_env)
-                    })?;
-                let language = if lang.eq_ignore_ascii_case("auto") || lang.is_empty() {
-                    None
-                } else {
-                    Some(lang.to_string())
-                };
-                let cfg = RemoteTranscriptionConfig {
-                    provider_id: reg.id.clone(),
-                    kind,
-                    base_url: reg.base_url.clone(),
-                    transcription_path: reg.resolved_path().to_string(),
-                    api_key,
-                    model: model.clone(),
-                    language,
-                };
-                println!("Remote transcription — {}", reg.label);
-                println!("  Provider: {}", reg.id);
-                println!("  Model: {model}");
-                println!("  Language: {lang}");
-                println!("  Audio: {path}");
-                let started = std::time::Instant::now();
-                let result = transcribe_file_remote(&cfg, path.as_ref())
-                    .await
-                    .with_context(|| format!("transcribe {path}"))?;
-                let elapsed = started.elapsed();
-                println!();
-                println!("{}", result.text);
-                println!();
-                if let Some(det) = result.detected_language {
-                    println!("(detected_language={det}, {:.2}s)", elapsed.as_secs_f64());
-                } else {
-                    println!("({:.2}s)", elapsed.as_secs_f64());
-                }
-                return Ok(());
+            if !voice.uses_remote_transcription() {
+                bail!(
+                    "local voice transcription was removed; set [voice] provider to a remote \
+                     registry provider (openai | groq) — see `navi voice providers`."
+                );
             }
 
-            #[cfg(not(feature = "voice-onnx"))]
-            {
-                let _ = (path, language, engine_installed, resolve_model_dir, options);
-                bail!(
-                    "local voice transcription requires the navi-cli `voice-onnx` feature \
-                     (ONNX Runtime), or set [voice] provider to a remote registry provider \
-                     (openai | groq)."
-                );
-            }
-            #[cfg(feature = "voice-onnx")]
-            {
-                let engine_id = AsrEngineId::NemotronStreaming;
-                if !engine_installed(data_dir, &options, engine_id) {
-                    bail!(
-                        "Nemotron streaming engine not installed. Run: navi voice init --engine nemotron_streaming"
-                    );
-                }
-                let model_dir = resolve_model_dir(data_dir, &options, engine_id);
-                println!("Loading {}", engine_id.display_name());
-                println!("  Model: {}", model_dir.display());
-                println!("  Language: {lang}");
-                println!("  Audio: {path}");
-                let mut engine = NemotronOnnxEngine::load(&model_dir, lang)
-                    .context("load Nemotron ONNX engine")?;
-                let started = std::time::Instant::now();
-                let result = engine
-                    .transcribe_wav(&path)
-                    .with_context(|| format!("transcribe {path}"))?;
-                let elapsed = started.elapsed();
-                println!();
-                println!("{}", result.text);
-                println!();
-                println!(
-                    "({} tokens, {:.2}s)",
-                    result.token_ids.len(),
-                    elapsed.as_secs_f64()
-                );
+            let provider_id = voice.provider.trim();
+            let reg = find_transcription_provider(provider_id)
+                .with_context(|| format!("unknown transcription provider '{provider_id}'"))?;
+            let kind = RemoteTranscriptionKind::parse(&reg.kind)
+                .with_context(|| format!("unsupported kind '{}'", reg.kind))?;
+            let model = resolve_transcription_model(&reg, &voice.model);
+            let store = CredentialStore::new(data_dir.clone());
+            let synthetic = ProviderConfig {
+                id: reg.id.clone(),
+                label: reg.label.clone(),
+                description: reg.description.clone(),
+                kind: ProviderKind::OpenAiChatCompletions,
+                api_key_env: reg.api_key_env.clone(),
+                base_url: Some(reg.base_url.clone()),
+                ..Default::default()
+            };
+            let api_key =
+                resolve_provider_api_key(&store, &synthetic, &reg.id).with_context(|| {
+                    format!("missing API key for '{}'. Set ${}", reg.id, reg.api_key_env)
+                })?;
+            let language = if lang.eq_ignore_ascii_case("auto") || lang.is_empty() {
+                None
+            } else {
+                Some(lang.to_string())
+            };
+            let cfg = RemoteTranscriptionConfig {
+                provider_id: reg.id.clone(),
+                kind,
+                base_url: reg.base_url.clone(),
+                transcription_path: reg.resolved_path().to_string(),
+                api_key,
+                model: model.clone(),
+                language,
+            };
+            println!("Remote transcription — {}", reg.label);
+            println!("  Provider: {}", reg.id);
+            println!("  Model: {model}");
+            println!("  Language: {lang}");
+            println!("  Audio: {path}");
+            let started = std::time::Instant::now();
+            let result = transcribe_file_remote(&cfg, path.as_ref())
+                .await
+                .with_context(|| format!("transcribe {path}"))?;
+            let elapsed = started.elapsed();
+            println!();
+            println!("{}", result.text);
+            println!();
+            if let Some(det) = result.detected_language {
+                println!("(detected_language={det}, {:.2}s)", elapsed.as_secs_f64());
+            } else {
+                println!("({:.2}s)", elapsed.as_secs_f64());
             }
         }
     }

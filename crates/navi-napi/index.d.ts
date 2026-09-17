@@ -123,7 +123,7 @@ export type SecurityProfile = 'code_agent' | 'host_app';
 
 export class NaviNapiEngineBuilder {
   constructor(projectDir: string);
-  /** Durable app data dir (sessions, credentials, plugins, registry). */
+  /** Durable app data dir (sessions, credentials, registry). */
   dataDir(path: string): void;
   /**
    * Inject config: bare `NaviConfig` JSON, or
@@ -314,11 +314,6 @@ export class NaviNapiEngine {
   addContextPacket(sessionId: string, packet: ContextPacket): Promise<void>;
   /** Available models with per-model `effortOptions` / `effortBinary`. */
   listModels(): ModelInfo[];
-  listTuiComponents(sessionId: string): string[];
-  /** Installed packages that ship a host-mediated `tui.json` extension. */
-  listTuiExtensions(): JsonValue;
-  /** Flattened palette commands from all installed `tui.json` specs. */
-  listTuiExtensionCommands(): JsonValue;
   setModel(sessionId: string, provider: string, model: string): Promise<void>;
   selectModel(providerId: string, model: string, saveTarget?: SaveTarget): ModelSelectionResult;
   setAttachmentModel(modality: string, provider: string, model: string, saveTarget?: SaveTarget): JsonValue;
@@ -426,21 +421,9 @@ export class NaviNapiEngine {
   upsertMcpServer(server: JsonValue, saveTarget?: SaveTarget): JsonValue;
   removeMcpServer(serverId: string, saveTarget?: SaveTarget): JsonValue;
   setMcpConfig(mcp: JsonValue, saveTarget?: SaveTarget): JsonValue;
-  // Registry & plugins
+  // Registry
   syncRegistry(force?: boolean): Promise<boolean>;
   listRegistry(): JsonValue;
-  pluginList(): JsonValue;
-  pluginInfo(pluginId: string): JsonValue;
-  pluginSearch(query?: string): Promise<JsonValue>;
-  /** Install from local path; confirm must be true (non-interactive approval). */
-  pluginInstallPath(path: string, confirm: boolean): JsonValue;
-  /** Install with explicit trust (`local-dev`|`community`|`signed`|`core`) and kind (`plugin`|`skill`|`mcp`|`integration`). */
-  pluginInstallPathWithMeta(path: string, confirm: boolean, trust?: string, kind?: string): JsonValue;
-  pluginInstallMarketplace(pluginId: string, confirm: boolean): Promise<JsonValue>;
-  pluginUpdatePath(path: string, force?: boolean, confirm?: boolean): JsonValue;
-  pluginUpdateMarketplace(pluginId: string, force?: boolean, confirm?: boolean): Promise<JsonValue>;
-  pluginRemove(pluginId: string): void;
-  reloadWasmPlugins(): Promise<string[]>;
   // Saved sessions
   listSavedSessions(): Promise<JsonValue>;
   loadSavedSession(sessionId: string): Promise<JsonValue>;
@@ -462,7 +445,7 @@ export class NaviNapiEngine {
   // Auto-memory ops
   memoryStatus(): JsonValue;
   memoryDoctor(): JsonValue;
-  memoryInit(embeddings?: boolean, force?: boolean): Promise<JsonValue>;
+  memoryInit(): Promise<JsonValue>;
   memoryHistorySearch(query: string, sessionId?: string, limit?: number): JsonValue;
   memoryDream(apply?: boolean, sessions?: number, instructions?: string): Promise<JsonValue>;
   memoryDistill(): Promise<void>;
@@ -474,8 +457,6 @@ export class NaviNapiEngine {
   // Session management
   sessionIds(): string[];
   loadedConfig(): EngineConfig;
-  // TUI panels
-  takeTuiPanels(sessionId: string): JsonValue[];
   // Saved sessions (async variants)
   listSavedSessionsAsync(): Promise<JsonValue>;
   loadSavedSessionAsync(sessionId: string): Promise<JsonValue>;

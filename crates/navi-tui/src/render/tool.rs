@@ -3816,7 +3816,7 @@ test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
     #[test]
     fn unknown_tool_full_view_includes_input_and_output_json() {
         let content = tool_full_content(
-            &invocation("plugin__demo__lookup", json!({ "query": "abc" })),
+            &invocation("demo__lookup", json!({ "query": "abc" })),
             &ok_result(json!({
                 "items": [{ "title": "Result" }],
                 "count": 1

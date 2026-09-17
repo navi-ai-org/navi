@@ -4,7 +4,7 @@ NAVI implements conversation compaction and memory layers that manage context wi
 
 All compaction logic lives in `navi-core/src/compact.rs`. Configuration is spread across `HarnessConfig` and `MemoryConfig` in `navi-core/src/config.rs`. The TUI mirrors compaction state via events and displays context usage in the status bar.
 
-> **See also**: [Auto-Memory](auto-memory.md) for the persistent SQLite memory system with semantic search, extractMemories, and auto-dream.
+> **See also**: [Auto-Memory](auto-memory.md) for the persistent SQLite memory system with text search, extractMemories, and auto-dream.
 
 ## Levels
 

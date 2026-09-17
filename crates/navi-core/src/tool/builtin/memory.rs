@@ -9,7 +9,6 @@ use crate::memory::MemoryManager;
 use crate::memory::MemoryStatus;
 use crate::memory::MemoryType;
 use crate::memory::auto_memory::{new_entry, sanitize_id};
-use crate::memory::embedding::{embeddings_available, get_cached_embedder};
 use crate::tool::builtin::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
@@ -160,9 +159,7 @@ impl Tool for HistoryOpsTool {
 /// update, and delete persistent auto-memories.
 ///
 /// All memories are stored in SQLite with structured fields.
-/// Search uses semantic embeddings (Qwen3-Embedding-0.6B via candle)
-/// when the `embeddings` feature is enabled and the model is present,
-/// falling back to text matching (LIKE) otherwise.
+/// Search uses text matching (SQL LIKE) over name, description, and body.
 ///
 /// Memory types:
 /// - `user` — preferences, identity, working style
@@ -197,56 +194,6 @@ impl MemoryTool {
 
     fn open_store(&self) -> Result<AutoMemoryStore> {
         AutoMemoryStore::open(&self.db_path())
-    }
-
-    fn resolve_model_paths(&self) -> (PathBuf, PathBuf) {
-        let config = NaviConfig::load(&self.project_root).unwrap_or_default();
-        let manager = MemoryManager::new(
-            self.project_root.clone(),
-            config.data_dir.clone(),
-            &config.config.memory,
-        );
-
-        let models_dir = match &manager {
-            Ok(m) => m.store.memory_root.join("models"),
-            Err(_) => config.data_dir.join("memory").join("models"),
-        };
-
-        // Use config override if set, otherwise use default path in models dir
-        let model_path = if config.config.memory.embedding_model_path.is_empty() {
-            models_dir.join("qwen3-embedding-0.6b-q8_0.gguf")
-        } else {
-            PathBuf::from(&config.config.memory.embedding_model_path)
-        };
-
-        let tokenizer_path = if config.config.memory.embedding_tokenizer_path.is_empty() {
-            models_dir.join("tokenizer.json")
-        } else {
-            PathBuf::from(&config.config.memory.embedding_tokenizer_path)
-        };
-
-        (model_path, tokenizer_path)
-    }
-
-    fn try_generate_embedding(&self, text: &str) -> Option<Vec<f32>> {
-        if !embeddings_available() {
-            return None;
-        }
-
-        let (model_path, tokenizer_path) = self.resolve_model_paths();
-
-        let embedder = get_cached_embedder(&model_path, &tokenizer_path)?;
-
-        match embedder.embed(text) {
-            Ok(emb) => Some(emb),
-            Err(e) => {
-                tracing::debug!(
-                    "Embedding generation failed: {}, falling back to text search",
-                    e
-                );
-                None
-            }
-        }
     }
 }
 
@@ -324,20 +271,11 @@ impl Tool for MemoryTool {
                 let entry = new_entry(&id, memory_type, name, description, body);
                 store.upsert(&entry)?;
 
-                // Generate and store embedding if available
-                let embed_text = format!("{name}\n{description}\n{body}");
-                let has_embedding = if let Some(emb) = self.try_generate_embedding(&embed_text) {
-                    store.set_embedding(&id, &emb).is_ok()
-                } else {
-                    false
-                };
-
                 json!({
                     "status": "success",
                     "message": format!("Memory '{}' saved", name),
                     "id": id,
                     "type": memory_type.as_str(),
-                    "embedded": has_embedding,
                 })
             }
 
@@ -401,7 +339,7 @@ impl Tool for MemoryTool {
                     .and_then(|v| v.as_i64())
                     .unwrap_or(20) as usize;
 
-                // Try semantic search first (embeddings), fall back to text matching
+                // Text matching over name, description, and body (SQL LIKE).
                 let search_results: Vec<(
                     String,
                     String,
@@ -409,56 +347,20 @@ impl Tool for MemoryTool {
                     crate::memory::MemoryType,
                     f64,
                     String,
-                )> = if let Some(query_emb) = self.try_generate_embedding(query) {
-                    let semantic = store.search_semantic(&query_emb, 0.3, limit)?;
-                    if !semantic.is_empty() {
-                        semantic
-                            .into_iter()
-                            .map(|(m, score)| {
-                                (
-                                    m.id,
-                                    m.name,
-                                    m.description,
-                                    m.memory_type,
-                                    m.confidence,
-                                    format!("semantic:{:.3}", score),
-                                )
-                            })
-                            .collect()
-                    } else {
-                        // Semantic returned nothing — fall back to text
-                        let text_results = store.search_text(query, limit)?;
-                        text_results
-                            .into_iter()
-                            .map(|m| {
-                                (
-                                    m.id,
-                                    m.name,
-                                    m.description,
-                                    m.memory_type,
-                                    m.confidence,
-                                    "text_match".to_string(),
-                                )
-                            })
-                            .collect()
-                    }
-                } else {
-                    // No embeddings available — text search only
-                    let text_results = store.search_text(query, limit)?;
-                    text_results
-                        .into_iter()
-                        .map(|m| {
-                            (
-                                m.id,
-                                m.name,
-                                m.description,
-                                m.memory_type,
-                                m.confidence,
-                                "text_match".to_string(),
-                            )
-                        })
-                        .collect()
-                };
+                )> = store
+                    .search_text(query, limit)?
+                    .into_iter()
+                    .map(|m| {
+                        (
+                            m.id,
+                            m.name,
+                            m.description,
+                            m.memory_type,
+                            m.confidence,
+                            "text_match".to_string(),
+                        )
+                    })
+                    .collect();
 
                 json!({
                     "status": "success",
@@ -490,29 +392,10 @@ impl Tool for MemoryTool {
 
                 store.update(&id, name, description, body)?;
 
-                // Regenerate embedding if body/description/name changed
-                let content_changed = name.is_some() || description.is_some() || body.is_some();
-                let re_embedded = if content_changed {
-                    if let Some(entry) = store.get(&id)? {
-                        let embed_text =
-                            format!("{}\n{}\n{}", entry.name, entry.description, entry.body);
-                        if let Some(emb) = self.try_generate_embedding(&embed_text) {
-                            store.set_embedding(&id, &emb).is_ok()
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
                 json!({
                     "status": "success",
                     "message": format!("Memory '{}' updated", id),
                     "id": id,
-                    "re_embedded": re_embedded,
                 })
             }
 
@@ -1225,7 +1108,7 @@ mod tests {
         assert!(result.is_err(), "missing action should return Err");
     }
 
-    // ── MemoryTool: db_path / resolve_model_paths ─────────────────────────
+    // ── MemoryTool: db_path ───────────────────────────────────────────────
 
     #[test]
     fn memory_tool_db_path_returns_path() {
@@ -1254,29 +1137,5 @@ mod tests {
             !std::ptr::eq(path1.as_path(), path2.as_path()),
             "db_path should return a fresh value, not a cached reference"
         );
-    }
-
-    #[test]
-    fn memory_tool_resolve_model_paths() {
-        let temp = tempfile::tempdir().unwrap();
-        let tool = make_memory_tool(temp.path());
-        let (model, tokenizer) = tool.resolve_model_paths();
-        assert!(
-            model.to_string_lossy().contains(".gguf"),
-            "model path should contain .gguf: {model:?}"
-        );
-        assert!(
-            tokenizer.to_string_lossy().contains("tokenizer.json"),
-            "tokenizer path should contain tokenizer.json: {tokenizer:?}"
-        );
-    }
-
-    #[test]
-    fn memory_tool_try_generate_embedding_without_model() {
-        let temp = tempfile::tempdir().unwrap();
-        let tool = make_memory_tool(temp.path());
-        // Without a real model file, this should return None.
-        let result = tool.try_generate_embedding("test text");
-        assert!(result.is_none(), "embedding without model should be None");
     }
 }

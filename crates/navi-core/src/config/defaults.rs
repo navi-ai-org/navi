@@ -72,7 +72,6 @@ impl Default for SecurityConfig {
             restrict_paths_to_project: false,
             protect_git_metadata: true,
             redact_secrets_in_sessions: true,
-            allow_external_plugins: false,
             blocked_commands: default_blocked_commands(),
             guarded_commands: vec!["git".to_string()],
             deny_paths: Vec::new(),
@@ -111,8 +110,6 @@ impl Default for MemoryConfig {
             injected_context_token_budget: 65000,
             dream_interval_days: 1,
             distill_interval_days: 30,
-            embedding_model_path: String::new(),
-            embedding_tokenizer_path: String::new(),
             history: HistoryConfig::default(),
         }
     }

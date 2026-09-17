@@ -11,11 +11,9 @@ mod host_tool;
 mod mcp_ops;
 mod memory_ops;
 mod notify_ops;
-mod plugins;
 mod profiles;
 mod routing_ops;
 mod tooling;
-mod tui_extensions;
 mod types;
 mod voice;
 
@@ -53,7 +51,6 @@ pub use profiles::{
     NaviPromptProfile, NaviSecurityProfile, NaviToolProfile, ProfilePromptBuilder,
     assistant_system_prompt, filter_tool_names,
 };
-pub use tooling::reload_wasm_plugins_on_executor;
 pub use tooling::{build_provider_for_config, build_provider_for_project_config};
 pub use types::{
     NaviConfigSaveTarget, NaviEffortOption, NaviError, NaviMissingCredentialError, NaviModelInfo,
@@ -128,10 +125,9 @@ pub use navi_core::memory::{
     AutoMemoryStore, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
 };
 
-// Local voice / dictation (navi-voice)
+// Voice / dictation (navi-voice)
 pub use navi_voice::{
-    AsrEngineId, CHUNK_SAMPLES, DoctorReport, SAMPLE_RATE, TranscribeResult, VoiceEvent,
-    VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus,
+    DoctorReport, SAMPLE_RATE, TranscribeResult, VoiceEvent, VoiceRecorderInfo, VoiceStatus,
 };
 
 // Extended memory ops DTOs
@@ -143,17 +139,6 @@ pub use navi_core::{McpConfig, McpServerConfig};
 
 // Voice config updates
 pub use voice::VoiceConfigUpdate;
-
-// Plugin lifecycle DTOs
-pub use plugins::{
-    KindSideEffectOptions, PluginInfo, PluginInstallResult, PluginMarketplaceEntry,
-    apply_kind_side_effects_at, apply_kind_side_effects_with_options, detect_package_kind,
-    merge_mcp_from_package, package_has_mcp_json,
-};
-pub use tui_extensions::{
-    InstalledTuiExtension, TuiExtensionCommand, TuiExtensionPanel, TuiExtensionSpec,
-    list_installed_tui_extensions, load_tui_extension_from_dir, parse_tui_extension_spec,
-};
 
 // OAuth / registry DTOs
 pub use auth_ops::{DeviceOAuthStartedInfo, RegistryProviderSummary};

@@ -3,7 +3,7 @@
 Dart client for the **NAVI gateway** (`navi-server`).
 
 Connects over HTTP/WebSocket (e.g. Tailscale) and covers the full gateway API
-surface: sessions, plan/sudo/permission, memory, voice, plugins, credentials,
+surface: sessions, plan/sudo/permission, memory, voice, credentials,
 skills/MCP/routing, registry.
 
 ## Usage
@@ -66,16 +66,8 @@ engine.dispose();
 `memoryDelete`, `memoryHistorySearch`, `memoryDream`, `memoryDistill`,
 `memoryCheckpoint`, `memoryRebuildPreview`
 
-### Voice
-`voiceStatus`, `voiceDoctor`, `voiceProviders`, `voiceEngineInstalled`,
-`voiceInit`, `voiceTranscribe`, `voiceStreamStart` / `Pcm` / `End` / `Cancel`,
-`subscribeVoiceEvents`
-
-### Plugins
-`listPlugins`, `searchPlugins`, `getPlugin`,
-`installPluginFromPath` / `Marketplace`,
-`updatePluginFromPath` / `Marketplace`,
-`removePlugin`, `reloadWasmPlugins`
+### Voice (remote transcription)
+`voiceStatus`, `voiceDoctor`, `voiceProviders`, `voiceTranscribe`
 
 ### Auth
 `listCredentials`, `getCredential`, `setProviderApiKey`, `deleteProviderApiKey`,
@@ -103,7 +95,6 @@ lib/
     engine_session_ops.dart
     engine_memory.dart
     engine_voice.dart
-    engine_plugins.dart
     engine_auth.dart
     engine_skills_mcp.dart
     engine_registry.dart

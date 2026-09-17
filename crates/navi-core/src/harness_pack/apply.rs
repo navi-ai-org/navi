@@ -177,7 +177,6 @@ mod tests {
             50,
             None::<String>,
             None::<String>,
-            None::<String>,
         );
         let s = skill("design-loop", &[]);
         materialize_from_skill(dir.path(), &s, &inv, MaterializeOptions::default()).unwrap();
@@ -205,7 +204,6 @@ mod tests {
             true,
             true,
             50,
-            None::<String>,
             None::<String>,
             None::<String>,
         );
@@ -294,7 +292,6 @@ mod tests {
             true,
             true,
             50,
-            None::<String>,
             None::<String>,
             None::<String>,
         );

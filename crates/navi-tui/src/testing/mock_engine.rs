@@ -44,7 +44,6 @@ pub enum EngineCall {
     },
     SnapshotSession(String),
     CompactSession(String),
-    ReloadWasmPlugins,
     SyncModels(NaviConfigSaveTarget),
     SyncProviderModels {
         provider_id: String,
@@ -365,15 +364,6 @@ impl EngineDriver for MockEngine {
         Ok(false)
     }
 
-    async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
-        self.state
-            .lock()
-            .unwrap()
-            .calls
-            .push(EngineCall::ReloadWasmPlugins);
-        Ok(Vec::new())
-    }
-
     async fn sync_registry(&self, _force: bool) -> Result<bool> {
         Ok(false)
     }
@@ -481,7 +471,7 @@ impl EngineDriver for MockEngine {
     }
 
     fn memory_quick_status(&self) -> Result<String> {
-        Ok("on · 0 active · embeddings missing".into())
+        Ok("on · 0 active".into())
     }
 
     async fn usage_report(&self) -> Result<NaviUsageReport> {
@@ -559,13 +549,6 @@ impl EngineDriver for MockEngine {
             "steps": []
         })
         .to_string())
-    }
-
-    fn take_tui_panels(
-        &self,
-        _session_id: &str,
-    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
-        Ok(Vec::new())
     }
 
     fn list_mcp_servers(&self, _session_id: &str) -> Result<Vec<McpServerInfo>> {

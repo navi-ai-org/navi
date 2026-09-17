@@ -16,11 +16,6 @@ const APPROVAL_OPTIONS: &[&str] = &[
     "Yolo — auto-approve tools (most permissive)",
 ];
 
-const MARKETPLACE_OPTIONS: &[&str] = &[
-    "Continue — preference interview",
-    "Skip interview — finish setup with current settings",
-];
-
 pub(crate) fn render_setup(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) {
     match app.setup_phase {
         Some(SetupPhase::Approvals) => render_list_step(
@@ -29,14 +24,6 @@ pub(crate) fn render_setup(frame: &mut Frame<'_>, app: &mut TuiApp, area: Rect) 
             "Setup · Permission mode",
             "Choose how NAVI treats tool calls by default. ↑/↓ then Enter.",
             APPROVAL_OPTIONS,
-            app.setup_list_selected,
-        ),
-        Some(SetupPhase::MarketplaceTip) => render_list_step(
-            frame,
-            area,
-            "Setup · Marketplace",
-            "Extensions install as WASM packages (navi plugin search). ↑/↓ then Enter.",
-            MARKETPLACE_OPTIONS,
             app.setup_list_selected,
         ),
         Some(SetupPhase::ProviderLogin) => render_banner(

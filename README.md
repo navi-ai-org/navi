@@ -132,7 +132,7 @@ Most “coding agents” are a chat UI glued to a few tools. **NAVI is an agent 
 What you open when you type `navi`:
 
 - **Model picker** `ctrl+m` — switch provider/model mid-session
-- **Command palette** `ctrl+p` — providers, plugins, skills, settings
+- **Command palette** `ctrl+p` — providers, skills, settings
 - **Sessions** `ctrl+s` — save, resume, browse
 - **Tool I/O** `ctrl+o` — every call and result
 - Thinking levels, syntax-highlighted markdown, mouse scroll/select/copy
@@ -147,7 +147,7 @@ navi --no-tui "run the tests and fix failures"
 
 ### navi-lite — edge / embedded
 
-Sealed, mission-scoped runtime for edge Linux prototypes. **No** TUI, MCP, plugins, embeddings, or registry sync — only the tools you allowlist.
+Sealed, mission-scoped runtime for edge Linux prototypes. **No** TUI, MCP, or registry sync — only the tools you allowlist.
 
 ```bash
 # binary from the same GitHub Release as navi
@@ -190,12 +190,7 @@ More: [SDK Agents Guide](docs/sdk-agents.md).
 | **Sub-agents** | Isolated agents for explore / verify / implement in parallel |
 | **Compaction** | Micro-compact, auto-compact, session memory for long repos |
 | **Plan & execute** | Plan tool → approve steps → watch execution |
-| **Plugins & MCP** | WASM plugins (sandboxed) + MCP servers — install without forking |
-
-```bash
-navi plugin search
-navi plugin install-marketplace <id> --yes
-```
+| **MCP** | MCP servers — connect external tools without forking |
 
 ---
 
@@ -229,7 +224,7 @@ require_for_writes = true
 require_for_commands = true
 ```
 
-Project config cannot enable MCP servers or plugin paths — those require global config. Details: [User Guide](docs/user-guide.md) · [SECURITY.md](SECURITY.md).
+Project config cannot enable MCP servers — those require global config. Details: [User Guide](docs/user-guide.md) · [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -257,7 +252,6 @@ navi-core    harness, tools, security, compaction
 navi-openai  providers (OpenAI, Anthropic, Gemini, …)
 navi-lite    sealed edge runtime
 navi-napi    Node bindings
-navi-plugin-*  WASM + host plugins
 ```
 
 **Rule:** the engine is not the UI. TUI and SDK share one core.

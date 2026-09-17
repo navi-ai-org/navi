@@ -21,7 +21,7 @@ Profile routing is dramatically simplified: instead of eight model profiles
 `unspecified` (default, uses the chat model), `repo_search`, and
 `subagent_research`. Memory extraction changes from using a separate background
 model to running in a forked session of the principal session using the main
-chat model, hitting the prompt cache to minimize cost. Plugin/MCP tools are
+chat model, hitting the prompt cache to minimize cost. MCP tools are
 capped at 15 visible to the model at once, with the rest discoverable via
 `tool_search`. Finally, configuration moves from SQLite-backed storage back to
 a minimal TOML file, keeping the provider registry SQLite as a separate,
@@ -631,7 +631,7 @@ minimizing cost). No separate model for memory extraction.
 
 ---
 
-## 6. Tool Visibility Limits (base unlimited, plugin/MCP capped at 15)
+## 6. Tool Visibility Limits (base unlimited, MCP capped at 15)
 
 ### Current state
 
@@ -652,10 +652,6 @@ There is **no limit** on the number of tools visible to the model. All
 of `Arc<dyn Tool>`. Each tool is registered via `executor.register_tool()`.
 MCP tool names are prefixed with the server ID (e.g. `mcp__memory__get`).
 
-**Plugin tools** (WASM) are registered similarly via
-`executor.register_tool()` during engine setup and plugin reload
-(`engine.rs:1770`).
-
 **`tool_search`** is implemented as the `ToolSearchTool` in
 `crates/navi-core/src/tool/builtin/extra_tools.rs`. It calls
 `ToolExecutor::search_tools()` which delegates to
@@ -673,30 +669,30 @@ The turn layer in `turn/mod.rs:324, 531` calls
 
 ### Required changes
 
-Implement a 15-tool cap for plugin/MCP tools while keeping navi base tools
+Implement a 15-tool cap for MCP tools while keeping navi base tools
 unlimited:
 
-1. **Distinguish base tools from plugin/MCP tools**: Add a method to
+1. **Distinguish base tools from MCP tools**: Add a method to
    `ToolRegistry` or `ToolExecutor` that partitions visible tools into
-   "base" (builtin navi tools) and "external" (plugin/MCP). MCP tools can be
-   identified by the `mcp__` prefix; plugin tools by the `plugin__` prefix.
+   "base" (builtin navi tools) and "external" (MCP). MCP tools can be
+   identified by the `mcp__` prefix.
 
 2. **Cap external tools at 15**: In `ToolExecutor::definitions()` (or a new
    method), after collecting all visible tools:
    - Include all base tools (unlimited).
-   - Include at most 15 plugin/MCP tools in the schema. Select which 15 by
+   - Include at most 15 MCP tools in the schema. Select which 15 by
      some deterministic priority (e.g. alphabetical, or most-recently-used,
      or configured priority).
-   - The remaining plugin/MCP tools stay registered (callable by name) and
+   - The remaining MCP tools stay registered (callable by name) and
      searchable via `tool_search`, but are not in the model's schema.
 
 3. **Expose overflow via tool_search**: The `ToolSearchTool` already searches
    all registered tools (including Deferred and non-visible). Ensure that
-   plugin/MCP tools beyond the 15-cap are still searchable. The model can
+   MCP tools beyond the 15-cap are still searchable. The model can
    discover them via `tool_search` and then call them by name.
 
 4. **Config option**: Consider adding a config setting
-   (e.g. `tui.max_visible_plugin_tools = 15`) to make the cap configurable,
+   (e.g. `tui.max_visible_mcp_tools = 15`) to make the cap configurable,
    defaulting to 15.
 
 5. **Turn layer**: The turn layer (`turn/mod.rs:324, 531`) calls
@@ -712,8 +708,8 @@ unlimited:
 - `crates/navi-core/src/tool/builtin/extra_tools.rs` — verify `tool_search`
   covers capped tools (line 416 area)
 - `crates/navi-core/src/config/types.rs` — optional new config field for cap
-- `crates/navi-sdk/src/engine.rs` — verify MCP/plugin tool registration still
-  works with the cap (lines 438-448, 1770)
+- `crates/navi-sdk/src/engine.rs` — verify MCP tool registration still
+  works with the cap (lines 438-448)
 
 ---
 
@@ -726,8 +722,8 @@ The `NaviConfig` struct (`config/types.rs:13-72`) is entirely TOML-based.
 Loading is in `config/persistence.rs:10-47` — reads global then project
 TOML, merges. Saving is in `save_global_config()` (line 117) and
 `save_project_config()` (line 131). The config includes: model, harness,
-approvals, security, logging, providers, plugins, memory, voice, skills,
-mcp, wasm_plugins, plugin_marketplace, registry, tui, background_models,
+approvals, security, logging, providers, memory, voice, skills,
+mcp, registry, tui, background_models,
 goals, updates, browser, acp, acp_agents, workflow.
 
 **SQLite registry** (`<data_dir>/registry.db`):
@@ -831,8 +827,6 @@ Settings that stay internal/defaulted (not in minimal TOML unless overridden):
 - `harness` (profile, loop limits, compaction thresholds)
 - `logging` (level, file settings)
 - `providers` (mostly from registry; only custom overrides)
-- `plugins`, `wasm_plugins` (managed via `navi plugin install`)
-- `plugin_marketplace`
 - `registry` (sync settings)
 - `goals` (enabled, max turns)
 - `updates` (check interval)
@@ -885,7 +879,7 @@ Settings that stay internal/defaulted (not in minimal TOML unless overridden):
 
 6. **Phase 6 — Tool visibility limits (§6)**: Independent of §3-5 but should
    be done after §1 (exposure changes) so the base/external partition is
-   stable. Add 15-tool cap for plugin/MCP tools.
+   stable. Add 15-tool cap for MCP tools.
 
 7. **Phase 7 — Config migration (§7)**: Depends on §3 (profiles simplified)
    and §5 (memory extraction config removed). Finalize minimal TOML schema,
@@ -946,7 +940,7 @@ Settings that stay internal/defaulted (not in minimal TOML unless overridden):
    just the latest turn? Full history hits cache better but costs more input
    tokens. Just the latest turn is cheaper but may miss context.
 
-4. **15-tool cap selection**: When more than 15 plugin/MCP tools exist, which
+4. **15-tool cap selection**: When more than 15 MCP tools exist, which
    15 are shown? Options: alphabetical first 15, most-recently-used, user
    configured priority list, or configured in TOML. Need user preference.
 

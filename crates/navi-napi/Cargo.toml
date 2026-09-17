@@ -12,9 +12,7 @@ readme = "README.md"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["voice-onnx", "computer-use"]
-# Local Nemotron ONNX streaming ASR. Disable for musl/portable builds without ORT.
-voice-onnx = ["navi-sdk/voice-onnx"]
+default = ["computer-use"]
 # OS automation (computer use — ADR 0016).
 computer-use = ["navi-sdk/computer-use"]
 
@@ -23,10 +21,9 @@ anyhow.workspace = true
 async-trait.workspace = true
 napi.workspace = true
 napi-derive.workspace = true
-# Product N-API surface enables embeddings (same as navi-cli binary).
-navi-core = { workspace = true, features = ["embeddings"] }
+# Product N-API surface mirrors the navi-cli binary's engine wiring.
+navi-core.workspace = true
 navi-sdk = { workspace = true }
-navi-plugin-manifest.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 

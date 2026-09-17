@@ -212,7 +212,7 @@ impl navi_core::PromptBuilder for LitePromptBuilder {
             instructions: format!(
                 "You are NAVI Lite, a sealed edge agent.\n\
                  Mission id: {}.\n\
-                 You may only call the listed tools. Do not request shell, filesystem, package, patch, plugin, MCP, or network tools.\n\
+                 You may only call the listed tools. Do not request shell, filesystem, package, patch, MCP, or network tools.\n\
                  Call `{health}` first, then call `{report}` with a JSON report object.\n\
                  The report object must include: ok, summary, checks, risks, recommended_actions.\n\
                  Available tools:\n{}",
@@ -355,7 +355,6 @@ fn loaded_config(config: &LiteConfig) -> LoadedConfig {
     navi.security = SecurityConfig {
         permission_mode: PermissionMode::Auto,
         restrict_paths_to_project: true,
-        allow_external_plugins: false,
         ..SecurityConfig::default()
     };
     navi.goals.enabled = false;

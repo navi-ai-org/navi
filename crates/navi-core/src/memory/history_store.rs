@@ -1,5 +1,5 @@
+use crate::db::{Db, DbConnection, OpenOptions, Value, params, params_from_iter};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 /// A thread-safe handle to the SQLite history database.
 #[derive(Clone)]
 pub struct HistoryStore {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<DbConnection>>,
     pub db_path: PathBuf,
 }
 
@@ -30,8 +30,9 @@ impl HistoryStore {
             })?;
         }
 
-        let conn = Connection::open(db_path)
+        let db = Db::open(db_path)
             .with_context(|| format!("Failed to open database at {:?}", db_path))?;
+        let conn = db.connect_with(&OpenOptions::none())?;
         crate::memory::auto_memory::configure_connection(&conn)?;
 
         let store = Self {
@@ -57,7 +58,7 @@ impl HistoryStore {
                 ended_at TEXT,
                 metadata_json TEXT
             );",
-            [],
+            (),
         )?;
 
         conn.execute(
@@ -75,7 +76,7 @@ impl HistoryStore {
                 created_at TEXT NOT NULL,
                 metadata_json TEXT
             );",
-            [],
+            (),
         )?;
 
         conn.execute(
@@ -88,7 +89,7 @@ impl HistoryStore {
                 created_at TEXT NOT NULL,
                 metadata_json TEXT
             );",
-            [],
+            (),
         )?;
 
         conn.execute(
@@ -101,7 +102,7 @@ impl HistoryStore {
                 created_at TEXT NOT NULL,
                 metadata_json TEXT
             );",
-            [],
+            (),
         )?;
 
         Ok(())
@@ -123,7 +124,7 @@ impl HistoryStore {
         conn.execute(
             "INSERT OR IGNORE INTO sessions (id, project_id, started_at, metadata_json)
              VALUES (?1, ?2, ?3, ?4)",
-            params![session_id, project_id, now, json!({}).to_string()],
+            params![session_id, project_id, now.as_str(), json!({}).to_string()],
         )?;
         Ok(())
     }
@@ -137,7 +138,7 @@ impl HistoryStore {
         let now = self.get_now_rfc3339();
         conn.execute(
             "UPDATE sessions SET ended_at = ?2 WHERE id = ?1",
-            params![session_id, now],
+            params![session_id, now.as_str()],
         )?;
         Ok(())
     }
@@ -190,15 +191,11 @@ impl HistoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+        conn.query_row_optional(
             "SELECT created_at FROM checkpoints WHERE session_id = ?1 ORDER BY id DESC LIMIT 1",
-        )?;
-        let mut rows = stmt.query_map(params![session_id], |row| row.get(0))?;
-        if let Some(r) = rows.next() {
-            Ok(Some(r?))
-        } else {
-            Ok(None)
-        }
+            params![session_id],
+            |row| row.get(0),
+        )
     }
 
     /// Records an event in the session timeline.
@@ -250,7 +247,7 @@ impl HistoryStore {
                 tool_input_redacted.as_deref(),
                 tool_output_redacted.as_deref(),
                 token_estimate,
-                now,
+                now.as_str(),
                 meta.to_string()
             ],
         )?;
@@ -274,7 +271,7 @@ impl HistoryStore {
         conn.execute(
             "INSERT INTO checkpoints (session_id, checkpoint_number, utilization, checkpoint_path, created_at, metadata_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![session_id, checkpoint_number, utilization, checkpoint_path, now, json!({}).to_string()],
+            params![session_id, checkpoint_number, utilization, checkpoint_path, now.as_str(), json!({}).to_string()],
         )?;
         Ok(())
     }
@@ -296,7 +293,7 @@ impl HistoryStore {
         conn.execute(
             "INSERT INTO rebuilds (session_id, previous_cycle, new_cycle, injected_context, created_at, metadata_json)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![session_id, previous_cycle, new_cycle, injected_redacted, now, json!({}).to_string()],
+            params![session_id, previous_cycle, new_cycle, injected_redacted, now.as_str(), json!({}).to_string()],
         )?;
         Ok(())
     }
@@ -320,7 +317,7 @@ impl HistoryStore {
             FROM events WHERE (content LIKE ?1 OR tool_name LIKE ?1 \
             OR tool_input_json LIKE ?1 OR tool_output LIKE ?1)".to_string();
 
-        let mut params_vec: Vec<rusqlite::types::Value> = vec![like_query.into()];
+        let mut params_vec: Vec<Value> = vec![like_query.into()];
 
         if let Some(sid) = session_id {
             sql.push_str(" AND session_id = ?2");
@@ -330,29 +327,7 @@ impl HistoryStore {
         sql.push_str(" ORDER BY created_at DESC LIMIT ?");
         params_vec.push(limit_val.into());
 
-        let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(params_vec), |row| {
-            Ok(HistoryEvent {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                sequence: row.get(2)?,
-                event_type: row.get(3)?,
-                role: row.get(4)?,
-                content: row.get(5)?,
-                tool_name: row.get(6)?,
-                tool_input_json: row.get(7)?,
-                tool_output: row.get(8)?,
-                token_estimate: row.get(9)?,
-                created_at: row.get(10)?,
-                metadata_json: row.get(11)?,
-            })
-        })?;
-
-        let mut results = Vec::new();
-        for r in rows {
-            results.push(r?);
-        }
-        Ok(results)
+        conn.query_rows(&sql, params_from_iter(params_vec), row_to_history_event)
     }
 
     /// Retrieves recent events for a given session.
@@ -366,35 +341,15 @@ impl HistoryStore {
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
         let limit_val = limit.unwrap_or(50);
-        let mut stmt = conn.prepare(
+        let mut results = conn.query_rows(
             "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json 
              FROM events 
              WHERE session_id = ?1 
              ORDER BY sequence DESC 
-             LIMIT ?2"
+             LIMIT ?2",
+            params![session_id, limit_val],
+            row_to_history_event,
         )?;
-
-        let rows = stmt.query_map(params![session_id, limit_val], |row| {
-            Ok(HistoryEvent {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                sequence: row.get(2)?,
-                event_type: row.get(3)?,
-                role: row.get(4)?,
-                content: row.get(5)?,
-                tool_name: row.get(6)?,
-                tool_input_json: row.get(7)?,
-                tool_output: row.get(8)?,
-                token_estimate: row.get(9)?,
-                created_at: row.get(10)?,
-                metadata_json: row.get(11)?,
-            })
-        })?;
-
-        let mut results = Vec::new();
-        for r in rows {
-            results.push(r?);
-        }
         // Reverse so they are chronological
         results.reverse();
         Ok(results)
@@ -406,33 +361,13 @@ impl HistoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+        conn.query_row_optional(
             "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json 
              FROM events 
-             WHERE id = ?1"
-        )?;
-        let mut rows = stmt.query_map(params![event_id], |row| {
-            Ok(HistoryEvent {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                sequence: row.get(2)?,
-                event_type: row.get(3)?,
-                role: row.get(4)?,
-                content: row.get(5)?,
-                tool_name: row.get(6)?,
-                tool_input_json: row.get(7)?,
-                tool_output: row.get(8)?,
-                token_estimate: row.get(9)?,
-                created_at: row.get(10)?,
-                metadata_json: row.get(11)?,
-            })
-        })?;
-
-        if let Some(r) = rows.next() {
-            Ok(Some(r?))
-        } else {
-            Ok(None)
-        }
+             WHERE id = ?1",
+            params![event_id],
+            row_to_history_event,
+        )
     }
 
     /// Returns a list of all session summaries/IDs logged in history.
@@ -441,23 +376,19 @@ impl HistoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, project_id, started_at, ended_at, metadata_json FROM sessions ORDER BY started_at DESC"
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(SessionSummary {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                started_at: row.get(2)?,
-                ended_at: row.get(3)?,
-                metadata_json: row.get(4)?,
-            })
-        })?;
-        let mut res = Vec::new();
-        for r in rows {
-            res.push(r?);
-        }
-        Ok(res)
+        conn.query_rows(
+            "SELECT id, project_id, started_at, ended_at, metadata_json FROM sessions ORDER BY started_at DESC",
+            (),
+            |row| {
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    started_at: row.get(2)?,
+                    ended_at: row.get(3)?,
+                    metadata_json: row.get(4)?,
+                })
+            },
+        )
     }
 
     /// Performs diagnostic checks on the database health and structure.
@@ -471,7 +402,7 @@ impl HistoryStore {
 
         let tables = vec!["sessions", "events", "checkpoints", "rebuilds"];
         for table in tables {
-            let exists: Result<bool, _> = conn.query_row(
+            let exists = conn.query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
                 [table],
                 |_| Ok(true),
@@ -482,8 +413,8 @@ impl HistoryStore {
             }
         }
 
-        let integrity: Result<String, _> =
-            conn.query_row("PRAGMA integrity_check", [], |row| row.get(0));
+        let integrity: Result<String> =
+            conn.query_row("PRAGMA integrity_check", (), |row| row.get(0));
         match integrity {
             Ok(ref val) if val == "ok" => logs.push("DB integrity check passed (ok).".to_string()),
             Ok(val) => logs.push(format!("ERROR: DB integrity check failed: {}", val)),
@@ -492,6 +423,23 @@ impl HistoryStore {
 
         Ok(logs)
     }
+}
+
+fn row_to_history_event(row: &crate::db::Row) -> crate::db::RowResult<HistoryEvent> {
+    Ok(HistoryEvent {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        sequence: row.get(2)?,
+        event_type: row.get(3)?,
+        role: row.get(4)?,
+        content: row.get(5)?,
+        tool_name: row.get(6)?,
+        tool_input_json: row.get(7)?,
+        tool_output: row.get(8)?,
+        token_estimate: row.get(9)?,
+        created_at: row.get(10)?,
+        metadata_json: row.get(11)?,
+    })
 }
 
 /// A serialized event record returned from the history store.

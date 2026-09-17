@@ -14,7 +14,7 @@ Public embedding facade for [NAVI](https://github.com/navi-ai-org/navi) — the 
 - **Small, serializable API** — sessions, turns, events, and approvals are all serializable
 - **No terminal dependency** — `navi-sdk` does not depend on `ratatui` or `crossterm`
 - **Provider setup** — resolves credentials, builds providers, and registers tools
-- **MCP & plugins** — loads MCP servers and WASM plugins behind the same `ToolExecutor`
+- **MCP** — loads MCP servers behind the same `ToolExecutor`
 
 ## API surface
 

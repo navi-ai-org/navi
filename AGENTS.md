@@ -6,7 +6,7 @@ Local agentic engine (Rust): runtime + tools + providers + sessions. TUI and Tut
 
 ## Boundary
 
-**Owns:** agent runtime, TUI/CLI, ACP, providers/auth, tools, security/approvals, sessions, tokens/context, plugins, events, project/code ops.
+**Owns:** agent runtime, TUI/CLI, ACP, providers/auth, tools, security/approvals, sessions, tokens/context, events, project/code ops.
 
 **Does not own:** Tutor visual UX (study canvas, mind maps, skill map, learning product layout).
 
@@ -23,9 +23,8 @@ NAVI Tutor  = visual learning frontend (same engine, no TUI deps)
    `navi-core` → `navi-sdk` → `navi-napi` → `navi-cli` (if user-facing) → `navi-tui` (if UI). No half-wired features.
 3. **No worktree agent state.** Do not create `.navi/` or other project-local bookkeeping. State goes to `{data_dir}` (Linux: `~/.local/share/navi`), config to `~/.config/navi`, temp to OS temp. Project `.navi/config.toml` is user-authored only; never auto-create `.navi/`.
 4. **No WebSocket/daemon as primary interface** unless explicitly requested; prefer stdio/headless/ACP.
-5. **Plugins are WASM-only** (ADR 0013). Legacy native `[[plugins]]` paths are ignored.
-6. **MCP is client-only** for now. Skills/MCP flow through `navi-sdk`.
-7. **Stable, serializable engine APIs.** Small surface; events versioned for TUI and Tutor.
+5. **MCP is client-only** for now. Skills/MCP flow through `navi-sdk`.
+6. **Stable, serializable engine APIs.** Small surface; events versioned for TUI and Tutor.
 
 ## Crates
 
@@ -38,7 +37,6 @@ NAVI Tutor  = visual learning frontend (same engine, no TUI deps)
 | `navi-napi` | Node/Electron bindings of the full engine surface |
 | `navi-providers` / `navi-openai` | Provider facade + OpenAI-compatible + adapters |
 | `navi-mcp` | MCP stdio client → engine tools |
-| `navi-plugin-*` | WASM runtime, orchestrator, manifest, brokers |
 
 Depend on `navi-providers`, not `navi-openai` directly. `navi-sdk` is path-local (not crates.io).
 
@@ -47,7 +45,7 @@ Depend on `navi-providers`, not `navi-openai` directly. `navi-sdk` is path-local
 Load order: defaults → `~/.config/navi/config.toml` → `.navi/config.toml`.
 
 - Project config may override `model`, `harness`, `approvals`, `security`, `skills`, providers.
-- **Project config cannot enable** plugins / wasm_plugins / MCP (ignored + warning). Install WASM via `navi plugin install` → `{data_dir}/plugins/`.
+- **Project config cannot enable** MCP servers (ignored + warning).
 - Keys: env (`api_key_env`) → external auth → credential store. TUI must not prompt for keys on startup (model picker when missing).
 - Sessions: `{data_dir}/sessions/` with secret redaction by default.
 - Logs: `{data_dir}/logs/navi.log` — diagnostics only; never secrets, full prompts, or draw-path spam.
@@ -143,7 +141,7 @@ A tool with 100% line coverage but no edge case tests or no integration tests is
 
 ## Validate
 
-Prefer **smallest** package-scoped check. Agents use `cargo`, not full-product gates, unless shared runtime/SDK/plugins/MCP/ACP/providers or the user asks.
+Prefer **smallest** package-scoped check. Agents use `cargo`, not full-product gates, unless shared runtime/SDK/MCP/ACP/providers or the user asks.
 
 ```bash
 cargo fmt --all -- --check

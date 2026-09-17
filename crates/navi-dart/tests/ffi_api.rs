@@ -757,7 +757,7 @@ fn callback_ctx_success_str() {
 // ── Surface gap-fill coverage ──────────────────────────────────────
 
 #[test]
-fn memory_update_and_notify_simple_and_tui_extensions() {
+fn memory_update_and_notify_simple() {
     disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
@@ -794,20 +794,6 @@ fn memory_update_and_notify_simple_and_tui_extensions() {
     unsafe { navi_string_free(nptr) };
     free_c(title);
     free_c(body);
-
-    let ext = unsafe { navi_engine_list_tui_extensions(engine) };
-    assert!(!ext.is_null());
-    let s = unsafe { CStr::from_ptr(ext) }.to_str().unwrap();
-    let v: serde_json::Value = serde_json::from_str(s).unwrap();
-    assert!(v.is_array());
-    unsafe { navi_string_free(ext) };
-
-    let cmds = unsafe { navi_engine_list_tui_extension_commands(engine) };
-    assert!(!cmds.is_null());
-    let s = unsafe { CStr::from_ptr(cmds) }.to_str().unwrap();
-    let v: serde_json::Value = serde_json::from_str(s).unwrap();
-    assert!(v.is_array());
-    unsafe { navi_string_free(cmds) };
 
     let accounts = unsafe { navi_engine_list_credential_accounts(engine, c("openai")) };
     // may error if provider invalid handling differs; free if non-null

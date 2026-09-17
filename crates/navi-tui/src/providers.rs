@@ -199,9 +199,8 @@ pub(crate) fn maybe_start_setup_interview(app: &mut TuiApp) {
         Some(crate::state::SetupPhase::ProviderLogin) if app.provider_configured => {
             begin_setup_approvals(app);
         }
-        Some(crate::state::SetupPhase::Approvals)
-        | Some(crate::state::SetupPhase::MarketplaceTip) => {
-            // Wait for keyboard confirmation in those steps.
+        Some(crate::state::SetupPhase::Approvals) => {
+            // Wait for keyboard confirmation in this step.
         }
         Some(crate::state::SetupPhase::Interview) => (),
         _ => (),
@@ -225,23 +224,6 @@ pub(crate) fn begin_setup_approvals(app: &mut TuiApp) {
             .to_string(),
     ));
     crate::notifications::show_notification(app, "Setup", "Choose a default permission mode.");
-}
-
-/// After approvals, show marketplace tip then interview.
-pub(crate) fn begin_setup_marketplace_tip(app: &mut TuiApp) {
-    app.setup_phase = Some(crate::state::SetupPhase::MarketplaceTip);
-    app.setup_list_selected = 0;
-    app.mode = crate::state::Mode::Setup;
-    app.messages.push(crate::state::ChatMessage::new(
-        crate::state::ChatRole::Assistant,
-        "Marketplace plugins (optional)\n\n\
-         NAVI extensions install as **WASM packages** from the marketplace \
-         (`navi plugin search` / `navi plugin install-marketplace <id>`).\n\n\
-         • Continue — proceed to the preference interview\n\
-         • Skip interview — finish setup with current settings\n\n\
-         Use ↑/↓ and Enter."
-            .to_string(),
-    ));
 }
 
 pub(crate) fn begin_setup_interview(app: &mut TuiApp) {
@@ -293,32 +275,12 @@ pub(crate) fn handle_setup_list_key(app: &mut TuiApp, code: crossterm::event::Ke
                             SETUP_APPROVAL_OPTIONS[app.setup_list_selected.min(len - 1)]
                         ),
                     ));
-                    begin_setup_marketplace_tip(app);
+                    begin_setup_interview(app);
                     true
                 }
                 _ => false,
             }
         }
-        Some(crate::state::SetupPhase::MarketplaceTip) => match code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                app.setup_list_selected = 0;
-                true
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                app.setup_list_selected = 1;
-                true
-            }
-            KeyCode::Enter => {
-                if app.setup_list_selected == 1 {
-                    // Skip interview — finish.
-                    crate::dispatch::complete_setup_wizard(app);
-                } else {
-                    begin_setup_interview(app);
-                }
-                true
-            }
-            _ => false,
-        },
         _ => false,
     }
 }

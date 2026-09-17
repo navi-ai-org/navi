@@ -16,31 +16,22 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 fastrand.workspace = true
-reqwest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
 tracing.workspace = true
 navi-browser.workspace = true
-# Product binary enables local embedding model stack (opt-in at navi-core).
-navi-core = { workspace = true, features = ["embeddings"] }
+navi-core.workspace = true
 navi-mcp.workspace = true
-navi-plugin-broker.workspace = true
-navi-plugin-manifest.workspace = true
 navi-sdk = { workspace = true, default-features = true }
 navi-tui = { workspace = true, default-features = true }
 navi-voice = { workspace = true, default-features = false }
 
 [features]
-# Portable release binaries default to no ORT (musl/Windows/x64 mac lack
-# prebuilt ort-sys). Opt in with `--features voice-onnx` on supported hosts.
-# wasm-plugins come from navi-sdk default features.
-# embeddings come from navi-core dep features above (not a cargo feature flag).
 # computer-use is on by default (ADR 0016); the runtime gate
 # (`--computer-use` CLI flag or config) still controls tool registration.
 default = ["computer-use"]
-voice-onnx = ["navi-voice/onnx", "navi-sdk/voice-onnx"]
 # OS automation (computer use — ADR 0016).
 # Enables the `capture_screen`, `enumerate_windows`, `inspect_element`, and
 # `simulate_input` tools behind the `computer-use` feature gate.

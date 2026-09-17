@@ -9,12 +9,7 @@ extension NaviRemoteMemory on NaviRemoteEngine {
   Future<JsonMap> memoryDoctor() => _get('/memory/doctor');
 
   /// `POST /memory/init`.
-  Future<JsonMap> memoryInit({bool? embeddings, bool? force}) {
-    final body = <String, dynamic>{};
-    if (embeddings != null) body['embeddings'] = embeddings;
-    if (force != null) body['force'] = force;
-    return _post('/memory/init', body);
-  }
+  Future<JsonMap> memoryInit() => _post('/memory/init');
 
   /// `GET /memory?status=`.
   Future<List<JsonMap>> memoryList({String? status}) async {

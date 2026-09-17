@@ -13,11 +13,6 @@ members = [
     "crates/navi-openai",
     "crates/navi-os-macos",
     "crates/navi-os-windows",
-    "crates/navi-plugin-api",
-    "crates/navi-plugin-broker",
-    "crates/navi-plugin-manifest",
-    "crates/navi-plugin-orchestrator",
-    "crates/navi-plugin-runtime",
     "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-server",
@@ -40,11 +35,6 @@ default-members = [
     "crates/navi-openai",
     "crates/navi-os-macos",
     "crates/navi-os-windows",
-    "crates/navi-plugin-api",
-    "crates/navi-plugin-broker",
-    "crates/navi-plugin-manifest",
-    "crates/navi-plugin-orchestrator",
-    "crates/navi-plugin-runtime",
     "crates/navi-providers",
     "crates/navi-sdk",
     "crates/navi-server",
@@ -69,10 +59,22 @@ async-trait = "0.1"
 base64 = "0.22.1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
+# Runs the process-wide rustls provider install before `main` (see
+# `navi_core::tls`). Already in the dependency graph via napi.
+ctor = "1"
 directories = "6"
 libloading = "0.9"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache", "macros", "underline-color"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+# reqwest 0.13 has no ring-only TLS feature: `rustls` hard-wires aws-lc-rs
+# and `rustls-tls-native-roots` only exists in 0.12. `rustls-no-provider`
+# keeps rustls + rustls-platform-verifier while leaving the crypto provider
+# to the application; navi-core installs the ring provider process-wide
+# (see `navi_core::tls`) so we get ring instead of aws-lc-rs.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+# Process-wide rustls crypto provider. reqwest's `rustls-no-provider` feature
+# needs a provider installed before any Client is built; navi-core installs
+# ring (never aws-lc-rs) via this crate.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -87,8 +89,10 @@ tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-t
 portable-pty = "0.8"
 fastrand = "2"
 # rmcp 2.2 requires sse-stream >= 0.2.4 (`SseStream::from_bytes_stream`).
-rmcp = { version = "2.2", default-features = false, features = ["client", "transport-child-process", "reqwest", "transport-streamable-http-client-reqwest"] }
-rusqlite = { version = "0.40", features = ["bundled"] }
+# rmcp's `reqwest` feature enables reqwest/rustls (aws-lc-rs); use the
+# no-provider variant so rmcp keeps working with the ring provider installed
+# by navi-core.
+rmcp = { version = "2.2", default-features = false, features = ["client", "transport-child-process", "reqwest-tls-no-provider", "transport-streamable-http-client-reqwest"] }
 toml = "1"
 # Was pinned to `=0.3.47` for an E0119 conflict with older ratatui-widgets.
 # 0.3.53 works with ratatui 0.30 / ratatui-widgets 0.3 in this workspace.
@@ -135,12 +139,7 @@ napi-derive = "3.5.7"
 navi-openai = { version = "0.7.3", path = "crates/navi-openai" }
 navi-os-macos = { version = "0.7.3", path = "crates/navi-os-macos" }
 navi-os-windows = { version = "0.7.3", path = "crates/navi-os-windows" }
-navi-plugin-api = { version = "0.7.3", path = "crates/navi-plugin-api" }
-navi-plugin-broker = { version = "0.7.3", path = "crates/navi-plugin-broker" }
 navi-providers = { version = "0.7.3", path = "crates/navi-providers" }
-navi-plugin-manifest = { version = "0.7.3", path = "crates/navi-plugin-manifest" }
-navi-plugin-orchestrator = { version = "0.7.3", path = "crates/navi-plugin-orchestrator", default-features = false }
-navi-plugin-runtime = { version = "0.7.3", path = "crates/navi-plugin-runtime" }
 navi-sdk = { version = "0.7.3", path = "crates/navi-sdk" }
 navi-server = { version = "0.7.3", path = "crates/navi-server" }
 navi-tui = { version = "0.7.3", path = "crates/navi-tui" }
@@ -172,13 +171,4 @@ inherits = "release"
 lto = false
 codegen-units = 16
 incremental = true
-
-# ── Patches ─────────────────────────────────────────────────────────────────
-# esaxx-rs 0.1.10 forces `.static_crt(true)` in its build.rs, which emits `/MT`
-# (static CRT). This conflicts with ort-sys prebuilt binaries that use `/MD`
-# (dynamic CRT), causing LNK2038 on Windows MSVC. The upstream fix (removing
-# `static_crt(true)`) has not been published. We vendor a patched copy so
-# `cc` picks up the default CRT (/MD) matching the rest of the workspace.
-[patch.crates-io]
-esaxx-rs = { path = "patches/esaxx-rs" }
 

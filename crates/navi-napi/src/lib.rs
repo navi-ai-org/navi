@@ -88,11 +88,6 @@ pub struct NaviNapiEventStream {
     receiver: AsyncMutex<broadcast::Receiver<RuntimeEvent>>,
 }
 
-#[napi]
-pub struct NaviNapiVoiceEventStream {
-    receiver: AsyncMutex<broadcast::Receiver<navi_sdk::VoiceEvent>>,
-}
-
 #[napi(object)]
 #[derive(Clone, Default)]
 pub struct JsSessionRequest {
@@ -181,7 +176,7 @@ impl NaviNapiEngineBuilder {
         }
     }
 
-    /// Durable app data directory (sessions, credentials, plugins, registry).
+    /// Durable app data directory (sessions, credentials, registry).
     #[napi(js_name = "dataDir")]
     pub fn data_dir(&mut self, path: String) {
         self.data_dir = Some(path);
@@ -674,30 +669,6 @@ impl NaviNapiEngine {
     #[napi]
     pub fn list_models(&self) -> Result<JsonValue> {
         serde_json::to_value(self.inner.list_models()).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn list_tui_components(&self, session_id: String) -> Result<Vec<String>> {
-        self.inner
-            .list_tui_components(&session_id)
-            .map_err(to_napi_error)
-    }
-
-    /// Installed plugin packages that ship a `tui.json` extension spec.
-    #[napi]
-    pub fn list_tui_extensions(&self) -> Result<JsonValue> {
-        let list = self.inner.list_tui_extensions().map_err(to_napi_error)?;
-        serde_json::to_value(list).map_err(to_napi_error)
-    }
-
-    /// Flattened palette commands from all installed `tui.json` specs.
-    #[napi]
-    pub fn list_tui_extension_commands(&self) -> Result<JsonValue> {
-        let list = self
-            .inner
-            .list_tui_extension_commands()
-            .map_err(to_napi_error)?;
-        serde_json::to_value(list).map_err(to_napi_error)
     }
 
     #[napi]
@@ -1344,143 +1315,6 @@ impl NaviNapiEngine {
         self.inner.list_registry().map_err(to_napi_error)
     }
 
-    // ── Plugins (install / marketplace) ────────────────────────────────
-
-    #[napi]
-    pub fn plugin_list(&self) -> Result<JsonValue> {
-        let list = self.inner.plugin_list().map_err(to_napi_error)?;
-        serde_json::to_value(list).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn plugin_info(&self, plugin_id: String) -> Result<JsonValue> {
-        let info = self.inner.plugin_info(&plugin_id).map_err(to_napi_error)?;
-        serde_json::to_value(info).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub async fn plugin_search(&self, query: Option<String>) -> Result<JsonValue> {
-        let hits = self
-            .inner
-            .plugin_search(query.as_deref())
-            .await
-            .map_err(to_napi_error)?;
-        serde_json::to_value(hits).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn plugin_install_path(&self, path: String, confirm: bool) -> Result<JsonValue> {
-        let result = self
-            .inner
-            .plugin_install_path(std::path::Path::new(&path), confirm)
-            .map_err(to_napi_error)?;
-        serde_json::to_value(result).map_err(to_napi_error)
-    }
-
-    /// Install from a local path with explicit trust level and marketplace kind.
-    ///
-    /// `trust`: `local-dev` (default) | `community` | `signed` | `core`
-    /// `kind`: `plugin` (default) | `skill` | `mcp` | `integration`
-    #[napi]
-    pub fn plugin_install_path_with_meta(
-        &self,
-        path: String,
-        confirm: bool,
-        trust: Option<String>,
-        kind: Option<String>,
-    ) -> Result<JsonValue> {
-        use navi_plugin_manifest::{PluginCatalogKind, TrustLevel};
-        let trust = match trust.as_deref().unwrap_or("local-dev") {
-            "local-dev" | "local_dev" | "localdev" => TrustLevel::LocalDev,
-            "community" => TrustLevel::Community,
-            "signed" => TrustLevel::Signed,
-            "core" => TrustLevel::Core,
-            other => {
-                return Err(to_napi_error(anyhow::anyhow!(
-                    "invalid trust level '{other}' (expected local-dev|community|signed|core)"
-                )));
-            }
-        };
-        let kind = match kind.as_deref().unwrap_or("plugin") {
-            "plugin" => PluginCatalogKind::Plugin,
-            "skill" => PluginCatalogKind::Skill,
-            "mcp" => PluginCatalogKind::Mcp,
-            "integration" => PluginCatalogKind::Integration,
-            other => {
-                return Err(to_napi_error(anyhow::anyhow!(
-                    "invalid package kind '{other}' (expected plugin|skill|mcp|integration)"
-                )));
-            }
-        };
-        let result = self
-            .inner
-            .plugin_install_path_with_meta(std::path::Path::new(&path), confirm, trust, kind)
-            .map_err(to_napi_error)?;
-        serde_json::to_value(result).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub async fn plugin_install_marketplace(
-        &self,
-        plugin_id: String,
-        confirm: bool,
-    ) -> Result<JsonValue> {
-        let result = self
-            .inner
-            .plugin_install_marketplace(&plugin_id, confirm)
-            .await
-            .map_err(to_napi_error)?;
-        serde_json::to_value(result).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn plugin_update_path(
-        &self,
-        path: String,
-        force: Option<bool>,
-        confirm: Option<bool>,
-    ) -> Result<JsonValue> {
-        let result = self
-            .inner
-            .plugin_update_path(
-                std::path::Path::new(&path),
-                force.unwrap_or(false),
-                confirm.unwrap_or(false),
-            )
-            .map_err(to_napi_error)?;
-        serde_json::to_value(result).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub async fn plugin_update_marketplace(
-        &self,
-        plugin_id: String,
-        force: Option<bool>,
-        confirm: Option<bool>,
-    ) -> Result<JsonValue> {
-        let result = self
-            .inner
-            .plugin_update_marketplace(&plugin_id, force.unwrap_or(false), confirm.unwrap_or(false))
-            .await
-            .map_err(to_napi_error)?;
-        serde_json::to_value(result).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn plugin_remove(&self, plugin_id: String) -> Result<()> {
-        self.inner.plugin_remove(&plugin_id).map_err(to_napi_error)
-    }
-
-    // ── Wasm Plugins ───────────────────────────────────────────────────
-
-    #[napi]
-    pub async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
-        self.inner
-            .reload_wasm_plugins()
-            .await
-            .map_err(to_napi_error)
-    }
-
     // ── Saved Sessions ─────────────────────────────────────────────────
 
     #[napi]
@@ -1617,19 +1451,6 @@ impl NaviNapiEngine {
             .map_err(to_napi_error)
     }
 
-    #[napi]
-    pub fn take_tui_panels(&self, session_id: String) -> Result<Vec<JsonValue>> {
-        let panels = self
-            .inner
-            .take_tui_panels(&session_id)
-            .map_err(to_napi_error)?;
-        // TuiComponent is not serializable, return metadata only
-        Ok(panels
-            .iter()
-            .map(|_| serde_json::json!({"taken": true}))
-            .collect())
-    }
-
     // ── Auto-Memory ─────────────────────────────────────────────────────
 
     #[napi]
@@ -1726,16 +1547,8 @@ impl NaviNapiEngine {
     }
 
     #[napi]
-    pub async fn memory_init(
-        &self,
-        embeddings: Option<bool>,
-        force: Option<bool>,
-    ) -> Result<JsonValue> {
-        let report = self
-            .inner
-            .memory_init(embeddings.unwrap_or(false), force.unwrap_or(false))
-            .await
-            .map_err(to_napi_error)?;
+    pub async fn memory_init(&self) -> Result<JsonValue> {
+        let report = self.inner.memory_init().await.map_err(to_napi_error)?;
         serde_json::to_value(report).map_err(to_napi_error)
     }
 
@@ -1787,7 +1600,7 @@ impl NaviNapiEngine {
         self.inner.memory_rebuild_preview().map_err(to_napi_error)
     }
 
-    // ── Voice / dictation ────────────────────────────────────────────────
+    // ── Voice / remote transcription ────────────────────────────────────
 
     #[napi]
     pub fn voice_status(&self) -> Result<JsonValue> {
@@ -1823,24 +1636,8 @@ impl NaviNapiEngine {
         serde_json::to_value(report).map_err(to_napi_error)
     }
 
-    #[napi]
-    pub fn voice_engine_installed(&self, engine: Option<String>) -> Result<bool> {
-        self.inner
-            .voice_engine_installed(engine.as_deref())
-            .map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub async fn voice_init(&self, engine: Option<String>, force: Option<bool>) -> Result<String> {
-        let path = self
-            .inner
-            .voice_init(engine.as_deref(), force.unwrap_or(false))
-            .await
-            .map_err(to_napi_error)?;
-        Ok(path.display().to_string())
-    }
-
-    /// Transcribe a WAV file (blocking ONNX runs on a worker thread).
+    /// Transcribe a WAV file through the configured remote provider (blocking
+    /// HTTP call runs on a worker thread).
     #[napi]
     pub async fn voice_transcribe_file(
         &self,
@@ -1848,9 +1645,8 @@ impl NaviNapiEngine {
         language: Option<String>,
     ) -> Result<JsonValue> {
         let engine = self.inner.clone();
-        let lang = language.clone();
         let result = tokio::task::spawn_blocking(move || {
-            engine.voice_transcribe_file(&path, lang.as_deref())
+            engine.voice_transcribe_file(&path, language.as_deref())
         })
         .await
         .map_err(|e| to_napi_error(anyhow::anyhow!("voice_transcribe_file join: {e}")))?
@@ -1862,7 +1658,7 @@ impl NaviNapiEngine {
         .map_err(to_napi_error)
     }
 
-    /// Prefer async remote transcription path when `[voice].provider` is remote.
+    /// Async remote transcription of a WAV file (registry provider + API key).
     #[napi]
     pub async fn voice_transcribe_file_async(
         &self,
@@ -1879,37 +1675,6 @@ impl NaviNapiEngine {
             "tokenIds": result.token_ids,
         }))
         .map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn voice_start_stream(&self, language: Option<String>) -> Result<()> {
-        self.inner
-            .voice_start_stream(language.as_deref())
-            .map_err(to_napi_error)
-    }
-
-    /// Push 16 kHz mono PCM samples (`number[]` or Float32Array via JS).
-    #[napi]
-    pub fn voice_push_pcm(&self, samples: Vec<f64>) -> Result<String> {
-        let pcm: Vec<f32> = samples.iter().map(|s| *s as f32).collect();
-        self.inner.voice_push_pcm(&pcm).map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn voice_end_stream(&self) -> Result<String> {
-        self.inner.voice_end_stream().map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn voice_cancel_stream(&self) -> Result<()> {
-        self.inner.voice_cancel_stream().map_err(to_napi_error)
-    }
-
-    #[napi]
-    pub fn subscribe_voice_events(&self) -> NaviNapiVoiceEventStream {
-        NaviNapiVoiceEventStream {
-            receiver: AsyncMutex::new(self.inner.subscribe_voice_events()),
-        }
     }
 
     // ── Permission Mode ──────────────────────────────────────────────────
@@ -2173,23 +1938,6 @@ impl NaviNapiEventStream {
         loop {
             match receiver.recv().await {
                 Ok(event) => return runtime_event_to_json(event).map(Some),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(broadcast::error::RecvError::Closed) => return Ok(None),
-            }
-        }
-    }
-}
-
-#[napi]
-impl NaviNapiVoiceEventStream {
-    #[napi]
-    pub async fn next(&self) -> Result<Option<JsonValue>> {
-        let mut receiver = self.receiver.lock().await;
-        loop {
-            match receiver.recv().await {
-                Ok(event) => {
-                    return serde_json::to_value(event).map(Some).map_err(to_napi_error);
-                }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => return Ok(None),
             }

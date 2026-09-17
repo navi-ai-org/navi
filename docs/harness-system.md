@@ -2,7 +2,7 @@
 
 **Status:** MVP implemented (materialize + soft graph + loop caps; hard graph edges and feedback evolve jobs are still design)  
 **Audience:** Product, engine, and embedding hosts  
-**Related:** [Goal System](goal-system.md) · [SDK Agents](sdk-agents.md) · [Workflow Lua](workflow-tool-lua-spec.md) · [ADR 0013 WASM plugins](adr/0013-wasm-only-plugins.md)
+**Related:** [Goal System](goal-system.md) · [SDK Agents](sdk-agents.md) · [Workflow Lua](workflow-tool-lua-spec.md)
 
 This document captures the product and architecture vision for **harness packs** on NAVI: how skills, goals, loops, graphs, verifiers, and self-improvement jobs compose so users can build custom agent harnesses *using NAVI itself*.
 
@@ -31,7 +31,7 @@ Harness soft policy (entry `allow_tools`, loop caps, capability card) applies on
 
 **Not session-active:** root session keeps the full Direct tool set. Catalog builtins may list `allow_tools` for authoring guidance; those lists **do not** lock the main agent. Nested **subagents** keep their own allowlists (denials say “for this subagent”); root/harness denials say “for the active harness”.
 
-**Private storage:** `{data_dir}` (sessions, memory, skills store, etc.) is jailed for `search` / `bash` / raw FS tools. Browse and mutate skills only via `skill_list` / `skill_get` / `load_skill` / `skill_save`. Plugins install under `{data_dir}/plugins/` — never auto-created project `.navi/`.
+**Private storage:** `{data_dir}` (sessions, memory, skills store, etc.) is jailed for `search` / `bash` / raw FS tools. Browse and mutate skills only via `skill_list` / `skill_get` / `load_skill` / `skill_save`.
 
 **Builtin vs marketplace:** engine-coupled authoring skills (`navi-create-skill`, `navi-harness-author`, `navi-skill-pools`) ship **builtin** (versioned with the binary). Marketplace skill packs can teach **stale harness APIs** after a core upgrade — prefer builtins for “how to use NAVI”, marketplace for community content.
 
@@ -58,10 +58,10 @@ Without the last two rows, a “graph” is cosmetic YAML—a second prompt.
 
 ### 1.2 NAVI’s opportunity
 
-NAVI is not only a chat TUI. It is a **local agentic engine** (runtime, tools, providers, sessions, security, plugins, MCP, goals, SDK). The product bet:
+NAVI is not only a chat TUI. It is a **local agentic engine** (runtime, tools, providers, sessions, security, MCP, goals, SDK). The product bet:
 
 > Skills remain the **import UI** of the ecosystem.  
-> Harnesses are the **local compilation** that NAVI materializes, runs, and recompiles from user feedback—optionally extending the engine via WASM plugins and MCP.
+> Harnesses are the **local compilation** that NAVI materializes, runs, and recompiles from user feedback—optionally extending the engine via MCP.
 
 Users should be able to design **loop engineering** and **graph engineering** workflows *as content* (packs), not only as hard-coded core features.
 
@@ -146,7 +146,7 @@ Do **not** auto-create project `.navi/` bookkeeping; project `.navi/config.toml`
   SKILL.md                 # may be enriched beyond the import
   loop.toml                # budget, max_turns, stop conditions
   graph.toml               # optional nodes/edges (or linear default)
-  verifiers/               # recipes: bash, browser, future plugin tools
+  verifiers/               # recipes: bash, browser
   CAPABILITY.md            # assumed NAVI + project capabilities
   CHANGELOG.md             # harness evolution history
   runs/                    # per-run traces + user feedback
@@ -164,7 +164,7 @@ stop = ["verify.ok", "goal.complete", "goal.blocked", "budget"]
 
 [[verify]]
 id = "preview_smoke"
-kind = "browser"           # or bash | plugin
+kind = "browser"           # or bash
 args = { url = "http://localhost:3000", actions = ["goto", "screenshot"] }
 ```
 
@@ -209,7 +209,7 @@ These formats are **local compilation targets**, not a requirement for the globa
 ## 4. Lifecycle: three jobs around a skill
 
 ```text
-  navi skill install / plugin skill pack
+  navi skill install / marketplace skill pack
                  │
                  ▼
        ┌─────────────────────┐
@@ -229,7 +229,7 @@ These formats are **local compilation targets**, not a requirement for the globa
                   │
                   ▼
        ┌─────────────────────┐
-       │ JOB C — Evolve      │  patch skill/loop/graph; propose plugin/MCP
+       │ JOB C — Evolve      │  patch skill/loop/graph; propose MCP
        └─────────────────────┘
 ```
 
@@ -245,7 +245,7 @@ navi skill install ./design-loop.md
 The job (headless session or isolated subagent) should:
 
 1. **Self-interview** (internal reasoning; `question` only if domain facts are missing).
-2. **Capability survey** — this build/session of NAVI (tools Direct/Deferred, browser, goals, workflow, installed plugins, MCP).
+2. **Capability survey** — this build/session of NAVI (tools Direct/Deferred, browser, goals, workflow, MCP).
 3. **Project survey** — stack, test/build commands, AGENTS.md, preview URLs.
 4. **Write** `loop.toml`, `graph.toml`, verifier stubs, `CAPABILITY.md`.
 5. **Never invent tools** not present on the capability card; record gaps and fall back (e.g. bash/browser).
@@ -288,7 +288,7 @@ With feedback + traces, classify changes:
 |---|---|---|
 | P0 | Safety | Fewer destructive defaults, stronger verify gates |
 | P1 | Reliability | Better graph split, tighter loop stops |
-| P2 | Capability | Propose WASM plugin or MCP server |
+| P2 | Capability | Propose MCP server |
 
 Mutations:
 
@@ -296,10 +296,9 @@ Mutations:
 2. Loop params (budget, verify order)  
 3. Graph topology  
 4. Verifier recipes  
-5. **Local WASM plugin** proposal (deterministic host tools)  
-6. **MCP** proposal (external services)
+5. **MCP** proposal (external services)
 
-Security: prompt/graph evolution under `{data_dir}` is low risk; **plugin install and MCP enable require explicit approval**. Project config must not silently enable plugins/MCP (existing NAVI policy).
+Security: prompt/graph evolution under `{data_dir}` is low risk; **MCP enable requires explicit approval**. Project config must not silently enable MCP (existing NAVI policy).
 
 ---
 
@@ -343,13 +342,13 @@ Gaps that block self-materializing harnesses:
 |---|---|
 | Live Direct vs Deferred tool inventory | Graph invents unavailable tools |
 | Build features (browser, goals enabled) | Assumes browser when disabled |
-| Installed plugins / MCP tools | Never proposes real extensions |
+| MCP tools | Never proposes real extensions |
 | Host surfaces (skill install, headless flags) | Unrealistic harnesses for CI |
 | Existing harness versions | Re-materializes from scratch every time |
 
 ### 6.2 Capability card (proposed)
 
-Inject a short, **hash-stable** developer block (invalidate only when the tool/plugin/MCP set changes):
+Inject a short, **hash-stable** developer block (invalidate only when the tool/MCP set changes):
 
 ```text
 ## NAVI capabilities (this session)
@@ -357,7 +356,6 @@ Inject a short, **hash-stable** developer block (invalidate only when the tool/p
 - browser: available
 - tools.direct: [search, read_file, edit, write_file, bash, plan, question, tool_search, memory, …]
 - tools.deferred: discover via tool_search (code, browser, subagent, workflow, …)
-- plugins.installed: [id → tools]
 - mcp.connected: [id → tools]
 - harnesses.ready: [design-loop@3, …]
 ```
@@ -372,7 +370,7 @@ When a harness skill is active: pack path, loop stop conditions, graph nodes + t
 
 ---
 
-## 7. Plugins and MCP as harness evolution
+## 7. MCP as harness evolution
 
 Feedback must not stop at “better prose.” Upgrade ladder:
 
@@ -381,11 +379,8 @@ Feedback must not stop at “better prose.” Upgrade ladder:
 2. Loop params
 3. Graph topology
 4. Verifier recipes
-5. Host tool / WASM plugin   ← extends local NAVI
-6. MCP server                ← extends external world
+5. MCP server                ← extends external world
 ```
-
-**Propose a plugin** when the gap is local, deterministic, and schema-shaped (e.g. structured a11y audit, coverage delta). Flow: scaffold → `navi plugin install` (approval) → bind tools into graph/skill allowlist.
 
 **Propose MCP** when the capability is an external service or an existing MCP server. Skill/harness may declare `requires_mcp = ["…"]`.
 
@@ -400,7 +395,7 @@ Feedback must not stop at “better prose.” Upgrade ladder:
 | Long loop | Thread [goals](goal-system.md) + pack `loop.max_turns` / token budget | Full stop-predicate evaluation beyond max turns / goal status |
 | Multi-agent | `subagent`, `workflow`; soft graph entry `allow_tools` | Hard edge routing from `graph.toml` |
 | Self-improve content | Model can edit files / save skills | Job C + policy + CHANGELOG |
-| Plugins / MCP | Install paths exist | Proposal pipeline + skill↔plugin binding |
+| MCP | Install paths exist | Proposal pipeline |
 | Capability awareness | Inventory filter + capability card on materialize / activate | Richer live host cards |
 | Project awareness | AGENTS.md, search | Structured project card |
 | Eval | `navi eval` / bench | Cases under harness pack |
@@ -413,10 +408,10 @@ Feedback must not stop at “better prose.” Upgrade ladder:
 | Risk | Mitigation |
 |---|---|
 | Infinite self-modification | Budget the meta-loop; version harnesses; require feedback threshold |
-| Plugin spam | Only propose after repeated same gap (e.g. N runs) |
+| MCP spam | Only propose after repeated same gap (e.g. N runs) |
 | Mid-node prompt drift | Hard enforcement on edges (verify/tool jail) |
 | Prompt-cache thrash | Capability card keyed by hash |
-| Trust boundary | Evolve packs in data_dir; never auto-enable project plugins/MCP |
+| Trust boundary | Evolve packs in data_dir; never auto-enable project MCP |
 
 ---
 
@@ -427,14 +422,14 @@ Feedback must not stop at “better prose.” Upgrade ladder:
 3. **Job A materialize** (headless; dedicated compiler skill/prompt).  
 4. **Run path**: active skill loads loop (goal budget/max turns) + soft graph via subagent/workflow.  
 5. **Job B feedback** (`question` + run artifacts).  
-6. **Job C evolve** (patch pack; *propose* plugin/MCP with approval).  
+6. **Job C evolve** (patch pack; *propose* MCP with approval).  
 7. **Hard graph execution** once soft packs prove value.
 
 ---
 
 ## 11. Product one-liner
 
-**Skills are the ecosystem import UI; harnesses are the local compilation that NAVI materializes, runs with goals/tools/graphs, and recompiles from user feedback—optionally extending the engine through plugins and MCP.**
+**Skills are the ecosystem import UI; harnesses are the local compilation that NAVI materializes, runs with goals/tools/graphs, and recompiles from user feedback—optionally extending the engine through MCP.**
 
 ---
 

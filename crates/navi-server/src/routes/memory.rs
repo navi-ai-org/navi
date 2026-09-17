@@ -39,14 +39,6 @@ pub(crate) fn parse_memory_status(s: &str) -> Result<MemoryStatus, String> {
 // ── Request bodies / query DTOs ──────────────────────────────────────────
 // Accept both snake_case (Rust default) and camelCase (JS/Dart clients).
 
-#[derive(Debug, Default, Deserialize)]
-struct InitBody {
-    #[serde(default)]
-    embeddings: Option<bool>,
-    #[serde(default)]
-    force: Option<bool>,
-}
-
 #[derive(Debug, Deserialize)]
 struct WriteBody {
     id: String,
@@ -137,22 +129,15 @@ pub fn routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Rep
             }
         });
 
-    // POST /memory/init  (body optional — empty POST is valid)
+    // POST /memory/init  (request body optional/ignored)
     let init = warp::path!("memory" / "init")
         .and(warp::post())
-        .and(optional_json_body::<InitBody>())
         .and(sf.clone())
         .and(af.clone())
-        .and_then(|body: InitBody, s: SharedState| async move {
+        .and_then(|s: SharedState| async move {
             // Long-running: clone engine so other handlers are not blocked on the lock.
             let engine = s.engine.read().await.clone();
-            match engine
-                .memory_init(
-                    body.embeddings.unwrap_or(false),
-                    body.force.unwrap_or(false),
-                )
-                .await
-            {
+            match engine.memory_init().await {
                 Ok(report) => Ok::<_, Infallible>(warp::reply::json(&report).into_response()),
                 Err(e) => Ok(err_resp(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)),
             }

@@ -35,8 +35,9 @@ pub(crate) struct QueuedUserMessage {
     pub(crate) images: Vec<PendingImage>,
 }
 
-/// Display + hover-preview metadata for an image attached to a chat message.
-/// Base64 is kept for the hover modal (same bytes already live in conversation history).
+/// Display metadata for an image attached to a chat message.
+/// The actual bytes live in `content_parts` on the engine side; this struct
+/// only carries what the TUI renders (labels, dimensions).
 pub struct ChatImage {
     /// 1-based index shown in `[Image N]` tags.
     pub index: usize,
@@ -46,8 +47,6 @@ pub struct ChatImage {
     pub width: Option<u32>,
     /// Image height in pixels, if known.
     pub height: Option<u32>,
-    /// Raw base64 payload (no data-URL prefix) for hover preview.
-    pub data: String,
     /// Short label used by older render paths (e.g. `"PNG"` or `"image PNG 1200x800"`).
     pub label: String,
 }
@@ -59,7 +58,6 @@ impl std::fmt::Debug for ChatImage {
             .field("media_type", &self.media_type)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("data_len", &self.data.len())
             .field("label", &self.label)
             .finish()
     }
@@ -72,7 +70,6 @@ impl Clone for ChatImage {
             media_type: self.media_type.clone(),
             width: self.width,
             height: self.height,
-            data: self.data.clone(),
             label: self.label.clone(),
         }
     }
@@ -90,92 +87,8 @@ impl ChatImage {
             media_type: image.media_type.clone(),
             width: image.width,
             height: image.height,
-            data: image.data.clone(),
             label: mime_short,
         }
-    }
-
-    pub fn estimated_bytes(&self) -> usize {
-        // base64 → roughly 3/4 raw bytes
-        self.data.len().saturating_mul(3) / 4
-    }
-
-    pub fn format_short(&self) -> String {
-        self.media_type
-            .strip_prefix("image/")
-            .unwrap_or(&self.media_type)
-            .to_uppercase()
-    }
-}
-
-/// Floating hover preview for an attached image (composer or chat).
-#[derive(Debug, Clone)]
-pub struct ImageHoverPreview {
-    pub index: usize,
-    pub media_type: String,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub size_bytes: usize,
-    pub filename: Option<String>,
-    /// Base64 payload used to encode a Kitty/Sixel/iTerm2 preview when supported.
-    pub data: String,
-}
-
-impl ImageHoverPreview {
-    pub fn from_pending(index: usize, image: &PendingImage) -> Self {
-        Self {
-            index: index.saturating_add(1),
-            media_type: image.media_type.clone(),
-            width: image.width,
-            height: image.height,
-            size_bytes: image.data.len().saturating_mul(3) / 4,
-            filename: None,
-            data: image.data.clone(),
-        }
-    }
-
-    pub fn from_chat(image: &ChatImage) -> Self {
-        Self {
-            index: image.index,
-            media_type: image.media_type.clone(),
-            width: image.width,
-            height: image.height,
-            size_bytes: image.estimated_bytes(),
-            filename: None,
-            data: image.data.clone(),
-        }
-    }
-
-    pub fn format_short(&self) -> String {
-        self.media_type
-            .strip_prefix("image/")
-            .unwrap_or(&self.media_type)
-            .to_uppercase()
-    }
-
-    pub fn header_line(&self) -> String {
-        let mut parts = vec![format!("Image #{}", self.index), self.format_short()];
-        if let (Some(w), Some(h)) = (self.width, self.height) {
-            parts.push(format!("{w}×{h}"));
-        }
-        parts.push(format_byte_size(self.size_bytes));
-        if let Some(name) = &self.filename {
-            parts.push(name.clone());
-        }
-        parts.join(" · ")
-    }
-}
-
-fn format_byte_size(bytes: usize) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    let n = bytes as f64;
-    if n >= MB {
-        format!("{:.1} MB", n / MB)
-    } else if n >= KB {
-        format!("{:.1} KB", n / KB)
-    } else {
-        format!("{bytes} B")
     }
 }
 
@@ -482,8 +395,6 @@ pub(crate) enum SetupPhase {
     ProviderLogin,
     /// Choose default permission mode (restricted / accept-edits / yolo).
     Approvals,
-    /// Optional tip about marketplace WASM plugins (skip or continue).
-    MarketplaceTip,
     /// Model is interviewing the user with `question` tool.
     Interview,
 }
@@ -535,8 +446,6 @@ pub enum Mode {
     Debug,
     Help,
     Skills,
-    Plugins,
-    PluginApproval,
     Question,
     ThemePicker,
     MessageActions,
@@ -556,8 +465,6 @@ pub enum Mode {
     SetGoal,
     ConfirmCancelTurn,
     ConfirmPlan,
-    /// Confirm merging mcp.json from a just-installed plugin into global config.
-    ConfirmMcpMerge,
     /// Masked sudo password (secret never enters chat/model context).
     SudoPassword,
     /// `@` path/file/folder mention palette.
@@ -581,8 +488,6 @@ pub(crate) enum ModalKind {
     Debug,
     Help,
     Skills,
-    Plugins,
-    PluginApproval,
     Question,
     ThemePicker,
     MessageActions,
@@ -620,8 +525,6 @@ impl ModalKind {
             Self::Debug => Mode::Debug,
             Self::Help => Mode::Help,
             Self::Skills => Mode::Skills,
-            Self::Plugins => Mode::Plugins,
-            Self::PluginApproval => Mode::PluginApproval,
             Self::Question => Mode::Question,
             Self::ThemePicker => Mode::ThemePicker,
             Self::MessageActions => Mode::MessageActions,
@@ -1166,44 +1069,6 @@ pub(crate) struct SelectionState {
     /// When set, free-form text selection stays inside this chat block
     /// (per-entry selection, no cross-block bleed).
     pub bound_source: Option<ChatLineSource>,
-}
-
-/// A pending plugin install/update approval in the TUI.
-#[derive(Debug, Clone)]
-pub(crate) struct PluginApprovalRequest {
-    /// Unique id used to correlate with the decision callback.
-    pub id: String,
-    /// Source directory or path being installed from.
-    pub source_path: String,
-    /// The plugin id.
-    pub plugin_id: String,
-    /// The plugin version.
-    pub version: String,
-    /// The plugin publisher.
-    pub publisher: String,
-    /// Overall risk string (LOW, MEDIUM, HIGH, CRITICAL).
-    pub overall_risk: String,
-    /// Pre-formatted capabilities list (one per line, already truncated).
-    pub capabilities_text: String,
-    /// Pre-formatted tools list.
-    pub tools_text: String,
-    /// Pre-formatted warnings list.
-    pub warnings_text: String,
-    /// Whether this is an install or an update.
-    pub kind: PluginApprovalKind,
-    /// Pre-formatted diff (for updates), empty for installs.
-    pub changes_text: String,
-    /// For updates, the reconsent action label.
-    pub reconsent_action: Option<String>,
-    /// When the user approves, the on-disk install is performed.
-    pub install_on_approve: bool,
-}
-
-/// Whether the approval is for a fresh install or an update.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PluginApprovalKind {
-    Install,
-    Update,
 }
 
 /// Marker that a session goal is active (fields rendered from engine events).

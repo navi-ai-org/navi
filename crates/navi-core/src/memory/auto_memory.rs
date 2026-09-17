@@ -1,8 +1,9 @@
+use crate::db::{Db, DbConnection, OpenOptions, Row, RowResult, Value, params, params_from_iter};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// The four memory types supported by the auto-memory system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,12 +109,11 @@ pub struct ConsolidationReport {
 
 /// SQLite-backed persistent memory store.
 ///
-/// Source of truth for all auto-memories. Embeddings are stored as BLOB
-/// (256×f32 = 1KB per entry) for optional semantic search via cosine similarity.
-/// The project memory index is rendered on demand from this database.
+/// Source of truth for all auto-memories. Search is text-based (SQL `LIKE`);
+/// the project memory index is rendered on demand from this database.
 #[derive(Clone)]
 pub struct AutoMemoryStore {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<DbConnection>>,
     pub db_path: PathBuf,
 }
 
@@ -135,8 +135,9 @@ impl AutoMemoryStore {
                 .with_context(|| format!("Failed to create auto-memory directory: {:?}", parent))?;
         }
 
-        let conn = Connection::open(db_path)
+        let db = Db::open(db_path)
             .with_context(|| format!("Failed to open auto-memory database at {:?}", db_path))?;
+        let conn = db.connect_with(&OpenOptions::none())?;
         configure_connection(&conn)?;
 
         let store = Self {
@@ -159,7 +160,6 @@ impl AutoMemoryStore {
                 name        TEXT NOT NULL,
                 description TEXT NOT NULL,
                 body        TEXT NOT NULL,
-                embedding   BLOB,
                 confidence  REAL NOT NULL DEFAULT 1.0,
                 status      TEXT NOT NULL DEFAULT 'active',
                 evidence    TEXT,
@@ -202,37 +202,23 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "INSERT OR REPLACE INTO memories
-                (id, type, name, description, body, embedding, confidence, status,
+                (id, type, name, description, body, confidence, status,
                  evidence, created_at, updated_at, last_seen, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
-                entry.id,
+                entry.id.as_str(),
                 entry.memory_type.as_str(),
-                entry.name,
-                entry.description,
-                entry.body,
+                entry.name.as_str(),
+                entry.description.as_str(),
+                entry.body.as_str(),
                 entry.confidence,
                 entry.status.as_str(),
                 serde_json::to_string(&entry.evidence).unwrap_or_else(|_| "[]".to_string()),
-                entry.created_at,
-                entry.updated_at,
-                entry.last_seen,
-                entry.expires_at,
+                entry.created_at.as_str(),
+                entry.updated_at.as_str(),
+                entry.last_seen.as_str(),
+                entry.expires_at.as_deref(),
             ],
-        )?;
-        Ok(())
-    }
-
-    /// Stores an embedding (pre-computed) for a memory entry.
-    pub fn set_embedding(&self, id: &str, embedding: &[f32]) -> Result<()> {
-        let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        conn.execute(
-            "UPDATE memories SET embedding = ?1 WHERE id = ?2",
-            params![bytes, id],
         )?;
         Ok(())
     }
@@ -243,15 +229,14 @@ impl AutoMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+
+        conn.query_row_optional(
             "SELECT id, type, name, description, body, confidence, status,
                     evidence, created_at, updated_at, last_seen, expires_at
              FROM memories WHERE id = ?1",
-        )?;
-
-        let entry = stmt.query_row(params![id], row_to_entry).optional()?;
-
-        Ok(entry)
+            params![id],
+            row_to_entry,
+        )
     }
 
     /// Lists all memories, optionally filtered by status.
@@ -261,104 +246,34 @@ impl AutoMemoryStore {
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
-        let mut sql = String::from(
-            "SELECT id, type, name, description, confidence, status, updated_at
-             FROM memories",
-        );
-        if status_filter.is_some() {
-            sql.push_str(" WHERE status = ?1");
-        }
-        sql.push_str(" ORDER BY type, name");
-
-        let mut stmt = conn.prepare(&sql)?;
-
-        let rows = if let Some(status) = status_filter {
-            stmt.query_map(params![status.as_str()], |row| {
-                Ok(MemorySummary {
-                    id: row.get(0)?,
-                    memory_type: MemoryType::from_str(&row.get::<_, String>(1)?)
-                        .unwrap_or(MemoryType::User),
-                    name: row.get(2)?,
-                    description: row.get(3)?,
-                    confidence: row.get(4)?,
-                    status: MemoryStatus::from_str(&row.get::<_, String>(5)?)
-                        .unwrap_or(MemoryStatus::Active),
-                    updated_at: row.get(6)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect::<Vec<_>>()
+        if let Some(status) = status_filter {
+            conn.query_rows(
+                "SELECT id, type, name, description, confidence, status, updated_at
+                 FROM memories
+                 WHERE status = ?1
+                 ORDER BY type, name",
+                params![status.as_str()],
+                row_to_summary,
+            )
         } else {
-            stmt.query_map([], |row| {
-                Ok(MemorySummary {
-                    id: row.get(0)?,
-                    memory_type: MemoryType::from_str(&row.get::<_, String>(1)?)
-                        .unwrap_or(MemoryType::User),
-                    name: row.get(2)?,
-                    description: row.get(3)?,
-                    confidence: row.get(4)?,
-                    status: MemoryStatus::from_str(&row.get::<_, String>(5)?)
-                        .unwrap_or(MemoryStatus::Active),
-                    updated_at: row.get(6)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect::<Vec<_>>()
-        };
-
-        Ok(rows)
-    }
-
-    /// Returns all active memories with embeddings (for cosine similarity search).
-    pub fn list_with_embeddings(&self) -> Result<Vec<(MemorySummary, Vec<f32>)>> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, type, name, description, confidence, status, updated_at, embedding
-             FROM memories WHERE status = 'active' AND embedding IS NOT NULL
-             ORDER BY type, name",
-        )?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                let blob: Vec<u8> = row.get(7)?;
-                // chunks_exact(4) always yields a 4-byte slice.
-                let embedding: Vec<f32> = blob
-                    .chunks_exact(4)
-                    .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                    .collect();
-                Ok((
-                    MemorySummary {
-                        id: row.get(0)?,
-                        memory_type: MemoryType::from_str(&row.get::<_, String>(1)?)
-                            .unwrap_or(MemoryType::User),
-                        name: row.get(2)?,
-                        description: row.get(3)?,
-                        confidence: row.get(4)?,
-                        status: MemoryStatus::from_str(&row.get::<_, String>(5)?)
-                            .unwrap_or(MemoryStatus::Active),
-                        updated_at: row.get(6)?,
-                    },
-                    embedding,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(rows)
+            conn.query_rows(
+                "SELECT id, type, name, description, confidence, status, updated_at
+                 FROM memories
+                 ORDER BY type, name",
+                (),
+                row_to_summary,
+            )
+        }
     }
 
     /// Full-text search across name, description, and body using LIKE.
-    /// This is the fallback when embeddings are not available.
     pub fn search_text(&self, query: &str, limit: usize) -> Result<Vec<MemorySummary>> {
         let pattern = format!("%{}%", query.to_lowercase());
         let conn = self
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+        conn.query_rows(
             "SELECT id, type, name, description, confidence, status, updated_at
              FROM memories
              WHERE status = 'active'
@@ -367,50 +282,9 @@ impl AutoMemoryStore {
                  OR LOWER(body) LIKE ?1)
              ORDER BY confidence DESC, updated_at DESC
              LIMIT ?2",
-        )?;
-
-        let rows = stmt
-            .query_map(params![pattern, limit as i64], |row| {
-                Ok(MemorySummary {
-                    id: row.get(0)?,
-                    memory_type: MemoryType::from_str(&row.get::<_, String>(1)?)
-                        .unwrap_or(MemoryType::User),
-                    name: row.get(2)?,
-                    description: row.get(3)?,
-                    confidence: row.get(4)?,
-                    status: MemoryStatus::from_str(&row.get::<_, String>(5)?)
-                        .unwrap_or(MemoryStatus::Active),
-                    updated_at: row.get(6)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(rows)
-    }
-
-    /// Semantic search using cosine similarity against stored embeddings.
-    /// Returns top-K memories sorted by similarity score.
-    /// Only works when embeddings have been computed and stored.
-    pub fn search_semantic(
-        &self,
-        query_embedding: &[f32],
-        threshold: f32,
-        limit: usize,
-    ) -> Result<Vec<(MemorySummary, f32)>> {
-        let all = self.list_with_embeddings()?;
-        let mut scored: Vec<(MemorySummary, f32)> = all
-            .into_iter()
-            .map(|(summary, emb)| {
-                let score = cosine_similarity(query_embedding, &emb);
-                (summary, score)
-            })
-            .filter(|(_, score)| *score >= threshold)
-            .collect();
-
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(limit);
-        Ok(scored)
+            params![pattern, limit as i64],
+            row_to_summary,
+        )
     }
 
     /// Updates the status of a memory (e.g. active → obsolete).
@@ -422,7 +296,7 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "UPDATE memories SET status = ?1, updated_at = ?2 WHERE id = ?3",
-            params![status.as_str(), now, id],
+            params![status.as_str(), now.as_str(), id],
         )?;
         Ok(())
     }
@@ -441,47 +315,34 @@ impl AutoMemoryStore {
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
+        // Parameter 1 is always `updated_at`; the optional fields follow in
+        // order, and the id goes last (used by the WHERE clause).
         let mut sets = vec!["updated_at = ?1".to_string()];
         let mut param_idx = 2usize;
-        let mut param_values: Vec<Box<dyn rusqlite::ToSql>> =
-            vec![Box::new(now.clone()), Box::new(id.to_string())];
+        let mut values: Vec<Value> = vec![now.into()];
 
         if let Some(n) = name {
             sets.push(format!("name = ?{}", param_idx));
-            param_values.insert(param_idx - 1, Box::new(n.to_string()));
+            values.push(n.to_string().into());
             param_idx += 1;
         }
         if let Some(d) = description {
             sets.push(format!("description = ?{}", param_idx));
-            param_values.insert(param_idx - 1, Box::new(d.to_string()));
+            values.push(d.to_string().into());
             param_idx += 1;
         }
         if let Some(b) = body {
             sets.push(format!("body = ?{}", param_idx));
-            param_values.insert(param_idx - 1, Box::new(b.to_string()));
+            values.push(b.to_string().into());
         }
-
-        // Rebuild params: first is now, then the new values, last is id
-        let mut ordered: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
-        if let Some(n) = name {
-            ordered.push(Box::new(n.to_string()));
-        }
-        if let Some(d) = description {
-            ordered.push(Box::new(d.to_string()));
-        }
-        if let Some(b) = body {
-            ordered.push(Box::new(b.to_string()));
-        }
-        ordered.push(Box::new(id.to_string()));
+        values.push(id.to_string().into());
 
         let sql = format!(
             "UPDATE memories SET {} WHERE id = ?{}",
             sets.join(", "),
-            ordered.len()
+            values.len()
         );
-
-        let refs: Vec<&dyn rusqlite::ToSql> = ordered.iter().map(|b| b.as_ref()).collect();
-        conn.execute(&sql, refs.as_slice())?;
+        conn.execute(&sql, params_from_iter(values))?;
         Ok(())
     }
 
@@ -503,7 +364,7 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-            [],
+            (),
             |row| row.get(0),
         )?;
         Ok(count as usize)
@@ -528,9 +389,9 @@ impl AutoMemoryStore {
              SET status = 'needs_review', updated_at = ?1
              WHERE status = 'active'
                AND last_seen < ?2",
-            params![now, cutoff],
+            params![now.as_str(), cutoff],
         )?;
-        Ok(count)
+        Ok(count as usize)
     }
 
     /// Detects and merges duplicate memories. Two memories are considered
@@ -544,25 +405,16 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
 
         // Find groups of duplicates: same type + same lower(description)
-        let mut stmt = conn.prepare(
+        let dup_groups: Vec<(String, String)> = conn.query_rows(
             "SELECT id, type, LOWER(description) as desc_lower, MIN(created_at) as oldest
              FROM memories
              WHERE status = 'active'
              GROUP BY type, desc_lower
              HAVING COUNT(*) > 1",
+            (),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
 
-        let dup_groups: Vec<(String, String)> = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?, // id of first row in group
-                    row.get::<_, String>(1)?, // type
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        drop(stmt);
         let now = now_iso();
         let mut merged = 0;
         for (keep_id, type_str) in &dup_groups {
@@ -576,70 +428,12 @@ impl AutoMemoryStore {
                    AND LOWER(description) = (
                        SELECT LOWER(description) FROM memories WHERE id = ?3
                    )",
-                params![now, type_str, keep_id],
+                params![now.as_str(), type_str.as_str(), keep_id.as_str()],
             )?;
-            merged += marked;
+            merged += marked as usize;
         }
 
         Ok(merged)
-    }
-
-    /// Returns all active memories that do not have an embedding stored.
-    pub fn list_without_embeddings(&self) -> Result<Vec<MemorySummary>> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
-            "SELECT id, type, name, description, confidence, status, updated_at
-             FROM memories
-             WHERE status = 'active' AND embedding IS NULL
-             ORDER BY type, name",
-        )?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(MemorySummary {
-                    id: row.get(0)?,
-                    memory_type: MemoryType::from_str(&row.get::<_, String>(1)?)
-                        .unwrap_or(MemoryType::User),
-                    name: row.get(2)?,
-                    description: row.get(3)?,
-                    confidence: row.get(4)?,
-                    status: MemoryStatus::from_str(&row.get::<_, String>(5)?)
-                        .unwrap_or(MemoryStatus::Active),
-                    updated_at: row.get(6)?,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(rows)
-    }
-
-    /// Returns the full text of a memory (for embedding generation).
-    pub fn get_memory_text(&self, id: &str) -> Result<Option<String>> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let result = conn.query_row(
-            "SELECT name, description, body FROM memories WHERE id = ?1",
-            params![id],
-            |row| {
-                Ok(format!(
-                    "{}\n{}\n{}",
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?
-                ))
-            },
-        );
-        match result {
-            Ok(text) => Ok(Some(text)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
     }
 
     /// Runs a full consolidation pass: mark stale, deduplicate.
@@ -707,16 +501,14 @@ impl AutoMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+        let rows = conn.query_rows(
             "SELECT id, type, name, description, body, confidence, status,
                     evidence, created_at, updated_at, last_seen, expires_at
              FROM memories WHERE status = 'active'
              ORDER BY type, name",
+            (),
+            row_to_entry,
         )?;
-        let rows = stmt
-            .query_map([], row_to_entry)?
-            .filter_map(|r| r.ok())
-            .collect();
         Ok(rows)
     }
 
@@ -729,7 +521,7 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "UPDATE memories SET status = 'obsolete', updated_at = ?1 WHERE id = ?2",
-            params![now, id],
+            params![now.as_str(), id],
         )?;
         Ok(())
     }
@@ -749,13 +541,13 @@ impl AutoMemoryStore {
         if let Some(b) = body {
             conn.execute(
                 "UPDATE memories SET body = ?1, updated_at = ?2 WHERE id = ?3",
-                params![b, now, id],
+                params![b, now.as_str(), id],
             )?;
         }
         if let Some(c) = confidence {
             conn.execute(
                 "UPDATE memories SET confidence = ?1, updated_at = ?2 WHERE id = ?3",
-                params![c, now, id],
+                params![c, now.as_str(), id],
             )?;
         }
         Ok(())
@@ -769,16 +561,12 @@ impl AutoMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let result = conn.query_row(
+        let text: Option<String> = conn.query_row_optional(
             "SELECT value FROM session_checkpoint WHERE key = 'current'",
-            [],
+            (),
             |row| row.get(0),
-        );
-        match result {
-            Ok(text) => Ok(text),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(String::new()),
-            Err(e) => Err(e.into()),
-        }
+        )?;
+        Ok(text.unwrap_or_default())
     }
 
     /// Writes the session checkpoint text, replacing any previous content.
@@ -791,7 +579,7 @@ impl AutoMemoryStore {
         conn.execute(
             "INSERT OR REPLACE INTO session_checkpoint (key, value, updated_at)
              VALUES ('current', ?1, ?2)",
-            params![content, now],
+            params![content, now.as_str()],
         )?;
         Ok(())
     }
@@ -807,7 +595,7 @@ impl AutoMemoryStore {
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
         conn.execute(
             "INSERT INTO session_notes (content, created_at) VALUES (?1, ?2)",
-            params![content.trim(), now],
+            params![content.trim(), now.as_str()],
         )?;
         Ok(())
     }
@@ -818,11 +606,11 @@ impl AutoMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare("SELECT content FROM session_notes ORDER BY id ASC")?;
-        let rows: Vec<String> = stmt
-            .query_map([], |row| row.get(0))?
-            .filter_map(|r| r.ok())
-            .collect();
+        let rows: Vec<String> = conn.query_rows(
+            "SELECT content FROM session_notes ORDER BY id ASC",
+            (),
+            |row| row.get(0),
+        )?;
         Ok(rows.join("\n"))
     }
 
@@ -832,7 +620,7 @@ impl AutoMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("auto-memory lock poisoned: {e}"))?;
-        conn.execute("DELETE FROM session_notes", [])?;
+        conn.execute("DELETE FROM session_notes", ())?;
         Ok(())
     }
 
@@ -866,29 +654,14 @@ impl AutoMemoryStore {
     }
 }
 
-/// Computes cosine similarity between two f32 vectors.
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let min_len = a.len().min(b.len());
-    let mut dot = 0.0f32;
-    let mut norm_a = 0.0f32;
-    let mut norm_b = 0.0f32;
-    for i in 0..min_len {
-        dot += a[i] * b[i];
-        norm_a += a[i] * a[i];
-        norm_b += b[i] * b[i];
-    }
-    let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom > 0.0 { dot / denom } else { 0.0 }
-}
-
 /// Configures a SQLite connection for concurrent access:
 /// - WAL mode: allows multiple readers + 1 writer simultaneously
 /// - busy_timeout: wait up to 5s on lock instead of failing immediately
-/// - foreign_keys: enforce referential integrity
-pub fn configure_connection(conn: &Connection) -> Result<()> {
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "busy_timeout", 5000)?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+/// - synchronous: NORMAL (durable enough for a WAL database)
+pub fn configure_connection(conn: &DbConnection) -> Result<()> {
+    conn.pragma_update("journal_mode", "WAL")?;
+    conn.busy_timeout(Duration::from_millis(5000))?;
+    conn.pragma_update("synchronous", "NORMAL")?;
     Ok(())
 }
 
@@ -977,17 +750,17 @@ fn iso_from_unix(secs: u64) -> String {
     )
 }
 
-fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
+fn row_to_entry(row: &Row) -> RowResult<MemoryEntry> {
     let evidence_str: String = row.get(7).unwrap_or_else(|_| "[]".to_string());
     let evidence: Vec<String> = serde_json::from_str(&evidence_str).unwrap_or_default();
     Ok(MemoryEntry {
         id: row.get(0)?,
-        memory_type: MemoryType::from_str(&row.get::<_, String>(1)?).unwrap_or(MemoryType::User),
+        memory_type: MemoryType::from_str(&row.get::<String>(1)?).unwrap_or(MemoryType::User),
         name: row.get(2)?,
         description: row.get(3)?,
         body: row.get(4)?,
         confidence: row.get(5)?,
-        status: MemoryStatus::from_str(&row.get::<_, String>(6)?).unwrap_or(MemoryStatus::Active),
+        status: MemoryStatus::from_str(&row.get::<String>(6)?).unwrap_or(MemoryStatus::Active),
         evidence,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
@@ -996,8 +769,17 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<MemoryEntry> {
     })
 }
 
-// Re-export optional for query_row
-use rusqlite::OptionalExtension;
+fn row_to_summary(row: &Row) -> RowResult<MemorySummary> {
+    Ok(MemorySummary {
+        id: row.get(0)?,
+        memory_type: MemoryType::from_str(&row.get::<String>(1)?).unwrap_or(MemoryType::User),
+        name: row.get(2)?,
+        description: row.get(3)?,
+        confidence: row.get(4)?,
+        status: MemoryStatus::from_str(&row.get::<String>(5)?).unwrap_or(MemoryStatus::Active),
+        updated_at: row.get(6)?,
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -1110,34 +892,6 @@ mod tests {
     }
 
     #[test]
-    fn test_embedding_and_semantic_search() {
-        let (store, _tmp) = test_store();
-        store
-            .upsert(&new_entry(
-                "redis",
-                MemoryType::Feedback,
-                "Redis",
-                "Need Redis",
-                "Start Redis before tests",
-            ))
-            .expect("upsert");
-
-        // Fake embeddings — in production these come from the embedding model
-        let emb_a = vec![0.9, 0.1, 0.0, 0.0];
-        let emb_b = vec![0.1, 0.9, 0.0, 0.0];
-        store.set_embedding("redis", &emb_a).expect("set emb");
-
-        // Query "close" to emb_a
-        let results = store.search_semantic(&emb_a, 0.5, 10).expect("semantic");
-        assert_eq!(results.len(), 1);
-        assert!((results[0].1 - 1.0).abs() < 0.01);
-
-        // Query "far" from emb_a
-        let results = store.search_semantic(&emb_b, 0.5, 10).expect("semantic");
-        assert!(results.is_empty());
-    }
-
-    #[test]
     fn test_update() {
         let (store, _tmp) = test_store();
         store
@@ -1215,20 +969,6 @@ mod tests {
             .set_status("m1", MemoryStatus::Obsolete)
             .expect("status");
         assert_eq!(store.count_active().expect("count after"), 1);
-    }
-
-    #[test]
-    fn test_cosine_similarity() {
-        let a = vec![1.0, 0.0, 0.0];
-        let b = vec![1.0, 0.0, 0.0];
-        assert!((cosine_similarity(&a, &b) - 1.0).abs() < 0.001);
-
-        let c = vec![0.0, 1.0, 0.0];
-        assert!((cosine_similarity(&a, &c).abs()) < 0.001);
-
-        let d = vec![1.0, 1.0, 0.0];
-        let sim = cosine_similarity(&a, &d);
-        assert!((sim - 0.7071).abs() < 0.01);
     }
 
     #[test]

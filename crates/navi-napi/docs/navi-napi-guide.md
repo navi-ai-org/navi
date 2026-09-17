@@ -31,7 +31,7 @@
 - [Skills](#skills)
 - [MCP Servers](#mcp-servers)
 - [Saved Sessions](#saved-sessions)
-- [Registry & Plugins](#registry--plugins)
+- [Registry](#registry)
 - [Session Management](#session-management)
 - [Questions](#questions)
 - [Tool Approvals](#tool-approvals)
@@ -142,7 +142,7 @@ lifecycle hooks before the engine is created:
 ```ts
 const builder = new NaviNapiEngineBuilder('/path/to/project');
 
-// App-owned durable state (sessions, credentials, plugins)
+// App-owned durable state (sessions, credentials, registry)
 builder.dataDir('/path/to/app/navi-data');
 // Or inject a full config payload (invalid config fails at build with a clear error)
 // builder.loadedConfig({ model: { provider: 'openai', name: 'gpt-5.5' }, dataDir: '...' });
@@ -576,16 +576,12 @@ const atifJson = await engine.exportSessionAtif('saved-session-id', true);
 
 ---
 
-## Registry & Plugins
+## Registry
 
 ```ts
 // Force-sync the provider registry from the remote DB repo
 const updated = await engine.syncRegistry(true);
 // updated => boolean (true if the registry was refreshed)
-
-// Reload WASM plugins for all active sessions
-const warnings = await engine.reloadWasmPlugins();
-// warnings => string[] (load failure messages, if any)
 ```
 
 ---
@@ -719,7 +715,7 @@ const entry = engine.memoryRead("redis_tests");
 const memories = engine.memoryList("active");
 // → { count, returned, memories: [...] }
 
-// Search (semantic if embeddings available, text fallback)
+// Search (full-text)
 const results = engine.memorySearch("redis", 20);
 // → { query, count, results: [...] }
 
@@ -736,41 +732,6 @@ const count = engine.memoryCount();
 const index = engine.memoryIndex();
 ```
 
----
-
-## Voice / local dictation
-
-Engine-scoped ASR (not tied to a chat session). The **desktop client owns the mic** and pushes **16 kHz mono** PCM; NAVI owns model install and ONNX decode.
-
-```typescript
-const st = engine.voiceStatus();
-// → { enabled, engine, language, installed, model_dir, streaming_active, sample_rate, chunk_samples, recorders }
-
-if (!st.installed) {
-  await engine.voiceInit("nemotron_streaming"); // downloads into data_dir
-}
-
-const voiceEvents = engine.subscribeVoiceEvents();
-(async () => {
-  for (;;) {
-    const ev = await voiceEvents.next();
-    if (!ev) break;
-    // { type: "started" | "partial" | "final" | "error" | "stopped" | "model_missing", ... }
-  }
-})();
-
-engine.voiceStartStream("en-US");
-// from Web Audio / OS capture → Float32Array @ 16 kHz mono:
-engine.voicePushPcm(chunk);
-const finalText = engine.voiceEndStream();
-// or engine.voiceCancelStream();
-
-// Offline file path:
-const { text, tokenIds } = await engine.voiceTranscribeFile("/path/to/clip.wav", "pt-BR");
-```
-
-`voiceDoctor()` returns `{ ok, lines }` (same diagnostics as `navi voice doctor`).
-
 ### Memory Types
 
 - `user` — preferences, identity, working style
@@ -780,7 +741,30 @@ const { text, tokenIds } = await engine.voiceTranscribeFile("/path/to/clip.wav",
 
 ### Setup
 
-Run `navi memory init --embeddings` to download the embedding model for semantic search. See [Auto-Memory](../../../docs/auto-memory.md) for full documentation.
+Run `navi memory init` to initialize the memory store. See [Auto-Memory](../../../docs/auto-memory.md) for full documentation.
+
+---
+
+## Voice / transcription
+
+Engine-scoped remote transcription (not tied to a chat session). Transcription
+runs through a registry provider (OpenAI / Groq Whisper, …) configured in
+`[voice]`; NAVI resolves the API key the same way as LLM providers.
+
+```typescript
+// Registry transcription providers (OpenAI / Groq, …)
+const providers = engine.voiceTranscriptionProviders();
+
+// Point [voice] at a remote provider and persist it
+engine.setVoiceConfig({ provider: "groq", model: "whisper-large-v3" }, "global");
+
+const st = engine.voiceStatus();
+
+// Transcribe a WAV file through the selected provider
+const { text } = await engine.voiceTranscribeFileAsync("/path/to/clip.wav", "pt-BR");
+```
+
+`voiceDoctor()` returns `{ ok, lines }` (same diagnostics as `navi voice doctor`).
 
 ---
 

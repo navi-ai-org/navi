@@ -115,9 +115,6 @@ pub trait EngineDriver: Send + Sync {
     /// Clears the active goal for a session.
     async fn clear_goal(&self, session_id: &str) -> Result<()>;
 
-    /// Reload WASM plugin tools across all active sessions.
-    async fn reload_wasm_plugins(&self) -> Result<Vec<String>>;
-
     // ── Provider / model management ────────────────────────────────────
 
     /// Sync the remote provider registry into the local SQLite cache.
@@ -201,15 +198,6 @@ pub trait EngineDriver: Send + Sync {
     /// Export a saved session as an ATIF v1.7 trajectory JSON string.
     /// When `redact` is true, secret-like content is scrubbed.
     fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String>;
-
-    /// Take ownership of TUI component panels registered by native plugins.
-    ///
-    /// Returns `Box<dyn TuiComponent>` instances that the TUI can register
-    /// with its `PanelManager`. Each component is only available once.
-    fn take_tui_panels(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>>;
 
     /// Sets the permission mode for tool execution across the engine and any
     /// active sessions.
@@ -320,10 +308,6 @@ impl EngineDriver for crate::NaviEngine {
         crate::NaviEngine::clear_goal(self, session_id).await
     }
 
-    async fn reload_wasm_plugins(&self) -> Result<Vec<String>> {
-        crate::NaviEngine::reload_wasm_plugins(self).await
-    }
-
     async fn sync_registry(&self, force: bool) -> Result<bool> {
         crate::NaviEngine::sync_registry(self, force).await
     }
@@ -365,14 +349,9 @@ impl EngineDriver for crate::NaviEngine {
     fn memory_quick_status(&self) -> Result<String> {
         match crate::NaviEngine::memory_status(self) {
             Ok(s) => Ok(format!(
-                "{} · {} active · embeddings {}",
+                "{} · {} active",
                 if s.enabled { "on" } else { "off" },
                 s.active_memories,
-                if s.embeddings_available {
-                    "ready"
-                } else {
-                    "missing"
-                }
             )),
             Err(err) => Err(err),
         }
@@ -400,13 +379,6 @@ impl EngineDriver for crate::NaviEngine {
 
     fn export_session_atif(&self, session_id: &str, redact: bool) -> Result<String> {
         crate::NaviEngine::export_session_atif(self, session_id, redact)
-    }
-
-    fn take_tui_panels(
-        &self,
-        session_id: &str,
-    ) -> Result<Vec<Box<dyn navi_plugin_api::TuiComponent>>> {
-        crate::NaviEngine::take_tui_panels(self, session_id)
     }
 
     fn list_mcp_servers(&self, session_id: &str) -> Result<Vec<McpServerInfo>> {

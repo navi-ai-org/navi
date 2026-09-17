@@ -13,9 +13,9 @@
 NAVI’s suite is large (~1.7k–2.0k test functions across product crates) and **dominated by three cost centers**:
 
 1. **Compile-time: many integration binaries + full dependency graph**  
-   - `navi-cli` integration tests force linking **`CARGO_BIN_EXE_navi`** (full product binary: TUI + SDK + providers + plugins + voice stubs).  
+   - `navi-cli` integration tests force linking **`CARGO_BIN_EXE_navi`** (full product binary: TUI + SDK + providers + voice stubs).  
    - `navi-tui` has **four** integration harnesses (`screenshots`, `scenarios`, `event_loop`, `terminal_corruption_repro`), each recompiling the crate as an external binary.  
-   - Default features pull **candle embeddings** (`navi-core`) and **many tree-sitter grammars** (`navi-vfs`).  
+   - Default features pull **many tree-sitter grammars** (`navi-vfs` via `navi-core/code-vfs`).  
    - CI already learned this: clippy uses `--lib --bins` *not* `--all-targets`; test still runs full workspace tests (minus napi/dart/server).
 
 2. **Runtime: full `TuiApp` / `NaviEngine` construction per test**  
@@ -27,9 +27,9 @@ NAVI’s suite is large (~1.7k–2.0k test functions across product crates) and 
    - CI: `--test-threads=8` (justfile default 8).  
    - Many `#[tokio::test(flavor = "multi_thread")]` suites (TUI scenarios, navi-tui unit async, navi-core runtime, navi-mcp load, navi-sdk snapshot).  
    - Real sleeps: PTY settle 400ms, openai wiremock delays 300ms, MCP hang probes, SleepingTool 30ms, scenario poll loops up to 5s.  
-   - **Hang/flake already documented with `#[ignore]`**: headless e2e, async compact palette, fake-wasm plugin loads.
+   - **Hang/flake already documented with `#[ignore]`**: headless e2e, async compact palette.
 
-**Peak memory risks (tests):** concurrent multi_thread runtimes × full engines; snapshot string diffs holding expected+actual screens; panic messages that dump full golden text; SQLite open/close per TempDir; wasmtime + WAT compile in plugin-runtime; optional ONNX/voice model load (feature-gated, usually skipped).
+**Peak memory risks (tests):** concurrent multi_thread runtimes × full engines; snapshot string diffs holding expected+actual screens; panic messages that dump full golden text; SQLite open/close per TempDir; optional voice transcription model load (usually skipped).
 
 **Highest ROI (ranked):**  
 1. **S** — Delete or gate dead `tests/integration/*` duplicates (not Cargo-discovered).  
@@ -37,7 +37,7 @@ NAVI’s suite is large (~1.7k–2.0k test functions across product crates) and 
 3. **M** — Lightweight `TuiApp` / `Harness` path that skips real `NaviEngine` for pure UI tests.  
 4. **M** — Convert sleep/poll to notify/channel/tokio::sync primitives in scenario + MCP + tool concurrency tests.  
 5. **M** — Cap/share multi_thread runtimes; prefer `current_thread` unless concurrency is under test.  
-6. **L** — Feature-split embeddings/tree-sitter for test builds; cargo-nextest + timing profiles.
+6. **L** — Feature-split tree-sitter for test builds; cargo-nextest + timing profiles.
 
 ---
 
@@ -56,10 +56,8 @@ NAVI’s suite is large (~1.7k–2.0k test functions across product crates) and 
 | navi-vfs | Tree-sitter VFS | Yes |
 | navi-mcp | MCP client | Yes |
 | navi-lite | Minimal engine | Yes |
-| navi-voice | ASR (default features off in cli) | Yes (light unit; onnx integration cfg) |
-| navi-plugin-* | Manifest/broker/host/runtime/orchestrator | Yes |
+| navi-voice | ASR (remote transcription; no local inference) | Yes (light unit; transcription e2e soft-skip) |
 | copland | TUI widgets | Yes |
-| navi-plugin-api | Traits | Yes (no tests found) |
 | navi-server | Warp server | **Excluded** in CI |
 | navi-napi | Node binding | **Excluded** |
 | navi-dart | FFI | **Excluded** |
@@ -75,22 +73,18 @@ Counts are approximate (±5%) from attribute search. Integration = `crates/*/tes
 | **navi-core** | ~750–900 | 22 (`parity_check`) | Largest suite; tools/security/memory dominate |
 | **navi-tui** | ~288 | ~42 active | Plus **~28 orphan** under `tests/integration/` (see below) |
 | **navi-openai** | ~144 | 0 | Wiremock HTTP tests live in `src/tests.rs` |
-| **navi-plugin-broker** | ~132 | 0 | Includes `redteam_tests.rs` via `#[cfg(test)]` |
-| **navi-plugin-manifest** | ~88 | 0 | |
 | **navi-sdk** | ~74 | 0 | Heavy `engine/tests.rs` |
 | **navi-vfs** | ~63 | 0 | Grammar/minify tests |
 | **navi-core tool subsystem alone** | ~240+ | — | `tool/tests.rs` (~68) + builtins (~170+) |
 | **navi-cli** | ~6 (`bench_cmd`) | 6 (1 ignored) | Full binary link |
 | **copland** | ~24 | 0 | |
-| **navi-plugin-runtime** | ~18 | 0 | wasmtime + wat |
-| **navi-plugin-orchestrator** | ~16 | 0 | 1 ignored wasm |
 | **navi-mcp** | ~15 | 0 | multi_thread + process spawn |
 
-| **navi-voice** | ~8 | 2 (cfg `onnx`) | Model path soft-skip |
+| **navi-voice** | ~8 | 2 (transcription) | Model path soft-skip |
 | **navi-lite** | ~3 | 0 | |
 | **navi-dart** | 0 | ~31 | CI excluded |
 | **navi-napi** | ~14 | JS tests separate | CI excluded |
-| **navi-providers / plugin-api / server** | 0 | 0 | |
+| **navi-providers / server** | 0 | 0 | |
 
 **Rough CI product total:** on the order of **~1,700–2,000** runnable tests (excluding ignored and feature-gated voice e2e).
 
@@ -105,9 +99,8 @@ Counts are approximate (±5%) from attribute search. Integration = `crates/*/tes
 | `terminal_corruption_repro` | `crates/navi-tui/tests/terminal_corruption_repro.rs` | No |
 | `headless_e2e` | `crates/navi-cli/tests/headless_e2e.rs` | **Yes** `CARGO_BIN_EXE_navi` |
 | `pty_smoke` | `crates/navi-cli/tests/pty_smoke.rs` | **Yes** |
-| `plugin_install_update` | `crates/navi-cli/tests/plugin_install_update.rs` | **Yes** |
 | `ffi_api` | `crates/navi-dart/tests/ffi_api.rs` | No (dart crate) |
-| `transcribe_libri` | `crates/navi-voice/tests/transcribe_libri.rs` | No; `cfg(feature = "onnx")` |
+| `transcribe_libri` | `crates/navi-voice/tests/transcribe_libri.rs` | No; model-dependent |
 
 Cargo discovers **only** `tests/*.rs` and `tests/*/main.rs`. Subdirectory sources without `main.rs` are **not** targets.
 
@@ -127,8 +120,6 @@ The `tests/integration/` tree is a **stale copy** (same comments, same test name
 |----------|-------------------------|
 | `navi-cli/tests/headless_e2e.rs:9` | `hangs on CI mock multi-turn (headless e2e)` |
 | `navi-tui/src/tests.rs:666` | `flaky async compact palette on CI` |
-| `navi-plugin-orchestrator/.../orchestrator.rs:523` | `needs real wasm fixture, not placeholder bytes` |
-| `navi-sdk/src/tooling.rs:378` | `needs real wasm fixture` |
 
 ### How tests are invoked
 
@@ -151,9 +142,8 @@ Files:
 
 - `crates/navi-cli/tests/pty_smoke.rs:42` — `env!("CARGO_BIN_EXE_navi")`
 - `crates/navi-cli/tests/headless_e2e.rs:101` — same
-- `crates/navi-cli/tests/plugin_install_update.rs:43` — same
 
-`navi-cli` depends on `navi-tui`, `navi-sdk`, `navi-core`, plugins, voice, etc. Each `[[test]]` harness waits on a complete binary rebuild when CLI or any deep dep changes. That is correct for smoke/e2e, but expensive on every PR when mixed with unit suites.
+`navi-cli` depends on `navi-tui`, `navi-sdk`, `navi-core`, voice, etc. Each `[[test]]` harness waits on a complete binary rebuild when CLI or any deep dep changes. That is correct for smoke/e2e, but expensive on every PR when mixed with unit suites.
 
 **Effort S–M:** gate under `#[cfg]` or cargo feature / separate CI job so PR default is lib+bins.
 
@@ -166,7 +156,7 @@ Four separate crates-as-tests all depend on `navi_tui::testing` (pub harness) + 
 - event_loop (4)
 - terminal_corruption_repro (10)
 
-Each forces an integration-test compile of the full TUI graph (image/ratatui-image, copland, sdk, core). CI clippy already refuses `--all-targets` for this reason (`.github/workflows/ci.yml:81–83`).
+Each forces an integration-test compile of the full TUI graph (image, copland, sdk, core). CI clippy already refuses `--all-targets` for this reason (`.github/workflows/ci.yml:81–83`).
 
 **Effort M:** merge into one `tests/tui_integration/main.rs` binary, or keep screenshots PR-always and move scenarios/corruption to nightly.
 
@@ -174,18 +164,16 @@ Each forces an integration-test compile of the full TUI graph (image/ratatui-ima
 
 | Feature / dep | Where | Test impact |
 |---------------|-------|-------------|
-| `embeddings` (candle-core/nn/transformers, tokenizers, hf-hub) | `navi-core` default | Compiles even if most tests never load models |
 | tree-sitter × ~15 languages | `navi-vfs` build.rs | Long C compile; always in product path |
-| `wasmtime` + cranelift | `navi-plugin-runtime` | Large dep; WAT tests compile modules |
 | `wiremock` | navi-openai, navi-cli dev-dep | Fine for unit; pulls hyper stack |
 | `portable-pty` | navi-cli dev-dep | PTY smoke only |
-| `image` / `ratatui-image` | navi-tui | Always for any tui test compile |
-| `ort` download-binaries | navi-voice feature `onnx` | CLI defaults voice **off**; still a footgun if enabled in CI |
+| `image` | navi-tui | Always for any tui test compile |
+| navi-voice `onnx` | navi-voice | Deprecated no-op; kept for downstream feature resolution |
 
 ### 4. Workspace / `--all-targets` rebuild behavior
 
 - `cargo test --workspace` builds every member’s lib tests **and** integration binaries.  
-- Changing a leaf in `navi-core` invalidates navi-sdk, navi-tui, navi-cli, openai, plugins…  
+- Changing a leaf in `navi-core` invalidates navi-sdk, navi-tui, navi-cli, openai…  
 - `just test-fast` avoids integration binaries — **preferred local loop** (already documented).  
 - Clippy CI correctly avoids `--all-targets`; **test CI does not** split unit vs integration.
 
@@ -200,7 +188,6 @@ Notable large test modules (recompile cost on any edit in same crate):
 | `navi-core/src/tool/tests.rs` | ~68 | Tool executor async |
 | `navi-core/src/security.rs` tests | ~69 | TempDir-heavy |
 | `navi-core/src/tool/builtin/*` | ~170+ | Per-tool suites |
-| `navi-plugin-broker/src/redteam_tests.rs` | ~36 | Security redteam |
 | `navi-sdk/src/engine/tests.rs` | ~70 | Full engine builder |
 
 ---
@@ -221,7 +208,6 @@ Notable large test modules (recompile cost on any edit in same crate):
 | `navi-core/src/runtime/tests.rs:494` | `sleep(50ms)` | Ordering / cancel tests |
 | `navi-core/src/session.rs:598` | `thread::sleep(50ms)` in session code under test path | Retries |
 | `navi-mcp/src/lib.rs:687–719` | Spawns `sleep 10`, expects finish **&lt;5s** with 200ms server timeout | Process spawn + multi_thread runtime |
-| `navi-plugin-runtime/src/runtime.rs:534–570` | WASM busy loop + **1ms** timeout / fuel | CPU-bound, can be flaky under load |
 | `navi-tui/src/tests.rs:1791` | poll with 1ms sleep × 50 | Minor |
 | `navi-tui/src/mouse.rs:1283` | sleep 1ms in async test | Minor |
 
@@ -242,7 +228,6 @@ Widespread `tempfile::tempdir` / `TempDir::new` in:
 - `navi-sdk/src/engine/tests.rs` (`test_engine` helper every test group)
 - `navi-core` security, session, credentials, memory, plan_store, eval, tools
 - `navi-cli` e2e (3–4 TempDirs per test)
-- `navi-plugin-broker` fs/git/redteam
 - `navi-dart/tests/ffi_api.rs` (nearly every test)
 
 Cost: mkdir, SQLite file create/delete, fsync pressure under 8-way parallel tests.
@@ -315,15 +300,11 @@ Even `Harness::with_engine` first builds a real app then replaces the engine (`t
 
 `available_model_options` + provider catalog load embedded/registry snapshot into each app. Large JSON snapshot tree: `crates/navi-core/registry-snapshot/providers/*.json` (27 providers). Tests often then clear models for stable goldens (`clear_models` in harness) — **pay cost then discard**.
 
-### 4. Embeddings / candle (Medium compile, Low runtime if paths empty)
+### 4. Voice transcription (High if a model is present)
 
-`navi-core` default `embeddings` compiles candle; runtime load is `OnceLock` cached (`memory/embedding.rs:27–60`). Memory tests set empty embedding paths (`memory/tests.rs:662–663`) → no model load. Risk if a test points at real model paths or CI caches HF models.
+`transcribe_libri.rs` loads the Nemotron engine when a model dir exists (`navi-voice/tests/transcribe_libri.rs:45–56`). Soft-skips otherwise. Local `onnx` inference is gone (the feature is a deprecated no-op); keep the model off CI to avoid RAM peaks.
 
-### 5. Voice ONNX (High if feature on)
-
-`transcribe_libri.rs` loads Nemotron engine when model dir exists (`navi-voice/tests/transcribe_libri.rs:45–56`). Soft-skips otherwise. **Do not enable `onnx` on CI** without RAM budget.
-
-### 6. Concurrent multi_thread runtimes (Medium–High)
+### 5. Concurrent multi_thread runtimes (Medium–High)
 
 Each `#[tokio::test(flavor = "multi_thread")]` can spin a multi-thread scheduler. Combined with test-threads=8:
 
@@ -334,15 +315,11 @@ Each `#[tokio::test(flavor = "multi_thread")]` can spin a multi-thread scheduler
 
 → thread stack + runtime overhead multiplies.
 
-### 7. WASM runtime tests (Medium)
-
-`navi-plugin-runtime` instantiates wasmtime, compiles WAT, runs fuel/timeout loops (`runtime.rs:495–570`). Transient peak during Cranelift compile.
-
-### 8. SDK clone-heavy helpers (Medium)
+### 6. SDK clone-heavy helpers (Medium)
 
 `test_engine()` builds full config + engine; many tests call it independently without reuse (`engine/tests.rs:10–31`). Same for `test_engine_with_key`.
 
-### 9. Session event logs / ModelDelta in tests (Low–Medium)
+### 7. Session event logs / ModelDelta in tests (Low–Medium)
 
 Tests generally inject **small** numbers of deltas (e.g. scenarios 2 deltas; screenshot injects few). Production ModelDelta accumulation is a **product** memory issue (`docs/performance-audit.md`); test suite does not currently synthesize thousands of deltas. Worth avoiding if anyone writes “stress” stream tests later.
 
@@ -354,15 +331,12 @@ Tests generally inject **small** numbers of deltas (e.g. scenarios 2 deltas; scr
 |----|-------------|---------|--------|------------------------|
 | H1 | `headless_cli_runs_engine_provider_and_read_tool` | Hang / never completes multi-turn mock | **`#[ignore]`** | Process e2e + wiremock multi-turn under load; 180s timeout still insufficient historically |
 | H2 | `command_palette_compact_submits_immediate_summary_request` | Flaky on CI | **`#[ignore]`** | Async turn task race; multi_thread |
-| H3 | `load_succeeds_with_approved_lockfile_entry` (orchestrator) | Would fail without real wasm | **`#[ignore]`** | Placeholder bytes rejected |
-| H4 | `build_local_tooling_loads_installed_wasm_plugin_store` (sdk) | Same | **`#[ignore]`** | Fake wasm |
 | H5 | `pty_smoke_renders_welcome_then_quits_cleanly` | Intermittent empty PTY / slow start | Active | 400ms settle may be tight on cold binary |
 | H6 | TUI scenarios (`wait_for_calls` 5s) | Timeout panic under starvation | Active | Polling + multi_thread + MockEngine scheduling |
 | H7 | MCP `load_times_out_when_server_hangs` | False fail if spawn slow | Active | Expects &lt;5s; spawns real `sleep` process |
-| H8 | plugin-runtime `execute_timeout` | Timeout vs fuel race | Active | Busy loop under scheduler pressure |
 | H9 | Shared `/tmp/navi-test` data_dir | Cross-test credential/session interference | Latent | Not TempDir-isolated in unit helper |
 | H10 | Registry TLS + parallel RegistryStore::open | Catalog inconsistency | Latent | Thread-local store + parallel apps |
-| H11 | Voice e2e | RAM/hang if model present | Soft-skip | Full ONNX load |
+| H11 | Voice e2e | RAM/hang if model present | Soft-skip | Full transcription model load |
 | H12 | Dead `tests/integration/*` | Human confusion only | Orphan | Not executed |
 
 ---
@@ -379,13 +353,12 @@ Tests generally inject **small** numbers of deltas (e.g. scenarios 2 deltas; scr
 | 6 | **Prefer `current_thread` tokio unless concurrency is the subject** | **S** | Fewer threads / less RAM under test-threads=8 | Keep multi_thread only for runtime_session_lifecycle, MCP spawn, etc. |
 | 7 | **Gate CLI integration tests behind feature or `--ignored` job** | **S** | Compile time for PR | Keep one `pty_smoke` on main CI if startup regressions matter |
 | 8 | **Merge tui integration binaries into one target** | **M** | Compile time | Single `tests/tui/main.rs` modules |
-| 9 | **`navi-core` test profile: `default-features = false` for embeddings in test-only builds** | **M–L** | Compile time (candle) | Careful: product default stays embeddings |
+| 9 | **`navi-core` test profile: feature-split `code-vfs` for test-only builds** | **M–L** | Compile time (tree-sitter) | Careful: product default stays `code-vfs` |
 | 10 | **Shared `OnceLock` test fixtures for registry catalog / default config** | **M** | Runtime allocs | Avoid re-parse provider JSON |
 | 11 | **Snapshot asserts: hash or size-limited diffs** | **S** | Failure-path memory/log spam | Don’t dump dual 120×40 on every mismatch in CI logs |
-| 12 | **Real wasm fixture pack for ignored plugin tests** | **M** | Coverage without hang | Or keep ignored on nightly only |
-| 13 | **Re-enable headless_e2e with deterministic mock protocol** | **L** | Product confidence | Fix hang before PR gate |
-| 14 | **cargo-nextest + slow-test quarantine** | **S** | Better timing data; retries only flaky set | justfile already installs nextest in setup-tools |
-| 15 | **Cap CARGO_TEST_THREADS=2 on low-RAM; document RAM budget** | **S** | OOM avoidance | justfile already comments this |
+| 12 | **Re-enable headless_e2e with deterministic mock protocol** | **L** | Product confidence | Fix hang before PR gate |
+| 13 | **cargo-nextest + slow-test quarantine** | **S** | Better timing data; retries only flaky set | justfile already installs nextest in setup-tools |
+| 14 | **Cap CARGO_TEST_THREADS=2 on low-RAM; document RAM budget** | **S** | OOM avoidance | justfile already comments this |
 
 ---
 
@@ -406,16 +379,15 @@ Tests generally inject **small** numbers of deltas (e.g. scenarios 2 deltas; scr
 | Job | Command | Rationale |
 |-----|---------|-----------|
 | full product | current `cargo test --workspace --exclude napi/dart/server` | Catch integration drift |
-| cli e2e | `plugin_install_update` + **ignored** `headless_e2e` once fixed | Full binary paths |
+| cli e2e | **ignored** `headless_e2e` once fixed | Full binary paths |
 | tui scenarios + event_loop + corruption | remaining navi-tui `--tests` | Async races |
 | bindings | navi-dart / navi-napi | Heavy toolchains |
 | coverage | `just coverage` | llvm-cov slow |
-| voice onnx | only if models cached + high RAM runner | Optional |
+| voice transcription | only if models cached + high RAM runner | Optional |
 
 ### Explicitly not on PR by default
 
-- `navi-voice` onnx transcription with real model  
-- WASM plugin load tests without fixtures (stay ignored or nightly with fixtures)  
+- `navi-voice` transcription with real model  
 - `cargo test --all-targets` / clippy `--all-targets`  
 - Workspace members navi-server unless server job added  
 
@@ -442,7 +414,6 @@ just test               # before PR if touching CLI/TUI integration
 /home/enrell/projects/navi/crates/navi-tui/tests/terminal_corruption_repro.rs
 /home/enrell/projects/navi/crates/navi-cli/tests/headless_e2e.rs
 /home/enrell/projects/navi/crates/navi-cli/tests/pty_smoke.rs
-/home/enrell/projects/navi/crates/navi-cli/tests/plugin_install_update.rs
 /home/enrell/projects/navi/crates/navi-dart/tests/ffi_api.rs
 /home/enrell/projects/navi/crates/navi-voice/tests/transcribe_libri.rs
 ```
@@ -464,7 +435,6 @@ Orphan (not Cargo targets):
 | navi-tui | tempfile |
 | navi-core | tempfile |
 | navi-sdk | tempfile, toml |
-| navi-plugin-runtime | wat |
 | navi-voice | tempfile, tokio macros |
 
 ### C. Measurement notes (for follow-up)
@@ -537,15 +507,14 @@ High-ROI fixes from this audit (implement pass):
 | 12 | **SQLite `block_in_place`**: session/stream helpers only block on multi_thread runtimes (safe under `current_thread` unit tests). | Done |
 | 9 | **Snapshot mismatch**: truncate expected/actual dumps to 2k chars. | Done |
 | 10 | **Tokio flavor**: prefer default/`current_thread` for navi-tui unit async tests that do not need multi_thread. | Done |
-| 11 | **Ignored hang/flake (unchanged, still skipped)**: `headless_e2e`, compact palette, wasm fake plugin loads. | Kept |
+| 11 | **Ignored hang/flake (unchanged, still skipped)**: `headless_e2e`, compact palette. | Kept |
 
 ### Still deferred (not in this pass)
 
 - Merge TUI integration binaries into one target
-- Feature-split embeddings/tree-sitter for test builds
+- Feature-split tree-sitter for test builds
 - `cargo-nextest` CI profile / slow quarantine
 - Re-enable `headless_e2e` with deterministic mock protocol
-- Real wasm fixtures for ignored plugin tests
 - Shared OnceLock registry catalog fixtures
 - Mass-convert remaining multi_thread suites outside navi-tui (runtime/mcp/sdk)
 - Gate screenshots behind `RUN_TUI_SNAPSHOTS` env (still always on PR CI)

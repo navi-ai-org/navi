@@ -269,7 +269,7 @@ fn short_model_label(provider: &str, name: &str) -> String {
 
 /// Collapse verbose memory doctor strings into a scannable status.
 fn short_memory_status(status: &str) -> String {
-    // Typical: "on · 1 active · embeddings ready"
+    // Typical: "on · 1 active"
     let lower = status.to_ascii_lowercase();
     if lower.contains("off") {
         return "off".into();

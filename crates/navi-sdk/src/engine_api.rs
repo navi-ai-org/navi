@@ -85,11 +85,6 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "delegate_acp_turn_simple",
     // Events
     "subscribe_events",
-    // TUI panels
-    "list_tui_components",
-    "take_tui_panels",
-    "list_tui_extensions",
-    "list_tui_extension_commands",
     // Background commands
     "list_background_commands",
     "poll_background_command",
@@ -117,30 +112,14 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "voice_transcription_providers",
     "set_voice_config",
     "voice_doctor",
-    "voice_engine_installed",
-    "voice_init",
     "voice_transcribe_file",
     "voice_transcribe_file_async",
-    "voice_start_stream",
-    "voice_push_pcm",
-    "voice_end_stream",
-    "voice_cancel_stream",
     "subscribe_voice_events",
     // Registry
     "sync_registry",
     "list_registry",
     "sync_provider_models",
     "sync_models",
-    // Plugins
-    "plugin_list",
-    "plugin_info",
-    "plugin_search",
-    "plugin_install_path",
-    "plugin_install_path_with_meta",
-    "plugin_install_marketplace",
-    "plugin_update_path",
-    "plugin_update_marketplace",
-    "plugin_remove",
     // Saved sessions
     "list_saved_sessions",
     "list_saved_sessions_async",
@@ -158,8 +137,6 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "tool_profile",
     "prompt_profile",
     "security_profile",
-    // WASM plugins
-    "reload_wasm_plugins",
     // Config
     "loaded_config",
     // Computer use (OS automation — ADR 0016)
@@ -254,11 +231,6 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "delegate_acp_turn_simple",
     // Events
     "subscribe_events",
-    // TUI panels
-    "list_tui_components",
-    "take_tui_panels",
-    "list_tui_extensions",
-    "list_tui_extension_commands",
     // Background commands
     "list_background_commands",
     "poll_background_command",
@@ -286,30 +258,14 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "voice_transcription_providers",
     "set_voice_config",
     "voice_doctor",
-    "voice_engine_installed",
-    "voice_init",
     "voice_transcribe_file",
     "voice_transcribe_file_async",
-    "voice_start_stream",
-    "voice_push_pcm",
-    "voice_end_stream",
-    "voice_cancel_stream",
     "subscribe_voice_events",
     // Registry
     "sync_registry",
     "list_registry",
     "sync_provider_models",
     "sync_models",
-    // Plugins
-    "plugin_list",
-    "plugin_info",
-    "plugin_search",
-    "plugin_install_path",
-    "plugin_install_path_with_meta",
-    "plugin_install_marketplace",
-    "plugin_update_path",
-    "plugin_update_marketplace",
-    "plugin_remove",
     // Saved sessions
     "list_saved_sessions",
     "list_saved_sessions_async",
@@ -327,8 +283,6 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "tool_profile",
     "prompt_profile",
     "security_profile",
-    // WASM plugins
-    "reload_wasm_plugins",
     // Config
     "loaded_config",
     // Computer use (OS automation — ADR 0016)

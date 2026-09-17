@@ -619,9 +619,9 @@ fn command_palette_has_copy_session_and_last_response() {
     let rows = crate::commands::command_rows(&app);
     let actions: Vec<_> = rows
         .iter()
-        .filter_map(|row| match row {
-            crate::commands::CommandRow::Item(item) => Some(item.action),
-            _ => None,
+        .map(|row| {
+            let crate::commands::CommandRow::Item(item) = row;
+            item.action
         })
         .collect();
     assert!(actions.contains(&CommandAction::CopySession));
@@ -634,9 +634,9 @@ fn command_palette_has_copy_session_and_last_response() {
     let search_rows = crate::commands::command_rows(&app);
     let search_actions: Vec<_> = search_rows
         .iter()
-        .filter_map(|row| match row {
-            crate::commands::CommandRow::Item(item) => Some(item.action),
-            _ => None,
+        .map(|row| {
+            let crate::commands::CommandRow::Item(item) = row;
+            item.action
         })
         .collect();
     assert!(search_actions.contains(&CommandAction::CopySession));
@@ -2157,22 +2157,6 @@ fn bare_ascii_control_bytes_open_global_shortcuts() {
     let mut app = test_app("keep");
     handle_key(&mut app, KeyCode::Char('\r'), KeyModifiers::NONE);
     assert_ne!(app.mode, Mode::Models, "bare CR must not open models");
-}
-
-#[test]
-fn wants_mouse_free_motion_with_pending_image() {
-    use crate::event_loop::wants_mouse_free_motion;
-    use crate::state::PendingImage;
-
-    let mut app = test_app("");
-    assert!(!wants_mouse_free_motion(&app));
-    app.pending_images.push(PendingImage {
-        media_type: "image/png".into(),
-        data: "AAAA".into(),
-        width: None,
-        height: None,
-    });
-    assert!(wants_mouse_free_motion(&app));
 }
 
 #[test]

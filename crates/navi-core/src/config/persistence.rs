@@ -54,7 +54,7 @@ impl NaviConfig {
     pub(crate) fn merge(&mut self, other: NaviConfig) {
         use crate::config::types::{
             AttachmentModelsConfig, BrowserConfig, GoalsConfig, McpConfig, ModelConfig,
-            PluginMarketplaceConfig, SkillsConfig, TuiConfig, UpdatesConfig, VoiceConfig,
+            SkillsConfig, TuiConfig, UpdatesConfig, VoiceConfig,
         };
 
         if other.model != ModelConfig::default() {
@@ -79,17 +79,14 @@ impl NaviConfig {
         if other.tui != TuiConfig::default() {
             self.tui = other.tui;
         }
-        if other.plugin_marketplace != PluginMarketplaceConfig::default() {
-            self.plugin_marketplace = other.plugin_marketplace;
-        }
         if other.goals != GoalsConfig::default() {
             self.goals = other.goals;
         }
         if other.updates != UpdatesConfig::default() {
             self.updates = other.updates;
         }
-        // Remote dictation / local ASR — only override when the file actually
-        // customizes [voice] (serde fills defaults for missing tables).
+        // Remote dictation — only override when the file actually customizes
+        // [voice] (serde fills defaults for missing tables).
         if other.voice != VoiceConfig::default() {
             self.voice = other.voice;
         }
@@ -106,8 +103,6 @@ impl NaviConfig {
             self.acp_agents = other.acp_agents;
         }
         crate::config::providers::merge_provider_configs(&mut self.providers, other.providers);
-        self.plugins.extend(other.plugins);
-        self.wasm_plugins.extend(other.wasm_plugins);
     }
 }
 
@@ -182,24 +177,11 @@ fn merge_from_file(
         .with_context(|| format!("failed to parse config {}", path.display()))?;
     if matches!(source, ConfigSource::Project) {
         // Project-local config must not load code or network surfaces from the repo
-        // (supply-chain risk). Native plugins, WASM scan roots, and MCP servers belong
-        // in the user-global config or via `navi plugin install` → {data_dir}/plugins/.
-        if !file_config.plugins.is_empty() {
-            tracing::warn!(
-                path = %path.display(),
-                "ignoring [[plugins]] from project config (use global config or navi plugin install)"
-            );
-        }
+        // (supply-chain risk). MCP servers belong in the user-global config.
         if file_config.mcp.enabled || !file_config.mcp.servers.is_empty() {
             tracing::warn!(
                 path = %path.display(),
                 "ignoring [mcp] from project config (use global ~/.config/navi/config.toml)"
-            );
-        }
-        if !file_config.wasm_plugins.is_empty() {
-            tracing::warn!(
-                path = %path.display(),
-                "ignoring [[wasm_plugins]] from project config (installed plugins auto-load from data_dir/plugins)"
             );
         }
         if file_config.acp.enabled || !file_config.acp_agents.is_empty() {
@@ -208,9 +190,7 @@ fn merge_from_file(
                 "ignoring [acp]/[[acp_agents]] from project config (use global ~/.config/navi/config.toml)"
             );
         }
-        file_config.plugins.clear();
         file_config.mcp = crate::config::types::McpConfig::default();
-        file_config.wasm_plugins.clear();
         file_config.acp = crate::config::types::AcpConfig::default();
         file_config.acp_agents.clear();
 
@@ -267,7 +247,7 @@ mod tests {
     use crate::config::types::McpConfig;
 
     #[test]
-    fn project_config_cannot_enable_plugins_or_mcp() {
+    fn project_config_cannot_enable_mcp() {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let path = tempdir.path().join("config.toml");
         fs::write(
@@ -276,10 +256,6 @@ mod tests {
 [model]
 provider = "openai"
 name = "gpt-test"
-
-[[plugins]]
-path = ".navi/plugins/native.so"
-enabled = true
 
 [mcp]
 enabled = true
@@ -297,8 +273,6 @@ enabled = true
         merge_from_file(&mut config, &path, ConfigSource::Project).expect("merge");
 
         assert_eq!(config.model.name, "gpt-test");
-        assert!(config.plugins.is_empty());
-        assert!(config.wasm_plugins.is_empty());
         assert_eq!(config.mcp, McpConfig::default());
     }
 
@@ -383,7 +357,7 @@ enabled = true
         .expect("write config");
 
         let mut config = NaviConfig::default();
-        assert_eq!(config.voice.provider, "local");
+        assert!(config.voice.provider.is_empty());
         merge_from_file(&mut config, &path, ConfigSource::Trusted).expect("merge");
 
         assert_eq!(config.voice.provider, "openai");

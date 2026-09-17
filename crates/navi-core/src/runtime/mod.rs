@@ -1806,7 +1806,7 @@ impl AgentRuntime {
         self.session_title_handle.clone()
     }
 
-    /// Replaces the session tool executor (e.g. after installing WASM plugins).
+    /// Replaces the session tool executor.
     pub fn set_tool_executor(&mut self, executor: Arc<ToolExecutor>) {
         self.tool_executor = Some(executor);
     }

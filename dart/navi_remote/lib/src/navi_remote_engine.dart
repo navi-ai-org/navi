@@ -1,7 +1,7 @@
 /// Remote NAVI engine client — full navi-server (gateway) binding.
 ///
 /// Connects over HTTP/WebSocket and covers the complete gateway surface:
-/// sessions, session ops, memory, voice, plugins, credentials/OAuth,
+/// sessions, session ops, memory, voice, credentials/OAuth,
 /// skills/MCP/routing, registry.
 import 'dart:async';
 import 'dart:convert';
@@ -14,7 +14,6 @@ import 'types.dart';
 part 'engine_session_ops.dart';
 part 'engine_memory.dart';
 part 'engine_voice.dart';
-part 'engine_plugins.dart';
 part 'engine_auth.dart';
 part 'engine_skills_mcp.dart';
 part 'engine_registry.dart';

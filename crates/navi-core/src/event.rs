@@ -945,7 +945,7 @@ pub enum ApprovalRisk {
     Command,
     /// A guarded command that requires explicit approval outside YOLO mode.
     Guarded,
-    /// Loading or executing an external plugin.
+    /// A custom (non-built-in) tool invocation, e.g. an MCP-provided tool.
     ExternalPlugin,
     /// OS-level UI automation (computer use — ADR 0016).
     UiAutomation,

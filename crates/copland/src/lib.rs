@@ -7,7 +7,7 @@ pub mod modal;
 pub mod panel;
 pub mod text_input;
 
-// Re-export ratatui and crossterm so downstream crates (like navi-plugin-api)
-// can use copland's types without adding direct dependencies.
+// Re-export ratatui and crossterm so downstream crates can use copland's types
+// without adding direct dependencies.
 pub use crossterm;
 pub use ratatui;

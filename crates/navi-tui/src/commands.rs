@@ -33,7 +33,7 @@ impl CommandHub {
             Self::Session => "sessions, queue, compact, export",
             Self::ModelRouting => "model, effort, routing, usage, providers",
             Self::Tools => "shell tasks, permissions, yolo",
-            Self::Extensions => "skills, plugins, mcp",
+            Self::Extensions => "skills, mcp",
             Self::HelpApp => "shortcuts, theme, updates, about, quit",
         }
     }
@@ -69,7 +69,6 @@ pub(crate) enum CommandAction {
     Quit,
     Settings,
     Skills,
-    Plugins,
     McpServers,
     BackgroundCommands,
     ModelRouting,
@@ -115,10 +114,6 @@ pub(crate) struct CommandItem {
 #[derive(Debug, Clone)]
 pub(crate) enum CommandRow {
     Item(CommandItem),
-    /// Host-mediated extension command from installed `tui.json`.
-    Extension {
-        index: usize,
-    },
 }
 
 impl CommandRow {
@@ -315,13 +310,6 @@ pub(crate) const COMMANDS: &[CommandItem] = &[
         label: "Skills…",
         shortcut: None,
         action: CommandAction::Skills,
-        hub: Some(CommandHub::Extensions),
-        visibility: CommandVisibility::Always,
-    },
-    CommandItem {
-        label: "Plugins…",
-        shortcut: None,
-        action: CommandAction::Plugins,
         hub: Some(CommandHub::Extensions),
         visibility: CommandVisibility::Always,
     },
@@ -528,7 +516,6 @@ fn action_keywords(action: CommandAction) -> &'static str {
             "permissions permission mode restricted accept edits auto yolo security"
         }
         CommandAction::Skills => "skills skill",
-        CommandAction::Plugins => "plugins plugin marketplace wasm",
         CommandAction::McpServers => "mcp model context protocol servers tools",
         CommandAction::Settings => "preferences options config",
         CommandAction::Theme => "theme themes colors appearance dark light lain palette ui",
@@ -648,43 +635,22 @@ pub(crate) fn filtered_commands(app: &TuiApp) -> Vec<CommandItem> {
 /// Rows for the palette: global search, hub list, or root menu.
 pub(crate) fn command_rows(app: &TuiApp) -> Vec<CommandRow> {
     let filter = app.command_filter.trim();
-    let filter_l = filter.to_lowercase();
 
-    // Typing always searches the full catalog (hubs + deep links + extensions).
+    // Typing always searches the full catalog (hubs + deep links).
     if !filter.is_empty() {
-        let mut rows: Vec<CommandRow> = filtered_commands(app)
+        return filtered_commands(app)
             .into_iter()
             .map(CommandRow::Item)
             .collect();
-        let mut ext_hits: Vec<(u8, usize)> = Vec::new();
-        for (index, ext) in app.extension_palette.iter().enumerate() {
-            let score = match_score(&ext.title, &filter_l)
-                .or_else(|| match_score(&ext.id, &filter_l))
-                .or_else(|| match_score(&ext.description, &filter_l));
-            if let Some(score) = score {
-                ext_hits.push((score, index));
-            }
-        }
-        ext_hits.sort_by_key(|(s, _)| *s);
-        for (_, index) in ext_hits {
-            rows.push(CommandRow::Extension { index });
-        }
-        return rows;
     }
 
     if let Some(hub) = app.command_hub {
-        let mut rows: Vec<CommandRow> = COMMANDS
+        return COMMANDS
             .iter()
             .copied()
             .filter(|c| c.hub == Some(hub) && is_visible(c, app))
             .map(CommandRow::Item)
             .collect();
-        if hub == CommandHub::Extensions {
-            for index in 0..app.extension_palette.len() {
-                rows.push(CommandRow::Extension { index });
-            }
-        }
-        return rows;
     }
 
     ROOT_ENTRIES
@@ -798,9 +764,9 @@ mod tests {
         let rows = command_rows(&app);
         let labels: Vec<&str> = rows
             .iter()
-            .filter_map(|r| match r {
-                CommandRow::Item(i) => Some(i.label),
-                _ => None,
+            .map(|r| {
+                let CommandRow::Item(i) = r;
+                i.label
             })
             .collect();
         assert!(

@@ -71,7 +71,7 @@ Config is TOML, loaded in this order. Later sources override earlier ones.
 2. **Global config**: `~/.config/navi/config.toml` (Linux)
 3. **Project config**: `.navi/config.toml` in the current working directory
 
-> **Security note**: Project config (`.navi/config.toml`) cannot enable `plugins` or `mcp.servers`. These are only effective in the global config.
+> **Security note**: Project config (`.navi/config.toml`) cannot enable `mcp.servers`. These are only effective in the global config.
 
 ### Example Configuration
 
@@ -89,7 +89,6 @@ require_for_commands = true
 restrict_paths_to_project = true
 protect_git_metadata = true
 redact_secrets_in_sessions = true
-allow_external_plugins = false
 blocked_commands = ["rm", "rmdir", "shred", "mkfs", "dd", "sudo", "su", "doas"]
 
 [harness]
@@ -142,7 +141,6 @@ enabled = false
 | `[security]` | `restrict_paths_to_project` | Limit file operations to project root. |
 | `[security]` | `protect_git_metadata` | Deny writes into `.git/`. |
 | `[security]` | `redact_secrets_in_sessions` | Redact likely secrets in persisted sessions. |
-| `[security]` | `allow_external_plugins` | Allow loading plugins outside trusted locations. |
 | `[security]` | `blocked_commands` | Commands denied by policy. |
 | `[harness]` | `profile` | `auto`, `small`, or `medium`. Controls system prompt, tool-loop limits, and observation budgets. |
 | `[logging]` | `enabled` | Enable/disable logging. |
@@ -155,7 +153,7 @@ enabled = false
 | `[mcp]` | `enabled` | Enable MCP client. |
 | `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only. |
 
-Skills live under `<data_dir>/skills/` (root + pool folders with `SKILL.md`) and optionally project `.navi/skills/`. Install with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed. Harness packs materialize to `<data_dir>/harnesses/<id>/` (see [harness-system.md](harness-system.md) dual activation). Engine authoring skills (`navi-create-skill`, …) are **builtin** under pool `navi` — prefer them over marketplace packs for engine APIs. WASM plugins install under `<data_dir>/plugins/`, never auto project `.navi/`. Agents must use skill tools (`skill_list` / `load_skill` / `skill_save`), not raw FS into private `data_dir`.
+Skills live under `<data_dir>/skills/` (root + pool folders with `SKILL.md`) and optionally project `.navi/skills/`. Install with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed. Harness packs materialize to `<data_dir>/harnesses/<id>/` (see [harness-system.md](harness-system.md) dual activation). Engine authoring skills (`navi-create-skill`, …) are **builtin** under pool `navi` — prefer them over marketplace packs for engine APIs. Agents must use skill tools (`skill_list` / `load_skill` / `skill_save`), not raw FS into private `data_dir`.
 
 ### API Keys
 
@@ -229,7 +227,7 @@ All tools execute with the project root as working directory. Relative paths are
 
 ## Security
 
-The security layer validates tool kind, paths, commands, plugin paths, and approval requirements before execution.
+The security layer validates tool kind, paths, commands, and approval requirements before execution.
 
 - **Paths** are restricted to the project root by default.
 - **Commands** are checked against `blocked_commands`.
@@ -328,6 +326,6 @@ When running NAVI headless or embedding it:
 - Use `--print-config` to verify resolved configuration before running tasks.
 - Use `--print-providers` to list available providers and their credential status.
 - Sessions are persisted automatically; use `--no-tui` for stateless scripted runs.
-- Project config (`.navi/config.toml`) is untrusted: it cannot enable plugins or MCP servers.
+- Project config (`.navi/config.toml`) is untrusted: it cannot enable MCP servers.
 - All tools run in the project root. Ensure your working directory is correct.
 - Tool approval in headless mode is gated by default. Configure `[approvals]` to relax if needed.

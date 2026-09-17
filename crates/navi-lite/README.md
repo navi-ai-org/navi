@@ -2,8 +2,8 @@
 
 Minimal sealed NAVI runtime for edge and embedded Linux prototypes.
 
-This crate intentionally avoids the desktop SDK, TUI, MCP, dynamic plugins,
-registry updates, and local embeddings. It builds a mission-specific runtime
+This crate intentionally avoids the desktop SDK, TUI, MCP, and
+registry updates. It builds a mission-specific runtime
 with an empty tool executor and only registers tools required by the mission.
 
 ## What This Prototype Is
@@ -26,9 +26,7 @@ The lite crate does not depend on:
 - `navi-sdk`;
 - `navi-tui` or `copland`;
 - MCP;
-- native or WASM plugin hosts;
 - registry sync;
-- local embeddings (`candle`, `tokenizers`, `hf-hub`);
 - `navi-vfs` / tree-sitter code tools.
 
 `navi-core` keeps those capabilities for normal NAVI builds through default
@@ -84,7 +82,7 @@ Confirm excluded dependencies stay out of the lite graph:
 
 ```bash
 cargo tree -p navi-lite -e normal --no-default-features \
-  | rg "navi-vfs|navi-tui|copland|navi-mcp|navi-plugin-runtime|wasmtime|candle|tokenizers|hf-hub"
+  | rg "navi-vfs|navi-tui|copland|navi-mcp"
 ```
 
 That command should print no matches.

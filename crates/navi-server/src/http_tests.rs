@@ -105,7 +105,7 @@ async fn missing_secret_returns_401() {
     let api = domain_filter(state);
     let res = warp::test::request()
         .method("GET")
-        .path("/plugins")
+        .path("/memory")
         .reply(&api)
         .await;
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
@@ -122,7 +122,7 @@ async fn wrong_secret_returns_401_not_500() {
     let api = domain_filter(state);
     let res = warp::test::request()
         .method("GET")
-        .path("/plugins")
+        .path("/memory")
         .header("x-navi-secret", "wrong-secret")
         .reply(&api)
         .await;
@@ -712,54 +712,6 @@ async fn routing_get_and_invalid_modality() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
 }
 
-// ── Plugins path specificity ─────────────────────────────────────────────
-
-#[tokio::test]
-async fn plugins_list_and_static_paths_not_captured_as_id() {
-    let (state, _tmp) = test_state();
-    let api = domain_filter(state);
-
-    let res = authed(warp::test::request().method("GET").path("/plugins"))
-        .reply(&api)
-        .await;
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // /plugins/search must not be treated as plugin id "search"
-    let res = authed(warp::test::request().method("GET").path("/plugins/search"))
-        .reply(&api)
-        .await;
-    // May 200 (catalog) or 500 (network) — must NOT be 404 "plugin 'search' not found"
-    assert_ne!(
-        res.status(),
-        StatusCode::NOT_FOUND,
-        "search captured as id: {}",
-        String::from_utf8_lossy(res.body())
-    );
-
-    let res = authed(
-        warp::test::request()
-            .method("GET")
-            .path("/plugins/definitely-not-installed"),
-    )
-    .reply(&api)
-    .await;
-    assert_eq!(res.status(), StatusCode::NOT_FOUND);
-
-    // install without confirm → 400
-    let res = authed(
-        warp::test::request()
-            .method("POST")
-            .path("/plugins/install/path")
-            .json(&serde_json::json!({
-                "path": "/tmp/nope",
-                "confirm": false
-            })),
-    )
-    .reply(&api)
-    .await;
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-}
-
 // ── Registry ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -880,8 +832,8 @@ async fn e2e_spa_fallback_does_not_capture_api_paths() {
     std::fs::write(web_tmp.path().join("index.html"), b"<h1>SPA</h1>").expect("write");
     let filter = combined_filter(state, AssetSource::FileSystem(web_tmp.path().to_path_buf()));
 
-    // /plugins (API) with auth → 200 (API response, not SPA)
-    let res = authed(warp::test::request().method("GET").path("/plugins"))
+    // /registry (API) with auth → 200 (API response, not SPA)
+    let res = authed(warp::test::request().method("GET").path("/registry"))
         .reply(&filter)
         .await;
     assert_eq!(res.status(), StatusCode::OK);
@@ -892,12 +844,12 @@ async fn e2e_spa_fallback_does_not_capture_api_paths() {
         "API should not return SPA HTML"
     );
 
-    // /plugins (API) without auth → SPA fallback (200 with HTML).
+    // /registry (API) without auth → SPA fallback (200 with HTML).
     // This is standard SPA behavior: the HTML page is always served;
     // the JavaScript handles auth when making API calls.
     let res = warp::test::request()
         .method("GET")
-        .path("/plugins")
+        .path("/registry")
         .reply(&filter)
         .await;
     assert_eq!(res.status(), StatusCode::OK);

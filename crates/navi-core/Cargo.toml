@@ -12,6 +12,8 @@ readme = "README.md"
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+# Installs the process-wide rustls crypto provider before `main` (see `tls.rs`).
+ctor.workspace = true
 directories.workspace = true
 fastrand.workspace = true
 futures-util.workspace = true
@@ -20,8 +22,12 @@ navi-browser = { workspace = true, optional = true }
 navi-computer-use = { workspace = true, optional = true }
 navi-vfs = { workspace = true, optional = true }
 reqwest.workspace = true
+# `ring` keeps reqwest's `rustls-no-provider` backend working without aws-lc-rs.
+rustls.workspace = true
 regex.workspace = true
-rusqlite.workspace = true
+# Rust SQLite engine, wrapped by the synchronous `db` facade. `default-features =
+# false` drops mimalloc (a library-level `#[global_allocator]`) and `fts` (Tantivy).
+turso = { version = "0.7", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -48,20 +54,12 @@ tempfile.workspace = true
 proptest.workspace = true
 
 [features]
-# embeddings (candle/tokenizers) is opt-in: default-off keeps CI/local unit
-# tests and `cargo check -p navi-core` off the ML stack. Product binaries
-# enable it via navi-cli / navi-napi features.
+# default-off feature set keeps CI/local unit tests and `cargo check -p navi-core`
+# to the core capabilities; product binaries opt into capabilities as needed.
 default = ["code-vfs", "browser", "computer-use"]
 code-vfs = ["dep:navi-vfs"]
 browser = ["dep:navi-browser"]
 computer-use = ["dep:navi-computer-use"]
-embeddings = [
-    "dep:candle-core",
-    "dep:candle-transformers",
-    "dep:candle-nn",
-    "dep:tokenizers",
-    "dep:hf-hub",
-]
 
 [build-dependencies]
 anyhow.workspace = true
@@ -73,27 +71,3 @@ serde_json.workspace = true
 sha2.workspace = true
 tar = "0.4"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
-
-[dependencies.candle-core]
-version = "0.11"
-optional = true
-
-[dependencies.candle-transformers]
-version = "0.11"
-optional = true
-
-[dependencies.candle-nn]
-version = "0.11"
-optional = true
-
-[dependencies.tokenizers]
-version = "0.23"
-optional = true
-
-# rustls only — no openssl/native-tls so we can ship portable musl Linux binaries
-# that run on Alpine, older glibc distros, and minimal containers.
-[dependencies.hf-hub]
-version = "0.5"
-default-features = false
-features = ["tokio", "ureq", "rustls-tls"]
-optional = true

@@ -1,5 +1,5 @@
+use crate::db::{Db, DbConnection, OpenOptions, params};
 use anyhow::{Context, Result};
-use rusqlite::{Connection, params};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 ///
 /// This replaces the legacy `global-memory.md` file. It lives at
 /// `{data_dir}/memory/global-memory.db` and shares the same schema as
-/// the per-project `AutoMemoryStore`, but without embeddings or session
+/// the per-project `AutoMemoryStore`, but without session
 /// checkpoint/notes tables — it only holds durable global facts.
 #[derive(Clone)]
 pub struct GlobalMemoryStore {
-    conn: Arc<Mutex<Connection>>,
+    conn: Arc<Mutex<DbConnection>>,
     pub db_path: PathBuf,
 }
 
@@ -34,8 +34,9 @@ impl GlobalMemoryStore {
             })?;
         }
 
-        let conn = Connection::open(db_path)
+        let db = Db::open(db_path)
             .with_context(|| format!("Failed to open global memory database at {:?}", db_path))?;
+        let conn = db.connect_with(&OpenOptions::none())?;
         crate::memory::auto_memory::configure_connection(&conn)?;
 
         let store = Self {
@@ -78,18 +79,14 @@ impl GlobalMemoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
-        let mut stmt = conn.prepare(
+        let rows: Vec<(String, String, String, f64)> = conn.query_rows(
             "SELECT name, type, description, confidence
              FROM global_memories
              WHERE status = 'active'
              ORDER BY type, name",
+            (),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let rows: Vec<(String, String, String, f64)> = stmt
-            .query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
 
         if rows.is_empty() {
             return Ok(String::new());
@@ -114,7 +111,7 @@ impl GlobalMemoryStore {
             .lock()
             .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         // Clear existing active memories
-        conn.execute("DELETE FROM global_memories", [])?;
+        conn.execute("DELETE FROM global_memories", ())?;
 
         let now = crate::memory::auto_memory::now_iso();
         let mut id_counter = 0u32;
@@ -141,7 +138,14 @@ impl GlobalMemoryStore {
                                     (id, type, name, description, body, confidence, status,
                                      created_at, updated_at, last_seen)
                                  VALUES (?1, ?2, ?3, ?4, ?5, 1.0, 'active', ?6, ?6, ?6)",
-                        params![id, mem_type, name, description, description, now,],
+                        params![
+                            id.as_str(),
+                            mem_type,
+                            name,
+                            description,
+                            description,
+                            now.as_str()
+                        ],
                     )?;
                 }
             }
@@ -157,7 +161,7 @@ impl GlobalMemoryStore {
             .map_err(|e| anyhow::anyhow!("global-memory lock poisoned: {e}"))?;
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM global_memories WHERE status = 'active'",
-            [],
+            (),
             |row| row.get(0),
         )?;
         Ok(count as usize)
@@ -177,8 +181,8 @@ impl GlobalMemoryStore {
              SET status = 'needs_review', updated_at = ?1
              WHERE status = 'active'
                AND last_seen < ?2",
-            params![now, cutoff],
+            params![now.as_str(), cutoff],
         )?;
-        Ok(count)
+        Ok(count as usize)
     }
 }

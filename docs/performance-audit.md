@@ -1,7 +1,7 @@
 # NAVI Performance Audit
 
 **Date:** 2026-07-09  
-**Scope:** Runtime agent loop, LLM/provider path, TUI, session/persistence, memory/embeddings/voice, plugins/MCP/WASM, build/CI, data structures.  
+**Scope:** Runtime agent loop, LLM/provider path, TUI, session/persistence, memory/voice, MCP, build/CI, data structures.  
 **Method:** Static code-path analysis of `navi-core`, `navi-sdk`, `navi-tui`, `navi-openai`, `navi-cli`, and related crates. No runtime benchmarks were executed; impact estimates are qualitative from call frequency and algorithmic shape.  
 **Constraint:** Report only — no fixes implemented.
 
@@ -23,7 +23,7 @@ Landed in tree after this audit (2026-07-09):
 
 **Config:** under `[tui]`, set `llm_recap = true` to restore the background LLM recap upgrade after each turn.
 
-**Deferred / not in this pass:** compact/JSONL session format (P0-4), full tool-definition `Arc` cache, `Arc<NaviConfig>`, system-prefix splice, stream retry `Arc<ModelRequest>`, 30fps regional redraw-only, embeddings/onnx feature defaults.
+**Deferred / not in this pass:** compact/JSONL session format (P0-4), full tool-definition `Arc` cache, `Arc<NaviConfig>`, system-prefix splice, stream retry `Arc<ModelRequest>`, 30fps regional redraw-only, optional feature defaults.
 
 ---
 
@@ -39,7 +39,7 @@ Landed in tree after this audit (2026-07-09):
 | 6 | **Session save: compact JSON, redact once, coalesce deltas** | High | M | Disk I/O, RAM peaks |
 | 7 | **Gate or default-off LLM recap extra call every turn** | Medium–high | S | Cost, post-turn latency |
 | 8 | **Session picker: use `list_info` not full `list()`** | Medium | S | Startup / modal open latency |
-| 9 | **Default-off heavy features in CI/product builds** (voice `onnx` download-binaries, embeddings candle) | Medium | M | CI time, binary size |
+| 9 | **Default-off heavy features in CI/product builds** (tree-sitter grammars in `code-vfs`) | Medium | M | CI time, binary size |
 | 10 | **Stabilize prompt-cache path further** (already partially done; drop redundant sort/serialize) | Medium | S | Cache hit rate / billing |
 
 Already in good shape (do not regress):
@@ -306,7 +306,7 @@ Tool schemas are large JSON trees. Deep clone + recursive simplify + sort on eve
 3. Provider: accept already-sorted tools; skip clone+sort; optionally prebuild `Vec<Value>` tool JSON.
 4. Separate “definitions for prompt manifest” from “definitions for API tools” if they diverge.
 
-**Effort:** M · **Risk:** Low–medium (cache invalidation on MCP/plugin reload).  
+**Effort:** M · **Risk:** Low–medium (cache invalidation on MCP reload).  
 **Benefit:** CPU / allocs every model call; faster time-to-first-byte.
 
 ---
@@ -347,7 +347,7 @@ Fast path: if no user messages have `content_parts`, return `messages.to_vec()` 
 Used in `build_model_request`, `rewrite_unsupported_attachments`, memory paths, thinking resolution, etc.
 
 **Why it matters**  
-Config includes providers catalog, models, security lists, plugins, MCP servers — not a tiny struct. Cloning several times per loop is pure waste.
+Config includes providers catalog, models, security lists, MCP servers — not a tiny struct. Cloning several times per loop is pure waste.
 
 **Proposed fix**  
 `Arc<NaviConfig>` under the existing `RwLock`, or pass `&NaviConfig` via scoped read guard into request builders. Snapshot once per turn.
@@ -509,34 +509,7 @@ Redraw only status/tool header regions when only the pulse frame changes; keep c
 **Fix:** Parallel connect (already sequential loop), lazy connect on first tool use, cache tool definitions.  
 **Effort:** M · **Risk:** Medium.
 
-### P2-6. WASM plugin load instantiates modules at tooling build
-
-**Evidence**  
-`navi-sdk/src/tooling.rs` scans plugin roots and loads WASM; `navi-plugin-runtime` `Module::new` + `instantiate` per plugin.
-
-**Impact:** Startup / reload path.  
-**Fix:** Lazy instantiate on first invoke; keep compiled module cache.  
-**Effort:** M · **Risk:** Medium.
-
-### P2-7. Embeddings model load (feature default on in navi-core)
-
-**Evidence**  
-`navi-core/Cargo.toml` `default = ["embeddings", "code-vfs"]`; `embedding.rs` OnceLock cache + candle GGUF load on first use; test embed on load.
-
-**Impact:** First memory semantic search: multi-second + ~hundreds of MB RAM. Binary/deps weight from candle.  
-**Fix:** Keep feature optional; document; load off hot path; skip test embed.  
-**Effort:** S · **Risk:** Low.
-
-### P2-8. Voice ONNX downloads ORT binaries at build time
-
-**Evidence**  
-`navi-voice/Cargo.toml`: default feature `onnx` with `ort` `download-binaries`.
-
-**Impact:** Clean CI/build network dependency and longer compile when voice is in the workspace build.  
-**Fix:** Default-off `onnx` for workspace default-members; enable in release product features only.  
-**Effort:** S · **Risk:** Low (feature matrix).
-
-### P2-9. Background command poller every 1s
+### P2-6. Background command poller every 1s
 
 **Evidence**  
 `navi-tui/src/background.rs` `BG_POLL_INTERVAL = 1s`.
@@ -544,18 +517,18 @@ Redraw only status/tool header regions when only the pulse frame changes; keep c
 **Impact:** Minor; acceptable. Could use event-driven completion from runtime.  
 **Effort:** M · **Risk:** Low.
 
-### P2-10. `session_title_from_events` on every event push
+### P2-7. `session_title_from_events` on every event push
 
 Covered under P0-1; even after delta fix, still re-scans full event list for every tool event. Fix: set title once when first user/model text arrives.
 
-### P2-11. Duplicate conversation state in TUI
+### P2-8. Duplicate conversation state in TUI
 
 TUI keeps `messages`, `conversation_history`, and `events` in parallel (`dispatch.rs` tool completed pushes to all). Memory triplication of tool I/O.
 
 **Fix:** Single source of truth with views (longer-term architecture).  
 **Effort:** L · **Risk:** High.
 
-### P2-12. OAuth / ad-hoc `reqwest::Client::new()` 
+### P2-9. OAuth / ad-hoc `reqwest::Client::new()` 
 
 **Evidence**  
 `navi-openai/src/oauth.rs` multiple `Client::new()` — connection pool not reused for device-flow polling.
@@ -564,7 +537,7 @@ TUI keeps `messages`, `conversation_history`, and `events` in parallel (`dispatc
 **Fix:** Shared client.  
 **Effort:** S · **Risk:** Low.
 
-### P2-13. Tree-sitter / navi-vfs weight
+### P2-10. Tree-sitter / navi-vfs weight
 
 Workspace pulls many tree-sitter language crates (`Cargo.toml` workspace.deps). Feature-gated via `code-vfs` but default-on in core.
 
@@ -577,12 +550,12 @@ Workspace pulls many tree-sitter language crates (`Cargo.toml` workspace.deps). 
 
 ### Workspace shape
 
-- **~20 crates** under `crates/` (core, tui, openai, plugins, voice, vfs, napi, dart, server, …).
+- **19 crates** under `crates/` (core, tui, openai, voice, vfs, napi, dart, server, …).
 - `justfile` already optimizes:
   - `test-fast`: product packages only, lib+bins
   - `test`: exclude napi/dart/server
   - Uncapped `CARGO_BUILD_JOBS` (good)
-- Default features pull **embeddings (candle)** and **code-vfs (tree-sitter stack)** into `navi-core`.
+- Default features pull **code-vfs (tree-sitter stack)**, `browser`, and `computer-use` into `navi-core`.
 
 ### Heavy CI / test surfaces
 
@@ -591,16 +564,14 @@ Workspace pulls many tree-sitter language crates (`Cargo.toml` workspace.deps). 
 | PTY smoke | `navi-cli/tests/pty_smoke.rs` | Spawns full `navi` binary in PTY |
 | TUI goldens | `navi-tui/tests/screenshots.rs` + integration | Many full render passes + snapshot I/O |
 | Headless e2e | `navi-cli/tests/headless_e2e.rs` | Full binary paths |
-| Plugin install test | `navi-cli/tests/plugin_install_update.rs` | FS + plugin pipeline |
 | Voice libri | `navi-voice/tests/transcribe_libri.rs` | Needs model on disk; feature-gated |
 
 ### Remaining build wins
 
-1. **Default-off** `navi-voice/onnx` and/or exclude `navi-voice` from default CI check when not needed.
-2. **Split** `navi-core` default features: `embeddings` off in CI; optional product feature.
-3. **Keep** `test-fast` as PR gate; full workspace + PTY on main/nightly only (if not already).
-4. **Cargo sparse registry / sccache** (infra) — not code, but high leverage.
-5. Reduce tree-sitter languages to those actually used by vfs minify/code tools if all 15 are always linked.
+1. **Feature-split** `navi-core` defaults for CI: `code-vfs`, `browser`, and `computer-use` can be opted into by product builds only.
+2. **Keep** `test-fast` as PR gate; full workspace + PTY on main/nightly only (if not already).
+3. **Cargo sparse registry / sccache** (infra) — not code, but high leverage.
+4. Reduce tree-sitter languages to those actually used by vfs minify/code tools if all 15 are always linked.
 
 ---
 
@@ -670,9 +641,9 @@ run_turn
 
 ### Phase 4 — Build/CI & optional weight (ongoing)
 
-1. Feature flags: embeddings, onnx, code-vfs granularity.
+1. Feature flags: code-vfs granularity; browser/computer-use.
 2. PR CI = `test-fast` + fmt/clippy; full PTY/screenshots on main.
-3. Lazy MCP connect / WASM instantiate.
+3. Lazy MCP connect.
 
 ---
 
@@ -692,9 +663,8 @@ Instrument with `tracing` spans + counters (or a small `navi_metrics` module):
 | `session.model_delta_events` | push_event | Should go to ~0 after fix |
 | `tui.chat_cache_hit` / `tui.chat_rebuild_ms` / `tui.draw_ms` | ensure_chat_cache / draw | Streaming jank |
 | `tui.signature_hash_ms` | chat_render_signature | Hash vs render split |
-| `memory.embed_load_ms` / `memory.search_ms` | embedding path | First-use cost |
+| `memory.search_ms` | memory search path | Query latency |
 | `mcp.connect_ms` per server | load_configured_mcp_servers | Startup |
-| `wasm.instantiate_ms` | plugin runtime | Startup/reload |
 | `recap.llm_ms` / `recap.invoked` | maybe_emit_session_recap | Cost control |
 
 Optional: microbench for `definitions()`, `build_chat_render_for_messages` with synthetic 100/500/2000 message histories, and session save with 1k/10k/50k events.
@@ -717,7 +687,7 @@ Optional: microbench for `definitions()`, `build_chat_render_for_messages` with 
 | P1-6 | Session list full load | S | Low | Startup/modal |
 | P1-7 | Stream retry request clone | S | Low | Retry RAM |
 | P1-8 | 30fps redraw while tools run | M | Med | Idle CPU |
-| P2-* | Path walk, hash serialize, prompt Arc, MCP, WASM, features | S–L | varies | Niche/startup |
+| P2-* | Path walk, hash serialize, prompt Arc, MCP, features | S–L | varies | Niche/startup |
 
 ---
 
@@ -729,7 +699,7 @@ Optional: microbench for `definitions()`, `build_chat_render_for_messages` with 
 - `src/session.rs`, `src/security.rs`, `src/compact.rs`, `src/recap.rs`
 - `src/prompt.rs`, `src/harness.rs`, `src/repetition.rs`
 - `src/tool/mod.rs`, `src/tool/registry.rs`, `src/tool/metadata.rs`
-- `src/memory/mod.rs`, `src/memory/history_store.rs`, `src/memory/embedding.rs`, `src/memory/maintenance.rs`
+- `src/memory/mod.rs`, `src/memory/history_store.rs`, `src/memory/maintenance.rs`
 - `src/config/types.rs`, `src/config/providers/mod.rs`
 - `Cargo.toml` (features)
 
@@ -744,11 +714,10 @@ Optional: microbench for `definitions()`, `build_chat_render_for_messages` with 
 - `tests/screenshots.rs`, `tests/integration/*`
 
 ### navi-sdk
-- `src/engine.rs`, `src/tooling.rs`, `src/plugins.rs`, `src/engine_driver.rs`
+- `src/engine.rs`, `src/tooling.rs`, `src/engine_driver.rs`
 
 ### Other
 - `navi-mcp/src/lib.rs`
-- `navi-plugin-runtime/src/runtime.rs`
 - `navi-voice/Cargo.toml`, `src/download.rs`
 - `navi-cli/tests/pty_smoke.rs`
 - Root `Cargo.toml`, `justfile`

@@ -775,11 +775,11 @@ mod tests {
     #[tokio::test]
     async fn web_filter_serves_wasm_with_correct_mime() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::fs::write(tmp.path().join("plugin.wasm"), b"\0asm").expect("write");
+        std::fs::write(tmp.path().join("asset.wasm"), b"\0asm").expect("write");
         let filter = web_filter(AssetSource::FileSystem(tmp.path().to_path_buf()));
 
         let res = warp::test::request()
-            .path("/plugin.wasm")
+            .path("/asset.wasm")
             .reply(&filter)
             .await;
         assert_eq!(res.status(), StatusCode::OK);

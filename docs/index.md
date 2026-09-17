@@ -1,6 +1,6 @@
 # NAVI Documentation
 
-NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust. It supports multiple providers, built-in tools, plugins, MCP servers, and an SDK for embedding in other applications.
+NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust. It supports multiple providers, built-in tools, MCP servers, and an SDK for embedding in other applications.
 
 ## User Guide
 
@@ -15,9 +15,9 @@ NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust.
 ## Topic Guides
 
 - [Conversation Compaction](compaction.md) — Micro-compact, auto-compact, and session memory behavior.
-- [Auto-Memory](auto-memory.md) — Persistent SQLite memory system with semantic search, extractMemories, auto-dream, and auto-distill.
+- [Auto-Memory](auto-memory.md) — Persistent SQLite memory system with text search, extractMemories, auto-dream, and auto-distill.
 - [Goal System](goal-system.md) — Goal lifecycle, verification, and budget tracking.
-- [Harness System Vision](harness-system.md) — Loop/graph engineering, harness packs, materialize & feedback jobs, capability cards, plugins/MCP evolution.
+- [Harness System Vision](harness-system.md) — Loop/graph engineering, harness packs, materialize & feedback jobs, capability cards, MCP evolution.
 - [TUI Internals](tui.md) — TUI state, keybindings, rendering, modals, and performance rules.
 
 ## Presentations
@@ -26,7 +26,7 @@ NAVI is an opinionated, extensible code agent with a terminal UI, built in Rust.
 
 ## Architecture Decisions
 
-- [ADR Index](adr/) — Architectural Decision Records (plugin runtime, broker model, security defaults, signing, sandboxing, etc.)
+- [ADR Index](adr/) — Architectural Decision Records (security defaults, sandboxing, workflow engine, computer use, etc.)
 
 ## Contributing
 

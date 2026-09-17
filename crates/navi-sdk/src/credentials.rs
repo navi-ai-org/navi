@@ -1,4 +1,4 @@
-//! Provider credential helpers for embedders (TUI, Tutor, CLI).
+//! Provider credential helpers for host clients (TUI, Tutor, CLI).
 //!
 //! Prefer these APIs over provider-specific OAuth entry points.
 

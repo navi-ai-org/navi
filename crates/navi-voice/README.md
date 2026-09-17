@@ -1,46 +1,60 @@
 # navi-voice
 
-Local speech dictation for NAVI: mic capture discovery, model download, and ONNX Nemotron streaming ASR.
+Voice dictation support for NAVI: mic recorder discovery, WAV helpers, and
+**remote** speech-to-text via registry transcription providers (OpenAI / Groq
+Whisper).
 
-## Engines
+> Local ONNX inference (`ort` / `ort-sys`, Nemotron streaming ASR) was removed.
+> There is no local STT/TTS engine in this crate.
 
-| Id | Runtime | Status |
-|----|---------|--------|
-| `nemotron_streaming` | ONNX Runtime (`ort`) | Working — streaming RNNT |
-| `distil_whisper` | candle | Planned (PR4) |
+## Remote transcription
+
+Provider metadata (base URL, API key env, model list) comes from the NAVI
+registry; `navi-core` resolves the credentials and builds the request.
+
+```rust
+use navi_voice::{RemoteTranscriptionConfig, RemoteTranscriptionKind, transcribe_file_remote};
+
+let cfg = RemoteTranscriptionConfig {
+    provider_id: "openai".into(),
+    kind: RemoteTranscriptionKind::OpenaiAudioTranscriptions,
+    base_url: "https://api.openai.com/v1".into(),
+    transcription_path: "/audio/transcriptions".into(),
+    api_key: std::env::var("OPENAI_API_KEY")?,
+    model: "whisper-1".into(),
+    language: Some("en".into()),
+};
+let result = transcribe_file_remote(&cfg, std::path::Path::new("clip.wav")).await?;
+println!("{}", result.text);
+```
+
+## Capture helpers
+
+- `capture`: discovers `pw-record` / `parec` / `arecord` on `PATH`.
+- `wav`: load/resample mono `f32` audio and encode 16 kHz 16-bit PCM WAV in memory.
+- `doctor`: diagnostics for the recorder stack (`run_doctor`).
 
 ## CLI
 
 ```bash
-navi voice init --engine nemotron_streaming   # download + verify (~800MB)
 navi voice status
+navi voice providers
 navi voice doctor
 navi voice transcribe /path/to/audio.wav --language en-US
 ```
 
-Model files live under `{data_dir}/voice/models/` (Linux default: `~/.local/share/navi/voice/models/`).
+Set a remote provider in `~/.config/navi/config.toml`:
 
-## Features
-
-- `onnx` (default): Nemotron 3.5 ASR Streaming 0.6B INT4 via ONNX Runtime.
-- Disable with `--no-default-features` on `navi-voice` / omit `voice-onnx` on `navi-cli` if you only need download/doctor without ORT.
-
-## Library
-
-```rust
-use navi_voice::NemotronOnnxEngine;
-
-let mut engine = NemotronOnnxEngine::load(model_dir, "en-US")?;
-let result = engine.transcribe_wav("sample.wav")?;
-println!("{}", result.text);
+```toml
+[voice]
+enabled = true
+provider = "openai"   # or groq
+model = "whisper-1"
+language = "auto"
 ```
-
-Streaming: `push_audio` / `process_pcm_chunk` / `flush` with 16 kHz mono f32.
 
 ## Tests
 
 ```bash
 cargo test -p navi-voice -- --test-threads=4
-# E2E (needs installed model + /tmp/libri16.wav or NAVI_VOICE_TEST_WAV):
-cargo test -p navi-voice --test transcribe_libri -- --nocapture
 ```

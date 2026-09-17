@@ -3,36 +3,14 @@ name = "navi-voice"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Local speech dictation: mic capture, model download, ASR engine traits."
+description = "Voice dictation support: mic recorder discovery, WAV helpers, remote transcription."
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
 
-[features]
-# Default off: ONNX downloads/compiles ort-sys and is not needed for most
-# crates or CI unit tests. Opt in with `--features onnx` / `voice-onnx`.
-default = []
-# ONNX Runtime Nemotron streaming engine (downloads ORT libs at build time).
-onnx = ["dep:ort", "dep:ndarray"]
-
 [dependencies]
 anyhow.workspace = true
-futures-util.workspace = true
-hex.workspace = true
 hound = "3.5"
-realfft = "3"
 reqwest = { workspace = true, features = ["multipart", "json"] }
 serde.workspace = true
 serde_json.workspace = true
-sha2.workspace = true
-thiserror.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-
-# Optional inference stack (feature = "onnx")
-ndarray = { version = "0.17", optional = true }
-ort = { version = "2.0.0-rc.12", default-features = false, features = ["std", "ndarray", "download-binaries", "tls-rustls", "api-24"], optional = true }
-
-[dev-dependencies]
-tempfile.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -398,7 +398,7 @@ impl ToolExecutor {
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         // Use registry exposure info to filter, but get definitions from live tools.
         // Merge in the enriched metadata from the registry so that schema
-        // simplification is applied and MCP/plugin tools remain current while
+        // simplification is applied and MCP tools remain current while
         // respecting exposure levels.
         let visible_names: std::collections::HashSet<String> =
             self.registry.visible_tool_names().into_iter().collect();
@@ -563,14 +563,6 @@ impl ToolExecutor {
         self.validators.clear();
         self.invalid_schemas.clear();
         self.registry.clear();
-    }
-
-    pub fn unregister_plugin_tools(&mut self) {
-        self.tools.retain(|n, _| !n.starts_with("plugin__"));
-        self.validators.retain(|n, _| !n.starts_with("plugin__"));
-        self.invalid_schemas
-            .retain(|n, _| !n.starts_with("plugin__"));
-        self.registry.unregister_prefix("plugin__");
     }
 
     pub fn invalid_tool_result(&self, inv: &ToolInvocation, err: ToolCallInvalid) -> ToolResult {

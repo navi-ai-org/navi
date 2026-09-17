@@ -23,8 +23,8 @@ use crate::runtime::{build_engine, init_registry_store, selected_model_runtime_a
 use crate::session::load_saved_sessions;
 use crate::state::{
     ChatMessage, ChatRenderCache, ChatRole, ChatView, McpUiState, ModalKind, Mode, Notification,
-    OAuthUiState, PluginApprovalRequest, QuestionUiState, QueuedUserMessage, SelectionState,
-    SubagentStatus, SubagentTranscript, SubagentUiState, ThinkingLevel, UsageUiState,
+    OAuthUiState, QuestionUiState, QueuedUserMessage, SelectionState, SubagentStatus,
+    SubagentTranscript, SubagentUiState, ThinkingLevel, UsageUiState,
 };
 use crate::theme::{ThemeId, ThemePalette};
 use crate::ui::ModalStack;
@@ -35,7 +35,6 @@ use copland::panel::PanelManager;
 pub struct TuiApp {
     pub(crate) loaded_config: LoadedConfig,
     pub(crate) panel_manager: PanelManager,
-    pub(crate) plugin_panels_loaded: bool,
     pub(crate) input: String,
     pub(crate) input_cursor: usize,
     pub(crate) input_selection: Option<(usize, usize)>,
@@ -120,15 +119,6 @@ pub struct TuiApp {
     pub(crate) pending_images: Vec<crate::state::PendingImage>,
     /// Large text pastes shown as `[Pasted text #N +L lines]` chips in the draft.
     pub(crate) pending_pastes: Vec<crate::state::PendingPaste>,
-    /// Floating image preview shown while hovering an `[Image N]` tag.
-    pub(crate) image_hover: Option<crate::state::ImageHoverPreview>,
-    /// Kitty/Sixel/iTerm2 stateful protocol for the lightbox hover (None = text-only).
-    pub(crate) image_hover_protocol: Option<ratatui_image::protocol::StatefulProtocol>,
-    /// Last rendered lightbox rect (for tests / debugging; keep-open uses hit region).
-    pub(crate) image_hover_modal_rect: Option<ratatui::layout::Rect>,
-    /// When set, close the lightbox after this instant if the cursor stays outside
-    /// the chip + lightbox sticky zone (grace while moving chip → modal).
-    pub(crate) image_hover_close_deadline: Option<std::time::Instant>,
     pub(crate) queued_user_messages: VecDeque<QueuedUserMessage>,
     pub(crate) queued_message_selected: usize,
     pub(crate) queued_message_scroll: usize,
@@ -154,9 +144,6 @@ pub struct TuiApp {
     /// Whether the terminal reports focus (DEC 1004). Used to suppress OS
     /// toasts when the user is already looking at NAVI.
     pub(crate) terminal_focused: bool,
-    /// Whether free mouse motion (`?1003`) is currently enabled. Only true
-    /// while image hover can fire — avoids multi-window CSI motion leaks.
-    pub(crate) mouse_free_motion: bool,
     pub(crate) selected_setting: usize,
     pub(crate) selected_theme: usize,
     pub(crate) theme_filter: String,
@@ -221,12 +208,8 @@ pub struct TuiApp {
     pub(crate) authenticated_providers: HashSet<String>,
     /// Setup wizard phase (None when not in setup mode).
     pub(crate) setup_phase: Option<crate::state::SetupPhase>,
-    /// Selection index inside setup list steps (Approvals / MarketplaceTip).
+    /// Selection index inside setup list steps (Approvals).
     pub(crate) setup_list_selected: usize,
-    /// Installed plugin dir waiting for mcp.json merge confirmation.
-    pub(crate) pending_mcp_merge: Option<std::path::PathBuf>,
-    /// Palette rows from installed package `tui.json` files.
-    pub(crate) extension_palette: Vec<navi_sdk::TuiExtensionCommand>,
 
     /// Pending NAVI self-update from the last check (if any).
     pub(crate) available_update: Option<navi_core::UpdateInfo>,
@@ -244,17 +227,6 @@ pub struct TuiApp {
     pub(crate) skill_filter: String,
     pub(crate) skill_filter_cursor: usize,
     pub(crate) skill_scroll: usize,
-
-    // plugins modal (marketplace catalog + installed)
-    pub(crate) plugin_catalog: Vec<navi_plugin_manifest::PluginCatalogEntry>,
-    pub(crate) plugin_catalog_loading: bool,
-    pub(crate) plugin_catalog_error: String,
-    pub(crate) selected_plugin_row: usize,
-    pub(crate) plugin_row_scroll: usize,
-
-    // plugin install / update approvals
-    pub(crate) pending_plugin_approvals: Vec<PluginApprovalRequest>,
-    pub(crate) plugin_approval_scroll: usize,
 
     // mcp
     pub(crate) mcp_ui_state: McpUiState,
@@ -443,10 +415,6 @@ impl TuiApp {
             dreaming: false,
             pending_images: Vec::new(),
             pending_pastes: Vec::new(),
-            image_hover: None,
-            image_hover_protocol: None,
-            image_hover_modal_rect: None,
-            image_hover_close_deadline: None,
             queued_user_messages: VecDeque::new(),
             queued_message_selected: 0,
             queued_message_scroll: 0,
@@ -473,7 +441,6 @@ impl TuiApp {
             // Assume focused until FocusLost; terminals without focus tracking
             // never emit FocusLost, so we keep the default and avoid noisy toasts.
             terminal_focused: true,
-            mouse_free_motion: false,
             selected_setting: 0,
             selected_theme: ThemeId::ALL
                 .iter()
@@ -493,7 +460,6 @@ impl TuiApp {
             chat_render_cache: RefCell::new(ChatRenderCache::default()),
             interaction_registry: RefCell::new(InteractionRegistry::default()),
             panel_manager: PanelManager::new(),
-            plugin_panels_loaded: false,
             selection: None,
             hover_index: None,
             hover_context_usage: false,
@@ -524,13 +490,6 @@ impl TuiApp {
             skill_filter: String::new(),
             skill_filter_cursor: 0,
             skill_scroll: 0,
-            plugin_catalog: Vec::new(),
-            plugin_catalog_loading: false,
-            plugin_catalog_error: String::new(),
-            selected_plugin_row: 0,
-            plugin_row_scroll: 0,
-            pending_plugin_approvals: Vec::new(),
-            plugin_approval_scroll: 0,
             mcp_ui_state: Default::default(),
             background_commands: Vec::new(),
             bg_command_selected: 0,
@@ -548,8 +507,6 @@ impl TuiApp {
             model_routing_tab: crate::state::ModelRoutingTab::Chat,
             setup_phase: None,
             setup_list_selected: 0,
-            pending_mcp_merge: None,
-            extension_palette: Vec::new(),
             available_update: None,
             update_installing: false,
             update_check_user_initiated: false,
@@ -607,8 +564,7 @@ impl TuiApp {
              1. Provider + API key (model picker)\n\
              2. Memory extraction model\n\
              3. Permission mode\n\
-             4. Marketplace tip (optional)\n\
-             5. Preference interview (optional)\n\n\
+             4. Preference interview (optional)\n\n\
              First, choose a provider and enter your API key."
                 .to_string(),
         ));

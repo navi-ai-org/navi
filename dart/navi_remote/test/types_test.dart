@@ -192,13 +192,4 @@ void main() {
       expect(asStringList({'value': [1, 2]}), ['1', '2']);
     });
   });
-
-  group('VoiceEvent', () {
-    test('kind from nested kind', () {
-      final v = VoiceEvent.fromJson({
-        'kind': {'Partial': {'text': 'he'}},
-      });
-      expect(v.kindName, 'Partial');
-    });
-  });
 }

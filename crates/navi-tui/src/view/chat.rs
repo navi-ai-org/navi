@@ -108,12 +108,6 @@ pub(crate) fn render_chat_area(frame: &mut Frame<'_>, app: &mut TuiApp, area: Re
             let line_area = line_rect(inner, offset);
             let action = match source {
                 ChatLineSource::Message(index) => {
-                    // Higher-priority hits for `[Image N]` chips enable hover preview.
-                    if let Some(line) = visible_lines.get(offset) {
-                        crate::view::image_preview::register_chat_image_hits(
-                            app, line, line_area, *index,
-                        );
-                    }
                     // Every message block is selectable (user + assistant).
                     Some(HitAction::ChatMessage(*index))
                 }

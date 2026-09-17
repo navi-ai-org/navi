@@ -50,21 +50,6 @@ pub enum AsyncEvent {
         result: std::result::Result<String, String>,
     },
     RetryModel,
-    PluginCatalogLoaded {
-        entries: Vec<navi_plugin_manifest::PluginCatalogEntry>,
-        error: Option<String>,
-    },
-    PluginStaged {
-        plugin_id: String,
-        staging_path: std::path::PathBuf,
-        update: bool,
-        error: Option<String>,
-    },
-    PluginsReloaded {
-        error: Option<String>,
-        warnings: Vec<String>,
-    },
-    PluginsReloadNeeded,
     ClearSyncMessages,
     BackgroundCommandsUpdated(Vec<BackgroundCommandSnapshot>),
     /// Result of a GitHub Releases self-update check.
@@ -189,50 +174,6 @@ pub(crate) fn handle_async_event(app: &mut TuiApp, event: AsyncEvent) {
             if app.usage_state.refresh_pending {
                 app.usage_state.refresh_pending = false;
                 crate::usage::refresh_usage(app);
-            }
-        }
-        AsyncEvent::PluginCatalogLoaded { entries, error } => {
-            app.plugin_catalog_loading = false;
-            app.plugin_catalog = entries;
-            app.plugin_catalog_error = error.unwrap_or_default();
-            if !app.plugin_catalog_error.is_empty() {
-                show_notification(app, "Plugins", app.plugin_catalog_error.clone());
-            }
-        }
-        AsyncEvent::PluginStaged {
-            plugin_id,
-            staging_path,
-            update,
-            error,
-        } => {
-            if let Some(err) = error {
-                show_notification(
-                    app,
-                    "Plugins",
-                    format!("Failed to fetch {plugin_id}: {err}"),
-                );
-                return;
-            }
-            if let Err(err) =
-                crate::plugins::handle_plugin_staged(app, &plugin_id, &staging_path, update)
-            {
-                show_notification(app, "Plugins", format!("{err:#}"));
-            }
-        }
-        AsyncEvent::PluginsReloadNeeded => {
-            crate::plugins::reload_engine_plugins(app);
-        }
-        AsyncEvent::PluginsReloaded { error, warnings } => {
-            if let Some(err) = error {
-                show_notification(app, "Plugins", format!("Reload failed: {err}"));
-            } else if warnings.is_empty() {
-                show_notification(app, "Plugins", "Plugins reloaded.");
-            } else {
-                show_notification(
-                    app,
-                    "Plugins",
-                    format!("Reloaded with {} warning(s).", warnings.len()),
-                );
             }
         }
         AsyncEvent::SyncCompleted {
@@ -1472,9 +1413,7 @@ pub(crate) fn complete_setup_wizard(app: &mut TuiApp) {
     app.messages.clear();
     app.messages.push(ChatMessage::new(
         ChatRole::Assistant,
-        "Setup complete! You can now start using NAVI normally.\n\n\
-         Tip: discover WASM packages with `navi plugin search`."
-            .to_string(),
+        "Setup complete! You can now start using NAVI normally.".to_string(),
     ));
     app.events.clear();
     app.reset_run_state();

@@ -272,29 +272,15 @@ void main() {
       engine.dispose();
     });
 
-    test('installPluginFromMarketplace sends single pluginId key', () async {
+    test('memoryInit sends no embeddings/force body', () async {
       final engine = engineWith((req) async {
         expect(req.method, 'POST');
-        expect(req.url.path, '/plugins/install/marketplace');
+        expect(req.url.path, '/memory/init');
         final body = jsonDecode(req.body) as Map;
-        expect(body.containsKey('plugin_id'), isFalse);
-        expect(body['pluginId'], 'p1');
-        return http.Response(jsonEncode({'id': 'p1'}), 200);
+        expect(body, isEmpty);
+        return http.Response(jsonEncode({'active_memories': 0}), 200);
       });
-      await engine.installPluginFromMarketplace('p1', confirm: true);
-      engine.dispose();
-    });
-
-    test('updatePluginFromMarketplace sends single pluginId key', () async {
-      final engine = engineWith((req) async {
-        expect(req.method, 'POST');
-        expect(req.url.path, '/plugins/update/marketplace');
-        final body = jsonDecode(req.body) as Map;
-        expect(body.containsKey('plugin_id'), isFalse);
-        expect(body['pluginId'], 'p2');
-        return http.Response(jsonEncode({'id': 'p2'}), 200);
-      });
-      await engine.updatePluginFromMarketplace('p2', confirm: true);
+      await engine.memoryInit();
       engine.dispose();
     });
   });

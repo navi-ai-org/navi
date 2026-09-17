@@ -1,10 +1,11 @@
 //! Voice / dictation API on [`NaviEngine`].
 //!
-//! Engine-scoped (not per-session). Supports:
-//! - **Local** ONNX Nemotron (feature `voice-onnx`)
-//! - **Remote** registry transcription providers (OpenAI / Groq Whisper)
+//! Engine-scoped (not per-session). Transcription is **remote**: registry
+//! transcription providers (OpenAI / Groq Whisper) over HTTP. Local capture
+//! (recorder discovery, WAV helpers, recorder diagnostics) comes from
+//! `navi-voice`; local ONNX inference was removed.
 //!
-//! Desktop clients push 16 kHz mono PCM for local streaming; remote path is
+//! Desktop clients push 16 kHz mono PCM for capture; remote transcription is
 //! offline file transcription (WAV) via HTTP.
 
 use std::path::{Path, PathBuf};
@@ -15,10 +16,9 @@ use navi_core::{
     transcription_provider_catalog,
 };
 use navi_voice::{
-    AsrEngineId, CHUNK_SAMPLES, DoctorInput, DoctorReport, NemotronOnnxEngine,
-    RemoteTranscriptionConfig, RemoteTranscriptionKind, SAMPLE_RATE, TranscribeResult, VoiceEvent,
-    VoiceInstallOptions, VoiceRecorderInfo, VoiceStatus, download_engine, engine_installed,
-    list_available_recorders, resolve_model_dir, run_doctor, transcribe_file_remote,
+    DoctorInput, DoctorReport, RemoteTranscriptionConfig, RemoteTranscriptionKind, SAMPLE_RATE,
+    TranscribeResult, VoiceEvent, VoiceRecorderInfo, VoiceStatus, list_available_recorders,
+    run_doctor, transcribe_file_remote,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -30,72 +30,34 @@ type Result<T> = std::result::Result<T, NaviError>;
 
 const VOICE_EVENT_CAPACITY: usize = 128;
 
-/// In-process voice runtime (lazy ONNX engine + event bus).
+/// In-process voice event bus (engine-scoped).
 pub(crate) struct VoiceRuntime {
-    engine: Option<NemotronOnnxEngine>,
-    active: bool,
     event_tx: broadcast::Sender<VoiceEvent>,
 }
 
 impl VoiceRuntime {
     pub(crate) fn new() -> Self {
         let (event_tx, _) = broadcast::channel(VOICE_EVENT_CAPACITY);
-        Self {
-            engine: None,
-            active: false,
-            event_tx,
-        }
-    }
-
-    fn emit(&self, event: VoiceEvent) {
-        let _ = self.event_tx.send(event);
+        Self { event_tx }
     }
 }
 
 impl NaviEngine {
-    fn voice_install_options(&self) -> VoiceInstallOptions {
-        let cfg = self.loaded_config();
-        VoiceInstallOptions {
-            model_dir: cfg.config.voice.model_dir.clone(),
-            hf_repo_nemotron: cfg.config.voice.hf_repo_nemotron.clone(),
-        }
-    }
-
-    fn parse_engine_id(engine: Option<&str>, fallback: &str) -> Result<AsrEngineId> {
-        let raw = engine.unwrap_or(fallback);
-        AsrEngineId::parse(raw).ok_or_else(|| {
-            NaviError::Config(format!(
-                "unknown voice engine '{raw}'. Use: nemotron_streaming | distil_whisper"
-            ))
-        })
-    }
-
-    /// Config + install + recorder discovery + streaming flag.
+    /// Config + remote provider status + recorder discovery.
     pub fn voice_status(&self) -> Result<VoiceStatus> {
         let loaded = self.loaded_config();
         let voice = &loaded.config.voice;
-        let options = self.voice_install_options();
         let provider = if voice.provider.trim().is_empty() {
             "local".to_string()
         } else {
             voice.provider.clone()
         };
         let remote = voice.uses_remote_transcription();
-        let engine = Self::parse_engine_id(Some(voice.engine.as_str()), "nemotron_streaming")
-            .unwrap_or_default();
-        let model_dir = resolve_model_dir(&loaded.data_dir, &options, engine);
-        let installed = if remote {
-            find_transcription_provider(&provider).is_some()
-        } else {
-            engine_installed(&loaded.data_dir, &options, engine)
-        };
-        let model = if remote {
-            find_transcription_provider(&provider)
-                .map(|p| resolve_transcription_model(&p, &voice.model))
-                .unwrap_or_else(|| voice.model.clone())
-        } else {
-            voice.model.clone()
-        };
+        let registry = find_transcription_provider(&provider);
+        let installed = remote && registry.is_some();
+        let model = registry
+            .map(|reg| resolve_transcription_model(&reg, &voice.model))
+            .unwrap_or_else(|| voice.model.clone());
         let recorders = list_available_recorders()
             .into_iter()
             .map(|(kind, path)| VoiceRecorderInfo {
@@ -103,26 +65,16 @@ impl NaviEngine {
                 path: path.display().to_string(),
             })
             .collect();
-        let streaming_active = self
-            .inner
-            .voice
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .active;
 
         Ok(VoiceStatus {
             enabled: voice.enabled,
             provider,
             model,
-            engine: engine.as_str().to_string(),
             language: voice.language.clone(),
             capture: voice.capture.clone(),
             recorder: voice.recorder.clone(),
-            model_dir: model_dir.display().to_string(),
             installed,
-            streaming_active,
             sample_rate: SAMPLE_RATE,
-            chunk_samples: CHUNK_SAMPLES as u32,
             recorders,
         })
     }
@@ -147,26 +99,19 @@ impl NaviEngine {
         Ok(saved)
     }
 
-    /// Mic tools, model files, checksums — or remote provider + credential checks.
+    /// Mic tools + checksums for recorders — or remote provider + credential checks.
     pub fn voice_doctor(&self) -> Result<DoctorReport> {
         let loaded = self.loaded_config();
         let voice = &loaded.config.voice;
         if voice.uses_remote_transcription() {
             return self.voice_doctor_remote(voice);
         }
-        let engine = Self::parse_engine_id(Some(voice.engine.as_str()), "nemotron_streaming")
-            .unwrap_or_default();
-        run_doctor(
-            &loaded.data_dir,
-            &DoctorInput {
-                enabled: voice.enabled,
-                engine,
-                language: voice.language.clone(),
-                capture: voice.capture.clone(),
-                recorder: voice.recorder.clone(),
-                options: self.voice_install_options(),
-            },
-        )
+        run_doctor(&DoctorInput {
+            enabled: voice.enabled,
+            language: voice.language.clone(),
+            capture: voice.capture.clone(),
+            recorder: voice.recorder.clone(),
+        })
         .map_err(|e| NaviError::Config(format!("voice doctor diagnostics failed: {e}")))
     }
 
@@ -220,40 +165,6 @@ impl NaviEngine {
         Ok(DoctorReport { ok, lines })
     }
 
-    /// Whether the given engine package is installed under data_dir.
-    pub fn voice_engine_installed(&self, engine: Option<&str>) -> Result<bool> {
-        let loaded = self.loaded_config();
-        let fallback = loaded.config.voice.engine.as_str();
-        let engine = Self::parse_engine_id(engine, fallback)?;
-        Ok(engine_installed(
-            &loaded.data_dir,
-            &self.voice_install_options(),
-            engine,
-        ))
-    }
-
-    /// Download + verify a voice engine package (async).
-    pub async fn voice_init(&self, engine: Option<&str>, force: bool) -> Result<PathBuf> {
-        let loaded = self.loaded_config();
-        let fallback = loaded.config.voice.engine.as_str();
-        let engine = Self::parse_engine_id(engine, fallback)?;
-        let options = self.voice_install_options();
-        let data_dir = loaded.data_dir.clone();
-
-        let progress = Box::new(move |downloaded: u64, total: Option<u64>, file: &str| {
-            tracing::debug!(
-                file,
-                downloaded,
-                total = total.unwrap_or(0),
-                "voice model download progress"
-            );
-        });
-
-        download_engine(&data_dir, &options, engine, force, Some(progress))
-            .await
-            .map_err(|e| NaviError::Config(format!("download voice engine failed: {e}")))
-    }
-
     /// Subscribe to engine-global voice events (partials, final, errors).
     pub fn subscribe_voice_events(&self) -> broadcast::Receiver<VoiceEvent> {
         self.inner
@@ -266,34 +177,19 @@ impl NaviEngine {
 
     /// Transcribe a WAV file.
     ///
-    /// - **Remote** (`[voice].provider` = openai|groq|…): HTTP call using
-    ///   registry metadata + API key (same credential resolution as LLM providers).
-    /// - **Local**: Blocking ONNX Nemotron (requires `voice-onnx` feature + installed model).
+    /// `[voice].provider` must be a remote registry transcription provider
+    /// (openai | groq | …): HTTP call using registry metadata + API key (same
+    /// credential resolution as LLM providers).
     pub fn voice_transcribe_file(
         &self,
         path: impl AsRef<Path>,
         language: Option<&str>,
     ) -> Result<TranscribeResult> {
         let loaded = self.loaded_config();
-        let voice = &loaded.config.voice;
-        if voice.uses_remote_transcription() {
-            // Async remote call from sync API: use a small runtime if none is active.
-            return self.voice_transcribe_file_remote(path.as_ref(), language);
+        if !loaded.config.voice.uses_remote_transcription() {
+            return Err(local_transcription_removed_error());
         }
-        let lang = self.resolve_voice_language(language);
-        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
-        self.ensure_nemotron_locked(&mut rt, &lang)?;
-        let engine = rt
-            .engine
-            .as_mut()
-            .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
-        engine.set_language(&lang);
-        engine.transcribe_wav(path.as_ref()).map_err(|e| {
-            NaviError::Config(format!(
-                "local voice transcription of {} failed: {e}",
-                path.as_ref().display()
-            ))
-        })
+        self.voice_transcribe_file_remote(path.as_ref(), language)
     }
 
     /// Async remote transcription (preferred from async contexts).
@@ -303,17 +199,8 @@ impl NaviEngine {
         language: Option<&str>,
     ) -> Result<TranscribeResult> {
         let loaded = self.loaded_config();
-        let voice = &loaded.config.voice;
-        if !voice.uses_remote_transcription() {
-            // Local path is sync/ONNX — run in blocking pool.
-            let path = path.as_ref().to_path_buf();
-            let language = language.map(|s| s.to_string());
-            let this = self.clone();
-            return tokio::task::spawn_blocking(move || {
-                this.voice_transcribe_file(path, language.as_deref())
-            })
-            .await
-            .map_err(|e| NaviError::Config(format!("voice transcribe join: {e}")))?;
+        if !loaded.config.voice.uses_remote_transcription() {
+            return Err(local_transcription_removed_error());
         }
         let remote_cfg = self.resolve_remote_transcription_config(language)?;
         let result = transcribe_file_remote(&remote_cfg, path.as_ref())
@@ -436,87 +323,6 @@ impl NaviEngine {
         })
     }
 
-    /// Start a streaming recognition session (client pushes PCM).
-    pub fn voice_start_stream(&self, language: Option<&str>) -> Result<()> {
-        let lang = self.resolve_voice_language(language);
-        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
-        if rt.active {
-            return Err(NaviError::Config(
-                "voice stream already active; call voice_end_stream or voice_cancel_stream first"
-                    .into(),
-            ));
-        }
-        self.ensure_nemotron_locked(&mut rt, &lang)?;
-        let engine = rt
-            .engine
-            .as_mut()
-            .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
-        engine.set_language(&lang);
-        engine.reset();
-        rt.active = true;
-        rt.emit(VoiceEvent::Started {
-            engine: AsrEngineId::NemotronStreaming.as_str().to_string(),
-        });
-        Ok(())
-    }
-
-    /// Push 16 kHz mono f32 samples. Returns text delta emitted this call (may be empty).
-    pub fn voice_push_pcm(&self, samples: &[f32]) -> Result<String> {
-        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
-        if !rt.active {
-            return Err(NaviError::Config(
-                "voice stream not active; call voice_start_stream first".into(),
-            ));
-        }
-        let engine = rt
-            .engine
-            .as_mut()
-            .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
-        let delta = engine
-            .push_audio(samples)
-            .map_err(|e| NaviError::Config(format!("voice push_audio failed: {e}")))?;
-        if !delta.is_empty() {
-            let partial = engine.partial_text();
-            rt.emit(VoiceEvent::Partial { text: partial });
-        }
-        Ok(delta)
-    }
-
-    /// Flush remaining audio, emit final text, stop stream.
-    pub fn voice_end_stream(&self) -> Result<String> {
-        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
-        if !rt.active {
-            return Err(NaviError::Config(
-                "voice stream not active; call voice_start_stream first".into(),
-            ));
-        }
-        let engine = rt
-            .engine
-            .as_mut()
-            .ok_or_else(|| NaviError::Config("voice engine not loaded".into()))?;
-        let _ = engine
-            .flush()
-            .map_err(|e| NaviError::Config(format!("voice stream flush failed: {e}")))?;
-        let text = engine.partial_text();
-        rt.active = false;
-        rt.emit(VoiceEvent::Final { text: text.clone() });
-        rt.emit(VoiceEvent::Stopped);
-        Ok(text)
-    }
-
-    /// Abort stream without committing final text.
-    pub fn voice_cancel_stream(&self) -> Result<()> {
-        let mut rt = self.inner.voice.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(engine) = rt.engine.as_mut() {
-            engine.reset();
-        }
-        if rt.active {
-            rt.active = false;
-            rt.emit(VoiceEvent::Stopped);
-        }
-        Ok(())
-    }
-
     fn resolve_voice_language(&self, language: Option<&str>) -> String {
         match language {
             Some(l) if !l.trim().is_empty() => l.trim().to_string(),
@@ -562,33 +368,14 @@ impl NaviEngine {
             }
         }
     }
+}
 
-    fn ensure_nemotron_locked(&self, rt: &mut VoiceRuntime, language: &str) -> Result<()> {
-        let loaded = self.loaded_config();
-        let options = self.voice_install_options();
-        let engine_id = AsrEngineId::NemotronStreaming;
-        if !engine_installed(&loaded.data_dir, &options, engine_id) {
-            let model_dir = resolve_model_dir(&loaded.data_dir, &options, engine_id);
-            let hint =
-                "Run navi voice init --engine nemotron_streaming (or engine.voiceInit from N-API)"
-                    .to_string();
-            rt.emit(VoiceEvent::ModelMissing {
-                engine: engine_id.as_str().to_string(),
-                hint: hint.clone(),
-            });
-            return Err(NaviError::Config(format!(
-                "Nemotron streaming model not installed at {} — {hint}",
-                model_dir.display()
-            )));
-        }
-        if rt.engine.is_none() {
-            let model_dir = resolve_model_dir(&loaded.data_dir, &options, engine_id);
-            let eng = NemotronOnnxEngine::load(&model_dir, language)
-                .map_err(|e| NaviError::Config(format!("load Nemotron ONNX engine: {e:#}")))?;
-            rt.engine = Some(eng);
-        }
-        Ok(())
-    }
+fn local_transcription_removed_error() -> NaviError {
+    NaviError::Config(
+        "local voice transcription was removed; set [voice].provider to a remote transcription \
+         provider (e.g. openai, groq)"
+            .into(),
+    )
 }
 
 /// Partial update for `[voice]` settings (all fields optional).
@@ -599,12 +386,9 @@ pub struct VoiceConfigUpdate {
     /// `"local"` or registry transcription provider id.
     pub provider: Option<String>,
     pub model: Option<String>,
-    pub engine: Option<String>,
     pub language: Option<String>,
     pub capture: Option<String>,
     pub recorder: Option<String>,
-    pub model_dir: Option<String>,
-    pub hf_repo_nemotron: Option<String>,
 }
 
 fn apply_voice_config_update(voice: &mut VoiceConfig, update: VoiceConfigUpdate) -> Result<()> {
@@ -633,14 +417,6 @@ fn apply_voice_config_update(voice: &mut VoiceConfig, update: VoiceConfigUpdate)
     if let Some(m) = update.model {
         voice.model = m;
     }
-    if let Some(e) = update.engine {
-        if AsrEngineId::parse(&e).is_none() {
-            return Err(NaviError::Config(format!(
-                "unknown voice engine '{e}'. Use: nemotron_streaming | distil_whisper"
-            )));
-        }
-        voice.engine = e;
-    }
     if let Some(l) = update.language {
         voice.language = l;
     }
@@ -649,12 +425,6 @@ fn apply_voice_config_update(voice: &mut VoiceConfig, update: VoiceConfigUpdate)
     }
     if let Some(r) = update.recorder {
         voice.recorder = r;
-    }
-    if let Some(d) = update.model_dir {
-        voice.model_dir = d;
-    }
-    if let Some(h) = update.hf_repo_nemotron {
-        voice.hf_repo_nemotron = h;
     }
     Ok(())
 }

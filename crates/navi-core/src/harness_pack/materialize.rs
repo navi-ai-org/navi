@@ -217,7 +217,6 @@ fn default_capability_inventory() -> CapabilityInventory {
         50,
         Vec::<String>::new(),
         Vec::<String>::new(),
-        Vec::<String>::new(),
     )
 }
 
@@ -434,7 +433,6 @@ mod tests {
             50,
             None::<String>,
             None::<String>,
-            None::<String>,
         );
         let skill = fixture_skill(&["search", "read_file", "a11y_audit", "browser", "edit"]);
         let pack = materialize_from_skill(dir.path(), &skill, &inv, MaterializeOptions::default())
@@ -473,7 +471,6 @@ mod tests {
             true,
             true,
             50,
-            None::<String>,
             None::<String>,
             None::<String>,
         );

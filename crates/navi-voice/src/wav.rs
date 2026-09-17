@@ -5,6 +5,9 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use hound::{SampleFormat, WavReader};
 
+/// Target rate for speech recognition (16 kHz mono).
+pub const SAMPLE_RATE: u32 = 16_000;
+
 /// Load a WAV file as mono f32 samples and return (samples, sample_rate).
 pub fn load_wav_mono_f32(path: &Path) -> Result<(Vec<f32>, u32)> {
     let mut reader =
@@ -78,10 +81,10 @@ pub fn load_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
     if sr == 0 {
         bail!("wav has sample_rate 0: {}", path.display());
     }
-    if sr == 16_000 {
+    if sr == SAMPLE_RATE {
         return Ok(samples);
     }
-    Ok(resample_linear(&samples, sr, 16_000))
+    Ok(resample_linear(&samples, sr, SAMPLE_RATE))
 }
 
 /// Encode mono f32 samples as a 16 kHz 16-bit PCM WAV in memory.
@@ -90,7 +93,7 @@ pub fn write_wav_16k_mono_bytes(samples: &[f32]) -> Result<Vec<u8>> {
     {
         let spec = hound::WavSpec {
             channels: 1,
-            sample_rate: 16_000,
+            sample_rate: SAMPLE_RATE,
             bits_per_sample: 16,
             sample_format: SampleFormat::Int,
         };

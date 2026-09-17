@@ -31,7 +31,6 @@ navi --print-config
 navi --print-providers
 
 # Subcommands
-navi plugin install <id>    # Install a WASM plugin
 navi registry sync           # Force-sync provider registry
 navi registry list           # List cached providers
 navi mcp list                # List configured MCP servers
