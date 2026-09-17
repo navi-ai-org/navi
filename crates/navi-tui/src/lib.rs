@@ -35,7 +35,8 @@ mod usage;
 mod view;
 
 pub use self::app::TuiApp;
-pub use self::event_loop::{CrosstermInput, InputSource, run, run_loop};
+pub use self::event_loop::{CrosstermInput, InputSource, LoopExit, run, run_loop, run_loop_with_control, run_with_host};
+pub mod host;
 
 #[doc(hidden)]
 pub mod testing;

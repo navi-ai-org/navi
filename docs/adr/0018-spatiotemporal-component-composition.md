@@ -1,0 +1,98 @@
+# ADR 0018 — Spatiotemporal component composition (Matrix kernel host)
+
+## Status
+
+Accepted (prototype, branch `feat/spatiotemporal-compose`).
+
+## Context
+
+NAVI's composition was implicit and fixed:
+
+- **spatial**: the crate graph (`navi-core` → `navi-sdk` → `navi-tui`/`navi-napi`)
+  decides what exists together. Replacing a part means recompiling.
+- **temporal**: `NaviEngineBuilder` and `RuntimeComponents` decide the wiring at
+  `build()` time; `NaviEngineInner.runtime_components`, `host_tools`, the
+  `Arc<ToolExecutor>` and the frontend are frozen for the process lifetime.
+
+The engine already had the right seams (`Arc<dyn Tool>`, `RuntimeComponents`,
+`Arc<dyn EngineDriver>`, `broadcast<RuntimeEvent>`) and the TUI was already a
+*client* of `EngineDriver` — but the TUI **built and owned** the engine
+(`navi-tui/src/app.rs`: `build_engine`), so a frontend could not be replaced while
+a session lived.
+
+The WASM plugin system (ADRs 0001–0014) was removed in v0.8.0: it required
+maintaining two sandbox stacks inside the process. ADR 0013 left an explicit
+note: *"deep TUI patching requires a new UI protocol"*.
+
+## Decision
+
+Adopt the [Matrix](https://github.com/enrell/matrix) kernel as NAVI's
+composition authority, with NAVI as its **host**:
+
+- `crates/navi-compose` embeds `matrix-core` (in-process, synchronous, no async
+  runtime of its own) and implements `CallForwarder`, `LifecycleHook` and
+  `EventSink`.
+- Every swappable part is a **component** with a manifest (`provides`/`requires`/
+  `calls`/`tier`/`trust`/`restart`): the engine, frontends, tool packs,
+  providers, compaction/prompt/security strategies.
+- The **frontend is a component**. `navi-cli` builds the engine once, activates
+  `navi.engine`, starts the session, then activates the requested frontend
+  (`--ui`). The supervisor owns the lifecycle.
+- The terminal is an **exclusive resource** (`TerminalLease`, one owner,
+  released on withdraw). A runtime swap quiesces the current generation, releases
+  the lease, and activates the successor with fresh bindings.
+- Session state stays in the engine; a swapped-in frontend re-attaches through
+  `TuiApp::attach_session`.
+
+Kernel invariants (Matrix `docs/CONTRACT.md`) are the acceptance criteria: I01
+(single owner), I02 (no admission outside `Active`), I03 (stale generation
+rejected at the effect boundary), I04 (Active ⇒ bindings valid), I05/I07
+(partial acquisition rolls back; `Disposed` = no pending resources).
+
+## Consequences
+
+Positive:
+
+- Parts of the app are replaceable **at runtime**: `navi components reload
+  navi.ui.plain` swaps the frontend of a live session; non-UI components
+  (compaction, providers, tool packs) swap the same way.
+- Missing dependencies become a visible `Waiting` state with a reason instead of
+  a runtime surprise.
+- Resources acquired by a failed component are cleaned up by the kernel
+  (`CleanupPending` → `Disposed`), not by convention.
+- The composition is auditable: generations, bindings, pending work and the
+  journal are inspectable (`navi components status|journal|inventory`).
+- The process tier for third-party components (`matrix-host` + guard) plugs into
+  the same manifests (`execution.entrypoint` = binary vs `inproc:<id>`) without
+  reintroducing WASM.
+
+Negative:
+
+- A reload is not free: the terminal handoff is visible (Matrix v0.1 does not
+  promise zero downtime).
+- In-process components are trusted code; Rust gives no plugin isolation.
+- `matrix-core` is an experimental `0.1.0` kernel: it is pinned by path and the
+  coupling is confined to `navi-compose`.
+- Matrix v0.1 keeps a *registered definition* continuously desired, so
+  "withdraw and stay stopped" means removing the definition (the installed
+  manifest stays on disk).
+- A second Tokio runtime is avoided: frontend threads run inside the CLI's
+  runtime via `Handle::enter`.
+
+## Alternatives considered
+
+- **Native in-process plugins (libloading)** — rejected by ADR 0003/0013: no
+  memory isolation, credential theft from process memory.
+- **WASM-only plugins** — removed in v0.8.0; a second sandbox stack to maintain,
+  and it cannot hand over a terminal anyway.
+- **Out-of-process frontends only (navi-server/ACP style)** — kept as a valid
+  *transport* for frontends, but it does not give the engine's own parts
+  (compaction, prompts, tool packs) a composition model.
+- **Reimplementing Matrix's invariants inside NAVI** — rejected: the hard part is
+  exactly the lifecycle/admission/cleanup semantics, and duplicating them would
+  drift.
+
+## References
+
+- Design study: `docs/compose.md`, `crates/navi-compose/README.md`
+- Matrix: `CHARTER.md`, `docs/CONTRACT.md`, `docs/LIFECYCLE.md`, `docs/PROTOCOL.md`

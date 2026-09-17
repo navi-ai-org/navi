@@ -2473,6 +2473,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "matrix-core"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "serde_json",
+]
+
+[[package]]
 name = "matrixmultiply"
 version = "0.3.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2760,6 +2768,7 @@ dependencies = [
  "clap",
  "fastrand",
  "navi-browser",
+ "navi-compose",
  "navi-core",
  "navi-mcp",
  "navi-sdk",
@@ -2772,6 +2781,26 @@ dependencies = [
  "toml",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "navi-compose"
+version = "0.8.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "crossterm",
+ "matrix-core",
+ "navi-core",
+ "navi-sdk",
+ "navi-tui",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
 ]
 
 [[package]]

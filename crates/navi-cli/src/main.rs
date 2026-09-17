@@ -1,14 +1,18 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use navi_compose::{Compose, ComposeOptions, default_home, default_manifests};
 use navi_core::{LoadedConfig, LoggingRuntimeConfig, init_logging, log_path};
 use navi_sdk::{
-    NaviAcpServer, NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest, NaviTurnRequest,
+    EngineDriver, NaviAcpServer, NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest,
+    NaviTurnRequest,
 };
 use navi_tui::TuiApp;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 mod bench_cmd;
 mod browser_cmd;
+mod components_cmd;
 mod eval_cmd;
 mod harness_cmd;
 mod mcp_cmd;
@@ -75,6 +79,13 @@ struct Cli {
     #[arg(long = "skill", value_name = "ID", action = clap::ArgAction::Append)]
     skill: Vec<String>,
 
+    /// Frontend component to activate (`navi.ui.tui`, `navi.ui.plain`, …).
+    ///
+    /// The frontend is a component: it can be swapped at runtime with
+    /// `navi components reload <id>` without losing the session.
+    #[arg(long, value_name = "ID", default_value = "navi.ui.tui")]
+    ui: String,
+
     #[arg(value_name = "TASK")]
     task: Vec<String>,
 }
@@ -135,6 +146,11 @@ enum Commands {
     },
     /// Serve ACP over stdio so other ACP clients can use NAVI as an agent
     Acp,
+    /// Inspect, swap and audit composed components (kernel lifecycle/generations)
+    Components {
+        #[command(subcommand)]
+        action: components_cmd::ComponentsAction,
+    },
     /// List and export saved sessions (e.g. ATIF trajectory export for SFT/RL)
     Session {
         #[command(subcommand)]
@@ -596,6 +612,11 @@ async fn main() -> Result<()> {
         return session_cmd::handle_session_command(action, &loaded_config, &cwd);
     }
 
+    // Handle component inspection/swap early (offline, no provider needed)
+    if let Some(Commands::Components { action }) = cli.command {
+        return components_cmd::handle_components_command(action, &loaded_config, &cwd);
+    }
+
     // Handle computer-use subcommand early (offline diagnostics, no provider needed)
     if let Some(Commands::ComputerUse { action }) = cli.command {
         return handle_computer_use_command(action, &cwd);
@@ -650,8 +671,74 @@ async fn main() -> Result<()> {
     // activation; `config.skills.active` (set above when --skill) controls only
     // catalog visibility.
 
-    tracing::info!(project = %cwd.display(), "starting TUI");
-    navi_tui::run(TuiApp::new(loaded_config, cwd.clone(), task, cli_skills)?)?;
+    tracing::info!(project = %cwd.display(), ui = %cli.ui, "starting composed session");
+    run_composed(loaded_config, cwd.clone(), task, cli_skills, cli.ui.clone()).await?;
+    Ok(())
+}
+
+/// Starts NAVI as a composed application.
+///
+/// The engine is built once and bound to the compose supervisor; the frontend
+/// (`navi.ui.*`) is activated as a *component* that requires
+/// `navi.engine.driver@1`. The supervisor then owns the lifecycle: a reload
+/// request swaps the frontend generation while the session stays live in the
+/// engine.
+async fn run_composed(
+    loaded_config: LoadedConfig,
+    cwd: PathBuf,
+    task: Option<String>,
+    active_skills: Vec<String>,
+    ui_id: String,
+) -> Result<()> {
+    let engine = NaviEngineBuilder::from_project(cwd.clone())
+        .loaded_config(loaded_config.clone())
+        .build()?;
+    let driver: Arc<dyn EngineDriver> = Arc::new(engine);
+
+    let compose = Compose::new(ComposeOptions {
+        home: default_home(&loaded_config.data_dir),
+        project_dir: cwd.clone(),
+        loaded_config: loaded_config.clone(),
+        dry_run: false,
+        terminal_effects: true,
+    })?;
+    compose.set_engine(driver);
+    compose.set_frontend_context(task, active_skills.clone());
+    compose.install_definitions(&default_manifests())?;
+
+    // Root component first: frontends bind to the engine's capabilities.
+    let engine_outcome = compose.activate("navi.engine")?;
+    tracing::info!(state = %engine_outcome.state, "engine component active");
+
+    // The session lives in the engine: it survives any frontend swap. Without
+    // credentials the engine cannot build a provider yet — the frontend still
+    // activates and shows its own setup/model picker (the session is created on
+    // the first turn instead).
+    match compose.start_session_for_project(active_skills).await {
+        Ok(session_id) => tracing::info!(session = %session_id, "composed session started"),
+        Err(err) => tracing::warn!(
+            error = %err,
+            "no live session yet (provider/credentials missing); \
+             the frontend will drive setup"
+        ),
+    }
+
+    let outcome = compose.activate(&ui_id)?;
+    if outcome.state != "Active" {
+        anyhow::bail!(
+            "frontend `{ui_id}` did not activate: state={} reason={:?}",
+            outcome.state,
+            outcome.waiting_reason
+        );
+    }
+    tracing::info!(
+        frontend = %ui_id,
+        generation = ?outcome.generation,
+        "frontend component active"
+    );
+
+    compose.run_until_exit().await?;
+    tracing::info!("composed session finished");
     Ok(())
 }
 

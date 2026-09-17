@@ -142,6 +142,23 @@ impl Harness {
         self.terminal.backend().buffer().area.width
     }
 
+    /// Session id the harness app is attached to.
+    pub fn session_id(&self) -> &str {
+        self.app.session_id.as_str()
+    }
+
+    /// Drives the **real** event loop with a compose control channel until the
+    /// loop exits, and returns why.
+    ///
+    /// The input source never produces events (idle loop), so the only thing
+    /// that can end the run is a control message — this is how the runtime
+    /// frontend swap is exercised without a real terminal.
+    pub fn run_loop_until_control(&mut self, control: &crate::host::ControlHandle) -> crate::LoopExit {
+        let mut input = VecInput::new().stop_when_empty(true);
+        crate::run_loop_with_control(&mut self.terminal, &mut self.app, &mut input, Some(control))
+            .expect("event loop")
+    }
+
     /// Height of the test terminal.
     pub fn height(&self) -> u16 {
         self.terminal.backend().buffer().area.height

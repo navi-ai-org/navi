@@ -1,6 +1,4 @@
 use std::io;
-use std::panic;
-use std::sync::Once;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -10,7 +8,7 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode,
 };
 use ratatui::backend::Backend;
 use ratatui::prelude::{CrosstermBackend, Terminal};
@@ -79,45 +77,15 @@ impl InputSource for CrosstermInput {
     }
 }
 
-struct TerminalModeGuard {
-    active: bool,
-}
-
-impl TerminalModeGuard {
-    fn enter() -> Result<Self> {
-        let mut guard = Self { active: false };
-        enable_raw_mode()?;
-        guard.active = true;
-        let mut stdout = io::stdout();
-        if let Err(err) = enter_terminal_modes(&mut stdout) {
-            let _ = guard.restore();
-            return Err(err.into());
-        }
-        Ok(guard)
-    }
-
-    fn restore(&mut self) -> io::Result<()> {
-        if !self.active {
-            return Ok(());
-        }
-        self.active = false;
-        restore_terminal_modes_best_effort()
-    }
-}
-
-impl Drop for TerminalModeGuard {
-    fn drop(&mut self) {
-        let _ = self.restore();
-    }
-}
-
 // ─── entry point (sync — no nested runtime) ────────────────────────────────────
 // The caller (navi-cli `#[tokio::main]`) already owns a multi-thread tokio
 // runtime, so `tokio::spawn` works from inside this synchronous event loop.
 // We must NOT create a second runtime here.
 pub fn run(app: TuiApp) -> Result<()> {
-    install_terminal_restore_panic_hook();
-    let mut terminal_modes = TerminalModeGuard::enter()?;
+    // Exclusive terminal ownership: the same lease the compose supervisor hands
+    // to component frontends. The legacy entry point acquires it for itself
+    // under the built-in TUI component id.
+    let lease = crate::host::TerminalLease::acquire("navi.ui.tui")?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -131,12 +99,44 @@ pub fn run(app: TuiApp) -> Result<()> {
     flush_session_checkpoint(&mut app);
 
     let cursor_result = terminal.show_cursor();
-    let restore_result = terminal_modes.restore();
+    let restore_result = lease.release();
 
     cursor_result?;
     restore_result?;
 
     result
+}
+
+/// Runs the TUI as a component frontend driven by the compose supervisor.
+///
+/// The supervisor already owns the terminal lease and the control channel; this
+/// function never acquires them itself. On `Quiesce` it restores the terminal
+/// and returns [`crate::host::UiExit::Quiesced`] so the next generation can take
+/// over without a stale generation clobbering the screen.
+pub fn run_with_host(app: TuiApp, host: crate::host::UiHost) -> Result<crate::host::UiExit> {
+    let mut app = app;
+    if let Some(session_id) = host.session_id.clone() {
+        // Restore the live session's view when it has a persisted snapshot; a
+        // brand-new session simply adopts the id and starts empty.
+        app.attach_session(session_id);
+    }
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+    let mut input = CrosstermInput;
+    install_exit_signal_forwarder(&app);
+    let exit = run_loop_with_control(&mut terminal, &mut app, &mut input, Some(&host.control))?;
+    flush_session_checkpoint(&mut app);
+    let cursor_result = terminal.show_cursor();
+    let restore_result = match host.lease.as_ref() {
+        Some(lease) => lease.release(),
+        None => Ok(()),
+    };
+    cursor_result?;
+    restore_result?;
+    Ok(match exit {
+        LoopExit::Quit | LoopExit::Shutdown => crate::host::UiExit::Quit,
+        LoopExit::Quiesced => crate::host::UiExit::Quiesced,
+    })
 }
 
 /// Forward process exit signals into the TUI async channel so the event loop
@@ -187,7 +187,7 @@ fn install_exit_signal_forwarder(app: &TuiApp) {
     });
 }
 
-fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
+pub(crate) fn enter_terminal_modes(w: &mut impl io::Write) -> io::Result<()> {
     clear_leftover_terminal_modes(w)?;
     execute!(w, EnterAlternateScreen, EnableBracketedPaste)?;
     // Re-assert after alternate-screen entry — some terminals re-apply parent
@@ -436,7 +436,7 @@ fn disable_mouse_capture(w: &mut impl io::Write) -> io::Result<()> {
     w.flush()
 }
 
-fn restore_terminal_modes_best_effort() -> io::Result<()> {
+pub(crate) fn restore_terminal_modes_best_effort() -> io::Result<()> {
     let mut first_error = None;
     let mut stdout = io::stdout();
 
@@ -467,18 +467,6 @@ fn remember_error(slot: &mut Option<io::Error>, result: io::Result<()>) {
     {
         *slot = Some(err);
     }
-}
-
-static TERMINAL_RESTORE_PANIC_HOOK: Once = Once::new();
-
-fn install_terminal_restore_panic_hook() {
-    TERMINAL_RESTORE_PANIC_HOOK.call_once(|| {
-        let previous = panic::take_hook();
-        panic::set_hook(Box::new(move |info| {
-            let _ = restore_terminal_modes_best_effort();
-            previous(info);
-        }));
-    });
 }
 
 #[cfg(test)]
@@ -870,6 +858,36 @@ where
     <B as Backend>::Error: Sync + Send + 'static,
     I: InputSource,
 {
+    run_loop_with_control(terminal, app, input, None).map(|_| ())
+}
+
+/// Why the event loop returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoopExit {
+    /// The user quit (quit keybinding or `AsyncEvent::ShutdownRequested`).
+    Quit,
+    /// The compose supervisor requested a quiesce (runtime swap).
+    Quiesced,
+    /// A shutdown request arrived from the signal forwarder.
+    Shutdown,
+}
+
+/// The TUI's main loop with an optional compose control channel.
+///
+/// When `control` is present, the loop polls it every tick (and caps the input
+/// poll timeout) so a swap request is honored within ~50ms instead of waiting
+/// for the next user event.
+pub fn run_loop_with_control<B, I>(
+    terminal: &mut Terminal<B>,
+    app: &mut TuiApp,
+    input: &mut I,
+    control: Option<&crate::host::ControlHandle>,
+) -> Result<LoopExit>
+where
+    B: Backend,
+    <B as Backend>::Error: Sync + Send + 'static,
+    I: InputSource,
+{
     // If input was pre-filled from CLI task, submit on first frame
     if !app.input.trim().is_empty() && app.mode == Mode::Normal {
         submit_message(app);
@@ -882,7 +900,23 @@ where
     // the same synchronized-update bracket.
     let mut needs_full_repaint = true;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
+    let mut exit = LoopExit::Quit;
     loop {
+        // Compose control: a swap request must preempt the frame loop so the
+        // terminal is released promptly for the next generation.
+        if let Some(control) = control {
+            match control.poll() {
+                Some(crate::host::ControlMsg::Quiesce { .. }) => {
+                    exit = LoopExit::Quiesced;
+                    break;
+                }
+                Some(crate::host::ControlMsg::Shutdown) => {
+                    exit = LoopExit::Shutdown;
+                    break;
+                }
+                None => {}
+            }
+        }
         // Animation clock on a fixed wall-clock cadence. Decoupled from input
         // events and from the paced draw loop, so moving the mouse cannot
         // accelerate tick-driven animations.
@@ -975,6 +1009,7 @@ where
             handle_async_event(app, event);
         }
         if shutdown {
+            exit = LoopExit::Shutdown;
             break;
         }
 
@@ -1001,6 +1036,12 @@ where
             Duration::from_millis(500)
         } else {
             Duration::from_millis(250)
+        };
+
+        let timeout = if control.is_some() {
+            timeout.min(Duration::from_millis(50))
+        } else {
+            timeout
         };
 
         if input.poll(timeout)? {
@@ -1076,7 +1117,9 @@ where
 
     // Final frame: the pacer may have skipped the last animation-only draw,
     // and callers (tests included) assert the screen right after exit.
-    {
+    // A quiescing generation skips it: the terminal is about to be restored and
+    // handed to the successor, so drawing here would only flicker.
+    if exit != LoopExit::Quiesced {
         let mut stdout = io::stdout();
         with_synchronized_update(&mut stdout, || {
             if needs_full_repaint {
@@ -1087,10 +1130,15 @@ where
     }
 
     flush_session_checkpoint(app);
-    save_current_session(app);
+    // A quiesce hands the live session to the successor generation: the session
+    // belongs to the engine, so the frontend must NOT mint a new id here.
+    // Quitting (or shutdown) ends the session and resets the view, as before.
+    if exit != LoopExit::Quiesced {
+        save_current_session(app);
+    }
     save_preferences(app);
 
-    Ok(())
+    Ok(exit)
 }
 
 #[derive(Default)]

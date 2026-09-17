@@ -544,6 +544,43 @@ impl TuiApp {
 
         Ok(app)
     }
+    /// Seeds the session this frontend attaches to.
+    ///
+    /// Used by the compose supervisor when a frontend generation is activated:
+    /// the engine already owns the session (messages, goal, plan), so a swapped
+    /// frontend adopts the same session id instead of starting a new one.
+    pub fn set_session_id(&mut self, session_id: impl Into<String>) {
+        let session_id = session_id.into();
+        if session_id.trim().is_empty() {
+            return;
+        }
+        self.session_id = navi_core::SessionId::new(session_id);
+    }
+
+    /// Session id this frontend is currently attached to.
+    pub fn session_id(&self) -> &str {
+        self.session_id.as_str()
+    }
+
+    /// Attaches this frontend to an existing session and restores its view.
+    ///
+    /// Used by the compose supervisor when a frontend generation is swapped in:
+    /// the engine owns the session (messages, goal, plan, usage), so the new
+    /// frontend rebuilds its view from the persisted snapshot and the swap is
+    /// invisible to the user. Returns `false` when the session has no persisted
+    /// snapshot yet (fresh session, no turn executed).
+    pub fn attach_session(&mut self, session_id: impl Into<String>) -> bool {
+        self.set_session_id(session_id);
+        let session_id = self.session_id.clone();
+        match crate::session::load_session_snapshot(&self.session_store, &session_id) {
+            Some(snapshot) => {
+                crate::persistence::load_session(self, &snapshot);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Create a TuiApp in setup wizard mode.
     /// Opens the model picker and transitions to the setup interview when
     /// a provider is configured.

@@ -4,6 +4,7 @@ members = [
     "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
+    "crates/navi-compose",
     "crates/navi-computer-use",
     "crates/navi-core",
     "crates/navi-dart",
@@ -26,6 +27,7 @@ default-members = [
     "crates/navi-acp",
     "crates/navi-browser",
     "crates/navi-cli",
+    "crates/navi-compose",
     "crates/navi-computer-use",
     "crates/navi-core",
     "crates/navi-dart",
@@ -131,6 +133,7 @@ navi-acp = { version = "0.8.0", path = "crates/navi-acp" }
 navi-browser = { version = "0.8.0", path = "crates/navi-browser" }
 navi-core = { version = "0.8.0", path = "crates/navi-core" }
 navi-computer-use = { version = "0.8.0", path = "crates/navi-computer-use" }
+navi-compose = { version = "0.8.0", path = "crates/navi-compose" }
 navi-dart = { version = "0.8.0", path = "crates/navi-dart" }
 navi-mcp = { version = "0.8.0", path = "crates/navi-mcp" }
 napi = { version = "3.9.4", features = ["async", "serde-json"] }

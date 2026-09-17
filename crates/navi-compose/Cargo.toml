@@ -1,0 +1,30 @@
+[package]
+name = "navi-compose"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Spatiotemporal component composition for NAVI (host of the Matrix kernel)."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+crossterm.workspace = true
+navi-core.workspace = true
+navi-sdk.workspace = true
+navi-tui.workspace = true
+parking_lot = "0.12"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+# The composition kernel. Path dependency on the Matrix workspace (prototype):
+# navi-compose is a *host* — the kernel owns composition/ownership/lifecycle and
+# never executes component code; this crate executes.
+matrix-core = { path = "/home/lain/projects/matrix/crates/matrix-core" }
+
+[dev-dependencies]
+tempfile.workspace = true
