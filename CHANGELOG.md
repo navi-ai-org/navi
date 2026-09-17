@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.3...v0.8.0
+
+**Breaking release.** The WASM plugin system, the local ML embedding stack, the
+local ONNX voice engine, and terminal inline image rendering were removed; the
+SQLite access layer moved from the C `rusqlite` to the pure-Rust `turso`
+engine. Dev builds now use Cranelift + mold.
+
+### Fixed
+
+- **Interrupted turns no longer poison the next request.** A tool call left
+  unanswered (Esc/cancel, model switch, crash) or kept by a rewind could make
+  every later provider request fail with `assistant message with 'tool_calls'
+  must be followed by tool messages`. The engine now repairs tool-call/result
+  pairing before each turn (synthesizing an interrupted-result for unanswered
+  calls, dropping orphan results) and the TUI applies the same repair to its
+  history before seeding the engine.
+
+### Removed
+
+- **WASM plugin system, in full.** Crates `navi-plugin-api`,
+  `navi-plugin-broker`, `navi-plugin-manifest`, `navi-plugin-orchestrator` and
+  `navi-plugin-runtime`; `navi plugin` commands; TUI plugin marketplace/panels/
+  approval modals; `plugins`/`wasm_plugins`/`plugin_marketplace` config keys and
+  `security.allow_external_plugins`; the vendored `marketplace/` catalog. The
+  `wasmtime`/`cranelift-*` dependency tree is gone from the build.
+- **Local ML embeddings** (`candle-core`, `candle-nn`, `candle-transformers`,
+  `tokenizers`, `hf-hub`, `esaxx-rs` patch). Auto-memory search is textual
+  (`LIKE`), and the `embeddings` feature plus the model download flow are gone.
+- **Local ONNX voice** (`ort`, `ort-sys`). Voice is now remote transcription
+  (OpenAI/Groq-compatible endpoints) plus recorder diagnostics; the
+  `voice-onnx` feature and local model lifecycle were removed.
+- **Terminal inline image rendering** (`ratatui-image`; Kitty/Sixel/iTerm2
+  protocols and the hover lightbox). Image attachments and model vision
+  (`ContentPart::Image`, `view_image`) are unchanged.
+- **`aws-lc-rs` TLS provider** (the single largest C build, 61 MB). rustls now
+  uses the audited `ring` provider (`reqwest` with `rustls-no-provider` + a
+  provider installed by `navi-core`); certificate verification still goes
+  through `rustls-platform-verifier`.
+
+### Changed
+
+- **Database engine: `rusqlite` (bundled C SQLite) → `turso`** (pure Rust).
+  Same database files and paths (`history.sqlite`, `memories.db`,
+  `global-memory.db`, `plans.sqlite`, `registry.db`); no data migration needed.
+  Multi-process WAL uses turso's experimental mode and `.tshm` sidecars are
+  cleaned up with `-wal`/`-shm`.
+- **Dev builds are dramatically lighter**: Cranelift codegen for the dev
+  profile only (release stays LLVM), mold linker, no debug info for external
+  dependencies; the debug binary dropped from ~385 MB to ~180 MB.
+- `AGENTS.md`, README and docs updated for the plugin removal; the 10
+  plugin-only ADRs are marked **Superseded**.
+
 ## [0.7.3] - 2026-09-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.2...v0.7.3

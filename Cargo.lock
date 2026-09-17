@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "copland"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "crossterm",
  "ratatui",
@@ -2720,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "navi-acp"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2735,7 +2735,7 @@ dependencies = [
 
 [[package]]
 name = "navi-browser"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2754,7 +2754,7 @@ dependencies = [
 
 [[package]]
 name = "navi-cli"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2776,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "navi-computer-use"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2792,7 +2792,7 @@ dependencies = [
 
 [[package]]
 name = "navi-core"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2830,7 +2830,7 @@ dependencies = [
 
 [[package]]
 name = "navi-dart"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "navi-core",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "navi-lite"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2862,7 +2862,7 @@ dependencies = [
 
 [[package]]
 name = "navi-mcp"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2878,7 +2878,7 @@ dependencies = [
 
 [[package]]
 name = "navi-napi"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "navi-openai"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2912,7 +2912,7 @@ dependencies = [
 
 [[package]]
 name = "navi-os-macos"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "accessibility-sys",
  "anyhow",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "navi-os-windows"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -2939,7 +2939,7 @@ dependencies = [
 
 [[package]]
 name = "navi-providers"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "navi-core",
  "navi-openai",
@@ -2947,7 +2947,7 @@ dependencies = [
 
 [[package]]
 name = "navi-sdk"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2968,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "navi-server"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "navi-tui"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3010,7 +3010,7 @@ dependencies = [
 
 [[package]]
 name = "navi-vfs"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -3038,7 +3038,7 @@ dependencies = [
 
 [[package]]
 name = "navi-voice"
-version = "0.7.3"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "hound",
