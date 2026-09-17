@@ -59,6 +59,15 @@ composition authority, with NAVI as its **host**:
   back, both proven in a real PTY. The TUI's own input is read on a thread and
   delivered over a channel, so a blocking terminal poll can never stall the
   control channel.
+- **The host supervises; the kernel does not.** The Matrix process host spawns
+  children and speaks the protocol, but restart policy belongs to the
+  composition owner: a frontend that fails (`UiExit::Error`, including a child
+  that exits non-zero) and a process component whose child died are restarted
+  under the manifest's `restart` policy, with a budget (5 attempts / 30 s by
+default) and exponential backoff. A restart is a new generation, so the
+  successor gets a fresh process and fresh bindings; `restart = "never"` and an
+exhausted budget leave the component explicitly down, and a user quit is never
+  restarted.
 - The terminal is an **exclusive resource** (`TerminalLease`, one owner,
   released on withdraw). A runtime swap quiesces the current generation, releases
   the lease, and activates the successor with fresh bindings.

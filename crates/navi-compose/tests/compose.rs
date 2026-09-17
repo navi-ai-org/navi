@@ -33,12 +33,14 @@ struct RunRecord {
 
 /// Deterministic frontend: submits scripted commands through the kernel, then
 /// waits for the supervisor to quiesce it (or quits immediately when
-/// `quit_immediately` is set).
+/// `quit_immediately` is set, or crashes for its first `fail_times` runs).
 struct ScriptedFrontend {
     id: String,
     requires_tty: bool,
     commands: Vec<String>,
     quit_immediately: bool,
+    /// Number of leading runs that end in `UiExit::Error` (a crash).
+    fail_times: usize,
     runs: Arc<Mutex<Vec<RunRecord>>>,
 }
 
@@ -52,6 +54,15 @@ impl UiFrontend for ScriptedFrontend {
     }
 
     fn run(&self, host: UiHost) -> UiExit {
+        if self.runs.lock().unwrap().len() < self.fail_times {
+            self.runs.lock().unwrap().push(RunRecord {
+                generation: host.generation,
+                session_id: host.session_id.clone(),
+                command_results: Vec::new(),
+                exit: UiExit::Error,
+            });
+            return UiExit::Error;
+        }
         let mut command_results = Vec::new();
         for command in &self.commands {
             command_results.push(match host.commands.submit(command) {
@@ -133,6 +144,19 @@ fn scripted(id: &str, requires_tty: bool, commands: Vec<String>) -> Arc<Scripted
         requires_tty,
         commands,
         quit_immediately: false,
+        fail_times: 0,
+        runs: Arc::new(Mutex::new(Vec::new())),
+    })
+}
+
+/// A frontend that crashes (`UiExit::Error`) for its first `fail_times` runs.
+fn scripted_flaky(id: &str, fail_times: usize) -> Arc<ScriptedFrontend> {
+    Arc::new(ScriptedFrontend {
+        id: id.to_string(),
+        requires_tty: false,
+        commands: Vec::new(),
+        quit_immediately: false,
+        fail_times,
         runs: Arc::new(Mutex::new(Vec::new())),
     })
 }
@@ -144,8 +168,20 @@ fn scripted_quitter(id: &str) -> Arc<ScriptedFrontend> {
         requires_tty: false,
         commands: Vec::new(),
         quit_immediately: true,
+        fail_times: 0,
         runs: Arc::new(Mutex::new(Vec::new())),
     })
+}
+
+/// Drives the supervisor's reconciliation for a while (no async runtime here).
+fn drive_supervisor(compose: &Compose, steps: usize) {
+    for _ in 0..steps {
+        compose.tick().expect("tick");
+        compose.reap_exited_frontends();
+        compose.supervise_process_components();
+        compose.process_pending_restarts();
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn manifest_for(frontend: &ScriptedFrontend) -> navi_compose::ComponentManifest {
@@ -578,6 +614,138 @@ fn a_frontend_that_quits_on_its_own_is_reaped() {
     assert_eq!(reaped, vec!["navi.ui.test".to_string()]);
     assert!(!compose.has_running_frontend());
     assert!(compose.reap_exited_frontends().is_empty(), "reaping is idempotent");
+}
+
+#[test]
+fn a_crashed_frontend_is_restarted_with_a_new_generation() {
+    // Two crashes, then it stays up. A fast backoff keeps the test quick.
+    let frontend = scripted_flaky("navi.ui.test", 2);
+    let (compose, _dir) = compose_with_frontends(vec![(frontend.clone(), true)]);
+    compose.set_restart_policy(navi_compose::RestartPolicy {
+        backoff: Duration::from_millis(5),
+        backoff_cap: Duration::from_millis(20),
+        ..navi_compose::RestartPolicy::default()
+    });
+    compose
+        .install_definitions(&[navi_compose::engine_manifest(), manifest_for(&frontend)])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+
+    compose.activate("navi.ui.test").expect("activate");
+    // The first run fails immediately; supervision restarts it instead of
+    // letting the session die (the fast backoff makes this quick).
+    drive_supervisor(&compose, 60);
+
+    assert!(compose.has_running_frontend(), "the frontend is back");
+    assert_eq!(
+        compose.running_frontend().as_deref(),
+        Some("navi.ui.test")
+    );
+    let status = compose
+        .status()
+        .into_iter()
+        .find(|component| component.id == "navi.ui.test")
+        .expect("component status");
+    assert_eq!(
+        status.generation,
+        Some(3),
+        "two crashes and the healthy run are three generations"
+    );
+    let runs = frontend.runs.lock().unwrap().clone();
+    assert_eq!(runs.len(), 2, "two crashed runs, the third is live: {runs:?}");
+    assert!(runs.iter().all(|run| run.exit == UiExit::Error));
+    assert_eq!(
+        compose.restart_outcome("navi.ui.test"),
+        Some(navi_compose::RestartOutcome::Restarted { generation: Some(3) })
+    );
+    assert_eq!(compose.restart_attempts("navi.ui.test"), 2);
+    assert!(
+        !compose.is_supervised_failure("navi.ui.test"),
+        "two failures are inside the budget"
+    );
+    assert!(
+        !compose.has_pending_restart(),
+        "the successful restart is not waiting for another one"
+    );
+}
+
+#[test]
+fn restart_budget_is_finite_and_reported() {
+    // An always-crashing frontend with a small budget: supervision gives up and
+    // says so, instead of restarting forever.
+    let frontend = scripted_flaky("navi.ui.test", usize::MAX);
+    let (compose, _dir) = compose_with_frontends(vec![(frontend.clone(), true)]);
+    compose.set_restart_policy(navi_compose::RestartPolicy {
+        max_attempts: 3,
+        backoff: Duration::from_millis(5),
+        backoff_cap: Duration::from_millis(10),
+        ..navi_compose::RestartPolicy::default()
+    });
+    compose
+        .install_definitions(&[navi_compose::engine_manifest(), manifest_for(&frontend)])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+    compose.activate("navi.ui.test").expect("activate");
+
+    drive_supervisor(&compose, 120);
+
+    assert!(
+        compose.is_supervised_failure("navi.ui.test"),
+        "the budget must be exhausted"
+    );
+    assert_eq!(
+        compose.restart_outcome("navi.ui.test"),
+        Some(navi_compose::RestartOutcome::BudgetExhausted)
+    );
+    assert_eq!(
+        compose.restart_attempts("navi.ui.test"),
+        3,
+        "attempts stay inside the budget"
+    );
+    assert!(!compose.has_pending_restart(), "it gave up, it is not waiting");
+    let runs = frontend.runs.lock().unwrap().len();
+    assert_eq!(runs, 4, "one activation plus three restarts: {runs}");
+}
+
+#[test]
+fn restart_policy_never_leaves_the_component_down() {
+    let frontend = scripted_flaky("navi.ui.test", usize::MAX);
+    let (compose, _dir) = compose_with_frontends(vec![(frontend.clone(), true)]);
+    let mut manifest = manifest_for(&frontend);
+    manifest.restart = "never".to_string();
+    compose
+        .install_definitions(&[navi_compose::engine_manifest(), manifest])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+
+    compose.activate("navi.ui.test").expect("activate");
+    drive_supervisor(&compose, 20);
+
+    assert!(!compose.has_pending_restart(), "policy `never` never restarts");
+    assert!(!compose.has_running_frontend());
+    assert_eq!(
+        compose.restart_outcome("navi.ui.test"),
+        Some(navi_compose::RestartOutcome::PolicyNever)
+    );
+    let runs = frontend.runs.lock().unwrap().clone();
+    assert_eq!(runs.len(), 1, "it ran once and stayed down: {runs:?}");
+}
+
+#[test]
+fn a_frontend_the_user_quits_is_not_restarted() {
+    let frontend = scripted_quitter("navi.ui.test");
+    let (compose, _dir) = compose_with_frontends(vec![(frontend.clone(), true)]);
+    compose
+        .install_definitions(&[navi_compose::engine_manifest(), manifest_for(&frontend)])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+
+    compose.activate("navi.ui.test").expect("activate");
+    drive_supervisor(&compose, 20);
+
+    assert!(!compose.has_pending_restart(), "a clean quit is not a failure");
+    assert!(!compose.has_running_frontend());
+    assert_eq!(compose.restart_outcome("navi.ui.test"), None);
 }
 
 #[test]

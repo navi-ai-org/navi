@@ -243,13 +243,24 @@ impl UiFrontend for ProcessFrontend {
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => break UiExit::Quit,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    // The child closed the control connection: it is gone (or
+                    // about to be). Its status decides whether this is a clean
+                    // exit or a crash the supervisor must restart.
+                    break exit_from_child(&mut child);
+                }
             }
             // Child exited on its own.
             match child.try_wait() {
                 Ok(Some(status)) => {
                     tracing::info!(component = %self.id, ?status, "process frontend exited");
-                    break UiExit::Quit;
+                    // A non-zero status is a crash: the supervisor must treat it
+                    // as a failure (restart per policy), not as a user quit.
+                    break if status.success() {
+                        UiExit::Quit
+                    } else {
+                        UiExit::Error
+                    };
                 }
                 Ok(None) => {}
                 Err(_) => break UiExit::Error,
@@ -290,6 +301,29 @@ fn accept_with_timeout(
                 std::thread::sleep(Duration::from_millis(20));
             }
             Err(err) => return Err(format!("accept: {err}")),
+        }
+    }
+}
+
+/// Waits (briefly) for the child to be reaped and classifies its exit.
+///
+/// A clean exit (status 0) is a user quit; anything else — a signal, a panic,
+/// a non-zero status — is a failure the supervisor must restart per policy.
+fn exit_from_child(child: &mut Child) -> UiExit {
+    let deadline = Instant::now() + Duration::from_millis(500);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    UiExit::Quit
+                } else {
+                    tracing::warn!(?status, "process frontend child failed");
+                    UiExit::Error
+                };
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+            Ok(None) => return UiExit::Quit,
+            Err(_) => return UiExit::Error,
         }
     }
 }

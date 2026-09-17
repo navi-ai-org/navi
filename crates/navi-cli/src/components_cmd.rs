@@ -228,8 +228,8 @@ fn print_live_status(snapshot: &serde_json::Value) {
     println!("live composed session (pid {pid}, kernel epoch {epoch}, session {session})");
     println!();
     println!(
-        "{:<24} {:<14} {:<6} {:<8} {:<6} {}",
-        "id", "state", "gen", "instance", "tty", "waiting"
+        "{:<24} {:<14} {:<6} {:<8} {:<6} {:<9} {}",
+        "id", "state", "gen", "instance", "tty", "restarts", "waiting"
     );
     if let Some(components) = snapshot.get("components").and_then(|v| v.as_array()) {
         for component in components {
@@ -257,7 +257,30 @@ fn print_live_status(snapshot: &serde_json::Value) {
                 .get("waiting_reason")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            println!("{id:<24} {state:<14} {generation:<6} {instance:<8} {tty:<6} {waiting}");
+            let restarts = component
+                .get("restarts")
+                .and_then(|v| v.as_u64())
+                .map(|count| {
+                    if count == 0 {
+                        "-".to_string()
+                    } else {
+                        count.to_string()
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "{id:<24} {state:<14} {generation:<6} {instance:<8} {tty:<6} {restarts:<9} {waiting}"
+            );
+        }
+    }
+    // Supervision decisions are the interesting part after a failure.
+    if let Some(components) = snapshot.get("components").and_then(|v| v.as_array()) {
+        for component in components {
+            let Some(decision) = component.get("last_restart").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let id = component.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            println!("supervision: {id} → {decision}");
         }
     }
     println!();

@@ -209,6 +209,79 @@ fn third_party_plugin_runs_out_of_process_and_swaps_by_generation() {
 }
 
 #[test]
+fn a_killed_plugin_child_is_restarted_by_supervision() {
+    // Supervision is the host's job (the Matrix process host spawns but has no
+    // restart policy): a child that dies while the kernel still considers the
+    // component `Active` must come back in a new generation.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let log_path = tempdir.path().join("plugin.log");
+    let compose = Compose::new(ComposeOptions {
+        home: tempdir.path().join("compose"),
+        project_dir: tempdir.path().join("project"),
+        loaded_config: test_loaded_config(tempdir.path()),
+        dry_run: false,
+        terminal_effects: false,
+        process_components: true,
+    })
+    .expect("compose");
+    compose
+        .install_definition(plugin_manifest(&log_path))
+        .expect("install plugin");
+    compose.activate(PLUGIN_ID).expect("activate");
+    let info = invoke_until_ready(&compose, "navi.plugin.info@1", &json!({}));
+    let first_pid = info["pid"].as_u64().expect("pid");
+    let host = compose.process_host().expect("process host");
+
+    // Let the component out of its startup grace, then kill the child behind
+    // the supervisor's back (a crash, from the composition's point of view).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        compose.tick().expect("tick");
+        compose.supervise_process_components();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(host.kill_child(PLUGIN_ID), "the child must be killable");
+    assert!(
+        host.wait_no_child(PLUGIN_ID, Duration::from_secs(5)),
+        "the killed child is gone"
+    );
+
+    // The supervisor notices and restarts it (budget + backoff), which spawns a
+    // fresh process for a new generation.
+    let mut restarted = false;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        compose.tick().expect("tick");
+        compose.supervise_process_components();
+        compose.process_pending_restarts();
+        if compose.restart_outcome(PLUGIN_ID).is_some() {
+            restarted = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(restarted, "supervision must notice the dead child");
+    assert_eq!(
+        compose.restart_outcome(PLUGIN_ID),
+        Some(navi_compose::RestartOutcome::Restarted { generation: Some(2) }),
+        "the restart is a new generation"
+    );
+    assert!(!compose.is_supervised_failure(PLUGIN_ID));
+
+    // The successor answers again, from a different pid.
+    let after = invoke_until_ready(&compose, "navi.plugin.info@1", &json!({}));
+    assert_eq!(after["generation"], 2);
+    assert_ne!(
+        after["pid"].as_u64(),
+        Some(first_pid),
+        "the restarted plugin is a fresh process: {after}"
+    );
+    let log = std::fs::read_to_string(&log_path).expect("plugin log");
+    let starts = log.lines().filter(|line| line.starts_with("start ")).count();
+    assert_eq!(starts, 2, "two process lifetimes after the restart:\n{log}");
+}
+
+#[test]
 fn in_process_components_are_never_spawned_as_processes() {
     // The in-process sentinel (`inproc:<id>`) must not reach the process host,
     // otherwise NAVI would try to execute `inproc:navi.engine` as a binary.

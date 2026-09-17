@@ -194,6 +194,53 @@ Operators who want stronger isolation can use Matrix's sandbox profile (`bwrap` 
 seccomp via `matrix-guard`) by declaring the component in `HostPolicy` with a
 `Sandbox` instead of `None` (explicitly trusted process).
 
+## Supervision (restart per policy)
+
+The kernel decides composition; **the host owns restart policy** (the Matrix
+process host spawns and speaks the protocol, but has no restart policy of its
+own). NAVI supervises two kinds of failure:
+
+* a **frontend** that ends with `UiExit::Error` (an in-process frontend that
+  panics or returns an error; a process frontend whose child exits non-zero);
+* a **process component whose child died** while the kernel still reports it
+  `Active` (detected with `Host::child_running` after a 2 s startup grace).
+
+Each failure is scheduled under the component's manifest policy:
+
+| `restart` | Behaviour |
+|---|---|
+| `on-failure` (default) | restart with exponential backoff |
+| `permanent` | same as `on-failure` (the component is meant to be up) |
+| `never` | stay down; the last decision says `failed (policy: never)` |
+
+Budget and backoff are configurable (`Compose::set_restart_policy`): by default
+at most 5 attempts per 30 s, backoff `250 ms · 2ⁿ` capped at 4 s. When the budget
+is exhausted the component is a *supervised failure*: it stays down and the
+decision is visible — no restart storm.
+
+A restart is a **new generation** (the kernel withdraws the dead instance and
+activates a successor), so a restarted plugin gets a fresh process, fresh
+bindings and a fresh journal entry. A frontend the *user* quits (`UiExit::Quit`)
+is never restarted, and a restart that is already waiting for its backoff does
+not consume another attempt.
+
+```bash
+navi components status
+# id                       state          gen    instance tty    restarts  waiting
+# navi.plugin.tui          Active         2      6        yes    1
+# supervision: navi.plugin.tui → restarted (generation 2)
+```
+
+Proven by:
+
+| Behaviour | Evidence |
+|---|---|
+| crashed frontend restarts in a new generation | `a_crashed_frontend_is_restarted_with_a_new_generation` |
+| budget is finite and reported | `restart_budget_is_finite_and_reported` |
+| `restart = "never"` stays down | `restart_policy_never_leaves_the_component_down` |
+| a clean quit is not a failure | `a_frontend_the_user_quits_is_not_restarted` |
+| killed plugin child comes back | `a_killed_plugin_child_is_restarted_by_supervision` |
+
 ## Known limits
 
 - The TUI reads terminal input on a dedicated thread and delivers events over a

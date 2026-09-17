@@ -30,7 +30,8 @@ pub mod tool_proxy;
 pub mod ui;
 
 pub use host::{
-    ActivationOutcome, ComponentStatus, Compose, ComposeOptions, QueuedCommand, default_home,
+    ActivationOutcome, ComponentStatus, Compose, ComposeOptions, QueuedCommand, RestartOutcome,
+    RestartPolicy, default_home, describe_restart,
 };
 pub use manifest::{CallPolicySpec, ComponentKind, ComponentManifest, Execution, RequirementSpec};
 pub use native::{

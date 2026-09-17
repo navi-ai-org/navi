@@ -12,7 +12,7 @@
 //! mutations happen on the caller thread, and long-running work is either a
 //! frontend thread or an effect queued for the async supervisor loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
@@ -96,8 +96,25 @@ pub struct ComponentStatus {
     pub ui_running: bool,
     /// Whether the host holds the terminal lease for it.
     pub tty: bool,
+    /// Restart attempts recorded inside the supervision window.
+    pub restarts: usize,
+    /// Human-readable last supervision decision, when there is one.
+    pub last_restart: Option<String>,
     /// Declared capabilities.
     pub capabilities: Vec<String>,
+}
+
+/// One-line description of a supervision decision (status/CLI).
+pub fn describe_restart(outcome: &RestartOutcome) -> String {
+    match outcome {
+        RestartOutcome::Restarted { generation } => match generation {
+            Some(generation) => format!("restarted (generation {generation})"),
+            None => "restarted".to_string(),
+        },
+        RestartOutcome::PolicyNever => "failed (policy: never)".to_string(),
+        RestartOutcome::BudgetExhausted => "failed (restart budget exhausted)".to_string(),
+        RestartOutcome::Failed { reason } => format!("restart failed: {reason}"),
+    }
 }
 
 /// A user command admitted by the kernel, waiting for the async supervisor.
@@ -146,6 +163,63 @@ struct ComposeInner {
     slots: Slots,
     /// Values each component contributes when it activates.
     component_values: RwLock<HashMap<String, ComponentValues>>,
+    /// Restart bookkeeping for supervised components (frontends, plugins).
+    supervision: Mutex<Supervision>,
+    /// Process components this host has seen `Active` (with the first time),
+    /// used to supervise children that die later.
+    seen_active: Mutex<HashMap<String, Instant>>,
+}
+
+/// Restart budget for supervised components: at most `max_attempts` inside a
+/// `window`, each spaced by an exponential backoff capped at `backoff_cap`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestartPolicy {
+    pub max_attempts: usize,
+    pub window: Duration,
+    pub backoff: Duration,
+    pub backoff_cap: Duration,
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            max_attempts: 5,
+            window: Duration::from_secs(30),
+            backoff: Duration::from_millis(250),
+            backoff_cap: Duration::from_secs(4),
+        }
+    }
+}
+
+/// A process component is only supervised once it has been `Active` this long:
+/// the first spawn (and the handshake) legitimately take a moment.
+const PROCESS_GRACE: Duration = Duration::from_secs(2);
+
+/// Why a supervised component was restarted (recorded in the log/status).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RestartOutcome {
+    /// The component is active again in a new generation.
+    Restarted { generation: Option<u64> },
+    /// The policy is `never`: nothing is restarted.
+    PolicyNever,
+    /// The attempt budget inside the window is exhausted.
+    BudgetExhausted,
+    /// The supervisor could not activate it (the reason is in `last_error`).
+    Failed { reason: String },
+}
+
+#[derive(Debug, Default)]
+struct Supervision {
+    /// Supervision policy (budget, window, backoff).
+    policy: RestartPolicy,
+    /// Recent restart attempts per component (within `policy.window`).
+    attempts: HashMap<String, Vec<Instant>>,
+    /// Components waiting for their backoff to elapse.
+    pending: HashMap<String, Instant>,
+    /// Components that gave up (budget exhausted) — terminal until reactivated.
+    failed: HashSet<String>,
+    /// Last outcome per component, for `navi components status`/tests.
+    last_outcome: HashMap<String, RestartOutcome>,
 }
 
 /// The compose supervisor handle. Cheap to clone (wraps an `Arc`).
@@ -383,6 +457,8 @@ impl Compose {
             process_host: RwLock::new(None),
             slots: Slots::new(),
             component_values: RwLock::new(HashMap::new()),
+            supervision: Mutex::new(Supervision::default()),
+            seen_active: Mutex::new(HashMap::new()),
         });
 
         kernel.set_forwarder(Arc::new(NativeForwarder::new(inner.handlers.clone())));
@@ -860,6 +936,12 @@ impl Compose {
                             notes.push(format!("frontend start failed for {logical}: {err}"));
                         }
                     } else if !entrypoint.starts_with(INPROC_PREFIX) {
+                        // A capability component with a real binary: the process
+                        // host spawns it. From here on the child is supervised.
+                        self.inner
+                            .seen_active
+                            .lock()
+                            .insert(logical.clone(), Instant::now());
                         notes.push(format!(
                             "process component {logical} activated; the process host spawns it"
                         ));
@@ -873,6 +955,7 @@ impl Compose {
                     notes.push(format!(
                         "withdrawn {logical} (instance={instance} generation={generation})"
                     ));
+                    self.inner.seen_active.lock().remove(&logical);
                     self.clear_component_values(&logical, generation);
                     if let Some(exit) = self.stop_frontend(&logical) {
                         notes.push(format!("frontend {logical} stopped ({exit:?})"));
@@ -880,6 +963,7 @@ impl Compose {
                 }
                 LifecycleEvent::Removed { logical } => {
                     notes.push(format!("removed {logical}"));
+                    self.inner.seen_active.lock().remove(&logical);
                     self.stop_frontend(&logical);
                 }
             }
@@ -1083,10 +1167,12 @@ impl Compose {
         !self.inner.running.lock().is_empty()
     }
 
-    /// Reaps frontends that ended on their own (user quit, shutdown request).
+    /// Reaps frontends that ended on their own (user quit, crash, shutdown).
     ///
-    /// Without this the supervisor would keep a dead generation in its running
-    /// set and never exit when the last frontend quits.
+    /// A frontend that *failed* is handed to supervision (restart per the
+    /// manifest's `restart` policy, with budget and backoff); a frontend the
+    /// user quit stays gone. Without this the supervisor would keep a dead
+    /// generation in its running set and never exit when the last one quits.
     pub fn reap_exited_frontends(&self) -> Vec<String> {
         let exited: Vec<String> = {
             let running = self.inner.running.lock();
@@ -1099,8 +1185,161 @@ impl Compose {
         for id in &exited {
             let exit = self.stop_frontend(id);
             tracing::info!(component = %id, exit = ?exit, "frontend exited on its own");
+            if matches!(exit, Some(UiExit::Error)) {
+                self.schedule_restart(id, "frontend failed");
+            }
         }
         exited
+    }
+
+    /// Records a failed component and schedules its restart per policy.
+    pub fn schedule_restart(&self, logical: &str, reason: &str) {
+        let restart = self
+            .inner
+            .manifests
+            .read()
+            .get(logical)
+            .map(|manifest| manifest.restart.clone())
+            .unwrap_or_else(|| "on-failure".to_string());
+        let now = Instant::now();
+        let mut supervision = self.inner.supervision.lock();
+        if restart == "never" {
+            tracing::warn!(component = logical, reason, "component failed; policy is `never`");
+            supervision
+                .last_outcome
+                .insert(logical.to_string(), RestartOutcome::PolicyNever);
+            supervision.failed.insert(logical.to_string());
+            return;
+        }
+        let window = supervision.policy.window;
+        let max_attempts = supervision.policy.max_attempts;
+        let recorded = {
+            let attempts = supervision.attempts.entry(logical.to_string()).or_default();
+            attempts.retain(|attempt| now.duration_since(*attempt) < window);
+            attempts.len()
+        };
+        if recorded >= max_attempts {
+            tracing::error!(
+                component = logical,
+                reason,
+                attempts = recorded,
+                "restart budget exhausted; the component stays down"
+            );
+            supervision
+                .last_outcome
+                .insert(logical.to_string(), RestartOutcome::BudgetExhausted);
+            supervision.failed.insert(logical.to_string());
+            return;
+        }
+        // Idempotent: a component that is already waiting for its backoff must
+        // not consume another attempt (the supervisor polls while it is down).
+        if supervision.pending.contains_key(logical) {
+            tracing::debug!(component = logical, "restart already scheduled");
+            return;
+        }
+        let exponent = (recorded + 1).min(4) as u32;
+        let backoff = (supervision.policy.backoff * 2u32.pow(exponent))
+            .min(supervision.policy.backoff_cap);
+        supervision
+            .attempts
+            .entry(logical.to_string())
+            .or_default()
+            .push(now);
+        supervision.pending.insert(logical.to_string(), now + backoff);
+        tracing::info!(
+            component = logical,
+            reason,
+            attempt = recorded + 1,
+            backoff_ms = backoff.as_millis() as u64,
+            "restart scheduled"
+        );
+    }
+
+    /// Runs the restarts whose backoff elapsed. Returns the components
+    /// restarted (or whose attempt failed).
+    pub fn process_pending_restarts(&self) -> Vec<String> {
+        let due: Vec<String> = {
+            let mut supervision = self.inner.supervision.lock();
+            let now = Instant::now();
+            let due: Vec<String> = supervision
+                .pending
+                .iter()
+                .filter(|(_, when)| **when <= now)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &due {
+                supervision.pending.remove(id);
+            }
+            due
+        };
+        for id in &due {
+            match self.activate(id) {
+                Ok(outcome) => {
+                    tracing::info!(
+                        component = %id,
+                        generation = ?outcome.generation,
+                        "supervised component restarted"
+                    );
+                    self.inner.supervision.lock().last_outcome.insert(
+                        id.clone(),
+                        RestartOutcome::Restarted {
+                            generation: outcome.generation,
+                        },
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(component = %id, error = %err, "restart failed");
+                    self.inner.supervision.lock().last_outcome.insert(
+                        id.clone(),
+                        RestartOutcome::Failed {
+                            reason: err.to_string(),
+                        },
+                    );
+                }
+            }
+        }
+        due
+    }
+
+    /// Whether a supervised restart is waiting for its backoff.
+    pub fn has_pending_restart(&self) -> bool {
+        !self.inner.supervision.lock().pending.is_empty()
+    }
+
+    /// Last restart decision for a component (tests, `components status`).
+    pub fn restart_outcome(&self, logical: &str) -> Option<RestartOutcome> {
+        self.inner
+            .supervision
+            .lock()
+            .last_outcome
+            .get(logical)
+            .cloned()
+    }
+
+    /// Restart attempts recorded inside the current window.
+    pub fn restart_attempts(&self, logical: &str) -> usize {
+        self.inner
+            .supervision
+            .lock()
+            .attempts
+            .get(logical)
+            .map(|attempts| attempts.len())
+            .unwrap_or(0)
+    }
+
+    /// Whether supervision gave up on a component.
+    pub fn is_supervised_failure(&self, logical: &str) -> bool {
+        self.inner.supervision.lock().failed.contains(logical)
+    }
+
+    /// Sets the restart policy (budget, window, backoff).
+    pub fn set_restart_policy(&self, policy: RestartPolicy) {
+        self.inner.supervision.lock().policy = policy;
+    }
+
+    /// Current restart policy.
+    pub fn restart_policy(&self) -> RestartPolicy {
+        self.inner.supervision.lock().policy.clone()
     }
 
     /// Whether any frontend was ever started (used to decide process exit).
@@ -1191,6 +1430,30 @@ impl Compose {
 
     /// Component status for the CLI/TUI.
     pub fn status(&self) -> Vec<ComponentStatus> {
+        // Snapshot supervision first: `running` must not be held while taking
+        // the supervision lock (restarts lock supervision and then start
+        // frontends, which locks `running`).
+        let supervision: HashMap<String, (usize, Option<String>)> = {
+            let supervision = self.inner.supervision.lock();
+            supervision
+                .attempts
+                .keys()
+                .chain(supervision.last_outcome.keys())
+                .map(|id| {
+                    (
+                        id.clone(),
+                        (
+                            supervision
+                                .attempts
+                                .get(id)
+                                .map(|attempts| attempts.len())
+                                .unwrap_or(0),
+                            supervision.last_outcome.get(id).map(describe_restart),
+                        ),
+                    )
+                })
+                .collect()
+        };
         let running = self.inner.running.lock();
         let mut statuses: Vec<ComponentStatus> = self
             .manifests()
@@ -1198,6 +1461,10 @@ impl Compose {
             .map(|manifest| {
                 let reference = self.inner.kernel.instance_ref_of(&manifest.id);
                 let running_ui = running.get(&manifest.id);
+                let (restarts, last_restart) = supervision
+                    .get(&manifest.id)
+                    .cloned()
+                    .unwrap_or((0, None));
                 ComponentStatus {
                     state: self
                         .inner
@@ -1211,6 +1478,8 @@ impl Compose {
                     tty: running_ui
                         .map(|ui| ui.lease.is_some())
                         .unwrap_or(false),
+                    restarts,
+                    last_restart,
                     capabilities: manifest.capabilities.clone(),
                     kind: manifest.kind,
                     id: manifest.id,
@@ -1244,6 +1513,8 @@ impl Compose {
                     "waiting_reason": status.waiting_reason,
                     "ui_running": status.ui_running,
                     "tty": status.tty,
+                    "restarts": status.restarts,
+                    "last_restart": status.last_restart,
                     "capabilities": status.capabilities,
                 })
             })
@@ -1282,6 +1553,8 @@ impl Compose {
         loop {
             self.tick()?;
             self.reap_exited_frontends();
+            self.supervise_process_components();
+            self.process_pending_restarts();
             self.drain_commands().await?;
             for id in self.take_reload_requests() {
                 match self.reload(&id) {
@@ -1294,12 +1567,63 @@ impl Compose {
                 }
             }
             self.publish_status_if_changed();
-            if self.started_any_frontend() && !self.has_running_frontend() {
+            // A failed frontend whose restart is scheduled keeps the session
+            // alive: supervision gets its chance before we give up on it.
+            if self.started_any_frontend()
+                && !self.has_running_frontend()
+                && !self.has_pending_restart()
+            {
                 self.shutdown();
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
         }
+    }
+
+    /// Restarts process components whose child process died.
+    ///
+    /// `matrix-host` spawns and speaks the protocol but has no restart policy;
+    /// supervision belongs to the composition owner. A child that exited while
+    /// the kernel still considers the component `Active` is a failure: it is
+    /// scheduled for a restart (new generation → fresh process) under the same
+    /// budget as frontends. Components that never reported `Active` to this
+    /// host, and ones still inside their startup grace, are ignored.
+    pub fn supervise_process_components(&self) -> Vec<String> {
+        // Snapshot first: never call into `status()` while holding a lock.
+        let active: HashSet<String> = self
+            .status()
+            .into_iter()
+            .filter(|component| component.state == "Active")
+            .map(|component| component.id)
+            .collect();
+        let mut candidates: Vec<String> = {
+            let mut seen = self.inner.seen_active.lock();
+            // Forget components that are no longer active; components still
+            // inside their startup grace stay tracked (just not supervised yet).
+            seen.retain(|id, _| active.contains(id));
+            let now = Instant::now();
+            seen.iter()
+                .filter(|(_, first_seen)| now.duration_since(**first_seen) >= PROCESS_GRACE)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        candidates.retain(|id| !self.inner.supervision.lock().failed.contains(id));
+        let mut dead = Vec::new();
+        for id in candidates {
+            let running = self
+                .inner
+                .process_host
+                .read()
+                .as_ref()
+                .map(|host| host.child_running(&id))
+                .unwrap_or(true);
+            if !running {
+                tracing::warn!(component = %id, "process component child is gone");
+                self.schedule_restart(&id, "child process exited");
+                dead.push(id);
+            }
+        }
+        dead
     }
 
     /// Writes the status snapshot only when the composition changed.
