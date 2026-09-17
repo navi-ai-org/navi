@@ -582,6 +582,30 @@ mod tests {
         });
     }
 
+    #[test]
+    fn mouse_motion_flood_does_not_advance_animation_clock() {
+        use crate::testing::{Harness, TestConfig};
+        use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+
+        let mut h = Harness::new(TestConfig::default());
+        let before = h.app_mut().tick();
+        let mut events = Vec::new();
+        for i in 0..128u16 {
+            events.push(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 2 + (i % 60),
+                row: 2 + (i % 20),
+                modifiers: KeyModifiers::NONE,
+            }));
+        }
+        h.drive_loop(events);
+        let advanced = h.app_mut().tick() - before;
+        assert!(
+            advanced <= 8,
+            "mouse motion advanced the animation clock {advanced} ticks"
+        );
+    }
+
     fn with_desktop_tile_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
         let _guard = DESKTOP_TILE_ENV_LOCK
             .lock()
@@ -880,6 +904,14 @@ mod tests {
 const ACTIVE_FRAME: Duration = Duration::from_millis(33);
 const IDLE_FRAME: Duration = Duration::from_millis(100);
 
+/// Wall-clock cadence of the animation tick.
+///
+/// The render code treats one tick as ~80ms (`app.tick().saturating_mul(80)`),
+/// so the tick must advance on a fixed clock, not once per loop iteration:
+/// a mouse-motion flood used to tick hundreds of times per second and spun
+/// every tick-driven animation (idle kaomoji, background cards).
+const ANIMATION_TICK: Duration = Duration::from_millis(80);
+
 /// The TUI's main loop, factored out so it can be tested with a `TestBackend`
 /// and an in-memory input source.
 ///
@@ -899,11 +931,19 @@ where
 
     let mut needs_draw = true;
     let mut last_draw: Option<std::time::Instant> = None;
+    let mut last_tick = std::time::Instant::now();
     // Forces the next frame to clear the backend and repaint every cell inside
     // the same synchronized-update bracket.
     let mut needs_full_repaint = true;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
+        // Animation clock on a fixed wall-clock cadence. Decoupled from input
+        // events and from the paced draw loop, so moving the mouse cannot
+        // accelerate tick-driven animations.
+        while last_tick.elapsed() >= ANIMATION_TICK {
+            app.advance_tick();
+            last_tick += ANIMATION_TICK;
+        }
         // composer expand/collapse animation.
         let input_width = terminal
             .size()
@@ -930,9 +970,6 @@ where
             && !activity_transition_animating;
 
         if needs_draw || composer_animating || activity_animating || idle_animating {
-            // Tick every candidate frame so animations advance at the same
-            // cadence as before; the pacer only decides when to actually paint.
-            app.advance_tick();
             let active_animating = composer_animating || activity_animating;
             let frame = if active_animating {
                 ACTIVE_FRAME
