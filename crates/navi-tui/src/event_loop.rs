@@ -276,14 +276,50 @@ fn keyboard_enhancement_supported() -> bool {
 ///
 /// On Unix the sequence is a no-op on terminals without support, so we always
 /// emit it there (matches the behavior of the other DEC modes we enable).
+/// Whether DECSET 2026 synchronized output is available.
+///
+/// Keep the bracket on for every terminal, Ghostty included: presenting frames
+/// *without* sync makes Ghostty's eager renderer show partial frames (constant
+/// tearing), which is worse than its sync-buffer quirks. Ghostty 1.3.x still
+/// garbles *incremental* cursor-positioned updates inside sync
+/// (ghostty-org/ghostty #11002, #12685, #12062), so the loop never splits a
+/// repaint across frames: clears and full repaints share one sync bracket.
+///
+/// Override with `NAVI_SYNCHRONIZED_OUTPUT=0/1` (or true/false, on/off).
+fn forced_sync_update() -> Option<bool> {
+    let raw = std::env::var("NAVI_SYNCHRONIZED_OUTPUT").ok()?;
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "0" | "false" | "off" | "no" => Some(false),
+        "1" | "true" | "on" | "yes" => Some(true),
+        _ => None,
+    }
+}
+
 #[cfg(windows)]
 fn sync_update_supported() -> bool {
-    crossterm::ansi_support::supports_ansi()
+    forced_sync_update().unwrap_or_else(crossterm::ansi_support::supports_ansi)
 }
 
 #[cfg(not(windows))]
 fn sync_update_supported() -> bool {
-    true
+    forced_sync_update().unwrap_or(true)
+}
+
+/// Clears the viewport and resets the diff buffers *without* the cursor
+/// position query that [`Terminal::clear`] issues.
+///
+/// `Terminal::clear()` calls `Backend::get_cursor_position()`, which writes a
+/// DSR (`ESC [ 6 n`) and **blocks reading the reply from stdin**. Inside a
+/// synchronized-update bracket that can deadlock a terminal which defers the
+/// reply while buffering (observed on Ghostty): the app waits for a reply that
+/// only arrives after the sync end the app itself is holding open.
+/// `Terminal::resize` performs the same clear + buffer reset with plain writes,
+/// so the next draw repaints every cell without ever querying the cursor.
+fn clear_without_cursor_query<B: Backend>(terminal: &mut Terminal<B>) {
+    if let Ok(size) = terminal.size() {
+        let area = ratatui::layout::Rect::new(0, 0, size.width, size.height);
+        let _ = terminal.resize(area);
+    }
 }
 
 /// Bracket a render closure in DECSET 2026 synchronized output so the terminal
@@ -294,17 +330,26 @@ fn with_synchronized_update<F, R>(stdout: &mut impl io::Write, f: F) -> R
 where
     F: FnOnce() -> R,
 {
+    struct CloseSync<'a, W: io::Write>(&'a mut W);
+
+    impl<W: io::Write> Drop for CloseSync<'_, W> {
+        fn drop(&mut self) {
+            let _ = write!(self.0, "\x1B[?2026l");
+            let _ = self.0.flush();
+        }
+    }
+
     let sync = sync_update_supported();
     if sync {
         let _ = write!(stdout, "\x1B[?2026h");
         let _ = stdout.flush();
+        // Guard closes the bracket on scope exit *and* on unwind, so a panicking
+        // draw can never leave the terminal stuck in synchronized-update mode.
+        let _close = CloseSync(stdout);
+        f()
+    } else {
+        f()
     }
-    let result = f();
-    if sync {
-        let _ = write!(stdout, "\x1B[?2026l");
-        let _ = stdout.flush();
-    }
-    result
 }
 
 /// Lightweight reassert on FocusGained: pop our previous push, re-push, restore
@@ -434,6 +479,14 @@ fn restore_terminal_modes_best_effort() -> io::Result<()> {
     let mut first_error = None;
     let mut stdout = io::stdout();
 
+    // Close a possibly-open synchronized-update bracket first: a panic between
+    // `?2026h` and `?2026l` would otherwise leave the terminal buffering
+    // updates (frozen/blank screen) until it is closed or reset.
+    {
+        use std::io::Write as _;
+        let _ = stdout.write_all(b"\x1B[?2026l");
+        let _ = stdout.flush();
+    }
     remember_error(&mut first_error, reset_terminal_input_modes(&mut stdout));
     remember_error(
         &mut first_error,
@@ -474,6 +527,60 @@ mod tests {
 
     /// Serialize tests that mutate `NAVI_DESKTOP_TILE` (process-global env).
     static DESKTOP_TILE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Run `f` with a set of env vars applied, serialized against the other
+    /// env-mutating tests, restoring the previous values afterwards.
+    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+        let _guard = DESKTOP_TILE_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let saved: Vec<(String, Option<String>)> = vars
+            .iter()
+            .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
+            .collect();
+        // SAFETY: held under DESKTOP_TILE_ENV_LOCK; restored before unlock.
+        unsafe {
+            for (key, value) in vars {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+        let out = f();
+        unsafe {
+            for (key, value) in saved {
+                match value {
+                    Some(v) => std::env::set_var(&key, v),
+                    None => std::env::remove_var(&key),
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn sync_update_enabled_by_default() {
+        with_env_vars(&[("NAVI_SYNCHRONIZED_OUTPUT", None)], || {
+            assert!(sync_update_supported());
+        });
+    }
+
+    #[test]
+    fn sync_update_override_wins() {
+        with_env_vars(&[("NAVI_SYNCHRONIZED_OUTPUT", Some("0"))], || {
+            assert!(!sync_update_supported())
+        });
+        with_env_vars(&[("NAVI_SYNCHRONIZED_OUTPUT", Some("off"))], || {
+            assert!(!sync_update_supported())
+        });
+        with_env_vars(&[("NAVI_SYNCHRONIZED_OUTPUT", Some("1"))], || {
+            assert!(sync_update_supported())
+        });
+        with_env_vars(&[("NAVI_SYNCHRONIZED_OUTPUT", Some("on"))], || {
+            assert!(sync_update_supported())
+        });
+    }
 
     fn with_desktop_tile_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
         let _guard = DESKTOP_TILE_ENV_LOCK
@@ -792,6 +899,9 @@ where
 
     let mut needs_draw = true;
     let mut last_draw: Option<std::time::Instant> = None;
+    // Forces the next frame to clear the backend and repaint every cell inside
+    // the same synchronized-update bracket.
+    let mut needs_full_repaint = true;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
         // composer expand/collapse animation.
@@ -840,8 +950,14 @@ where
                 // behind is_ansi_code_supported() which returns false on Windows.
                 let mut stdout = io::stdout();
                 with_synchronized_update(&mut stdout, || {
+                    if needs_full_repaint {
+                        // Clear/reset buffers with plain writes: Terminal::clear()
+                        // would issue a blocking cursor query inside this bracket.
+                        clear_without_cursor_query(terminal);
+                    }
                     terminal.draw(|frame| render(frame, app))
                 })?;
+                needs_full_repaint = false;
                 last_draw = Some(std::time::Instant::now());
                 needs_draw = false;
             }
@@ -971,11 +1087,13 @@ where
                     app.mouse_free_motion = free_motion;
                     let mut stdout = io::stdout();
                     let _ = reassert_terminal_input_modes(&mut stdout, free_motion);
-                    // Wrap the clear+repaint in synchronized output so the
-                    // alternate-screen recovery doesn't flash.
-                    let mut stdout_sync = io::stdout();
-                    with_synchronized_update(&mut stdout_sync, || terminal.clear())?;
+                    // The surface may have been repainted by another window.
+                    // Do NOT clear here: clearing in its own frame presents a
+                    // blank screen for one presentation (and can stick on
+                    // terminals with a flaky sync buffer). The next draw
+                    // clears + repaints atomically in a single sync bracket.
                     needs_draw = true;
+                    needs_full_repaint = true;
                 }
                 Event::FocusLost => {
                     app.terminal_focused = false;
@@ -994,7 +1112,12 @@ where
     // and callers (tests included) assert the screen right after exit.
     {
         let mut stdout = io::stdout();
-        with_synchronized_update(&mut stdout, || terminal.draw(|frame| render(frame, app)))?;
+        with_synchronized_update(&mut stdout, || {
+            if needs_full_repaint {
+                clear_without_cursor_query(terminal);
+            }
+            terminal.draw(|frame| render(frame, app))
+        })?;
     }
 
     flush_session_checkpoint(app);
