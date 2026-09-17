@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.0...v0.7.1
+
+### Changed
+
+- Workspace crate versions bumped from 0.7.0 to 0.7.1.
+
+### Fixed
+
+- **OpenCode Go `MissingSessionID`** — the Anthropic-messages stream path never
+  applied per-request session headers, and the OpenCode behaviors themselves
+  did not emit the official client fingerprint on this tree, so the Go gateway
+  rejected requests with `400 MissingSessionID`. All four stream paths
+  (responses, chat-completions, anthropic-messages, gemini) now carry the
+  stable `x-opencode-session` header, and every OpenCode request sends
+  `User-Agent: opencode` with `x-opencode-client` / `x-opencode-project` /
+  rotating `x-opencode-request` correlation headers, with generated
+  fallbacks for auxiliary calls that have no session.
+- **Misleading 401 on unsupported models** — a `ModelError` ("model is not
+  supported") from the Zen/Go gateway was surfaced as "Authentication failed".
+  Errors now name the real cause and point to a model included in the plan.
+- **Free-tier models on OpenCode Go** — selecting a Zen free-tier model on the
+  Go endpoint now returns actionable guidance instead of a bare rejection.
+- **OpenCode free-model catalog** — the free-model allowlist is synced with the
+  current registry snapshot (laguna-s-2.1-free, nemotron-3.5-lightning-free,
+  ox-alpha-free / x-preview-f-free, muse-spark-1.2-contributor-free), with a
+  consistency test against the pinned embedded registry.
+
 ## [0.7.0] - 2026-08-08
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.6.0...v0.7.0
