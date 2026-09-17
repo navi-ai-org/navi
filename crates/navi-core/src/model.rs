@@ -510,6 +510,111 @@ impl ModelMessage {
     }
 }
 
+/// Content of the synthetic tool result inserted when a tool call never
+/// returned a result (turn cancelled, approval never resolved, host swapped
+/// models, process died, or history truncated mid-turn).
+pub const INTERRUPTED_TOOL_RESULT: &str = "Tool call interrupted before a result was recorded (turn cancelled, session \
+     restarted, or model switched). Do not assume the action completed — verify \
+     its effects before re-issuing the call.";
+
+/// Counts of the gaps repaired by [`repair_tool_call_pairing`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ToolPairingRepair {
+    /// Synthetic results inserted for tool calls that never returned.
+    pub synthesized_results: usize,
+    /// Orphan tool results dropped because no pending call requested them.
+    pub dropped_orphan_results: usize,
+}
+
+impl ToolPairingRepair {
+    /// Whether the repair changed the message list at all.
+    pub fn changed(&self) -> bool {
+        self.synthesized_results > 0 || self.dropped_orphan_results > 0
+    }
+}
+
+/// Repairs `tool_calls` / tool-result pairing that provider APIs require.
+///
+/// OpenAI-compatible endpoints reject a request when an assistant message with
+/// `tool_calls` is not followed by one tool message per `tool_call_id`, and
+/// when a tool message answers no preceding call. Histories accumulate such
+/// gaps whenever a turn is interrupted between the model's tool request and its
+/// result: the user cancels the turn, an approval never resolves, the host
+/// switches model/session, the process dies, or a rewind truncates mid-turn.
+///
+/// The repair is order-preserving and idempotent:
+/// - every unanswered call gets a synthetic [`INTERRUPTED_TOOL_RESULT`] result
+///   inserted before the next non-tool message (or at the end), and
+/// - tool messages answering no pending call are dropped.
+///
+/// Returns what changed so callers can log/diagnose.
+pub fn repair_tool_call_pairing(messages: &mut Vec<ModelMessage>) -> ToolPairingRepair {
+    fn flush_pending(
+        out: &mut Vec<ModelMessage>,
+        pending: &mut Vec<(String, String)>,
+        repair: &mut ToolPairingRepair,
+    ) {
+        for (id, tool_name) in pending.drain(..) {
+            out.push(ModelMessage::tool_result(
+                id,
+                tool_name,
+                INTERRUPTED_TOOL_RESULT,
+            ));
+            repair.synthesized_results += 1;
+        }
+    }
+
+    let mut repair = ToolPairingRepair::default();
+    let mut out: Vec<ModelMessage> = Vec::with_capacity(messages.len());
+    // (call_id, tool_name) of the assistant batch currently awaiting results.
+    let mut pending: Vec<(String, String)> = Vec::new();
+
+    for message in std::mem::take(messages) {
+        match message.role {
+            ModelRole::Assistant if !message.tool_calls.is_empty() => {
+                // A new tool batch starts; close any unanswered calls from the
+                // previous batch before appending the new assistant message.
+                flush_pending(&mut out, &mut pending, &mut repair);
+                pending = message
+                    .tool_calls
+                    .iter()
+                    .map(|call| (call.id.clone(), call.tool_name.clone()))
+                    .collect();
+                out.push(message);
+            }
+            ModelRole::Tool => {
+                let answered = message
+                    .tool_call_id
+                    .as_deref()
+                    .is_some_and(|id| pending.iter().any(|(pending_id, _)| pending_id == id));
+                if answered {
+                    if let Some(id) = message.tool_call_id.as_deref() {
+                        pending.retain(|(pending_id, _)| pending_id != id);
+                    }
+                    out.push(message);
+                } else {
+                    // No assistant message asked for this result; providers
+                    // reject orphan tool messages, so drop it.
+                    repair.dropped_orphan_results += 1;
+                    tracing::debug!(
+                        tool_call_id = ?message.tool_call_id,
+                        tool_name = ?message.tool_name,
+                        "dropping tool result with no pending tool call"
+                    );
+                }
+            }
+            _ => {
+                flush_pending(&mut out, &mut pending, &mut repair);
+                out.push(message);
+            }
+        }
+    }
+    flush_pending(&mut out, &mut pending, &mut repair);
+
+    *messages = out;
+    repair
+}
+
 fn current_unix_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1101,5 +1206,229 @@ mod tests {
             effort_display_label(ThinkingConfig::Off, true),
             "thinking off"
         );
+    }
+
+    // ── Tool-call pairing repair ──────────────────────────────────────────────
+
+    use crate::tool::ToolInvocation;
+    use serde_json::json;
+
+    fn call(id: &str, tool_name: &str) -> ToolInvocation {
+        ToolInvocation {
+            id: id.to_string(),
+            tool_name: tool_name.to_string(),
+            input: json!({}),
+        }
+    }
+
+    fn roles(messages: &[ModelMessage]) -> Vec<ModelRole> {
+        messages.iter().map(|m| m.role.clone()).collect()
+    }
+
+    #[test]
+    fn repair_keeps_well_formed_history_untouched() {
+        let mut messages = vec![
+            ModelMessage::system("sys"),
+            ModelMessage::user("read the file"),
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("c1", "read_file")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("c1", "read_file", "ok"),
+            ModelMessage::assistant("done"),
+        ];
+        let before = messages.clone();
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert!(!repair.changed());
+        assert_eq!(roles(&messages), roles(&before));
+        assert_eq!(messages.len(), before.len());
+    }
+
+    #[test]
+    fn repair_inserts_synthetic_result_for_trailing_orphan_call() {
+        let mut messages = vec![
+            ModelMessage::user("run it"),
+            ModelMessage::assistant_tool_calls_with_context(vec![call("c1", "run")], "", None),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 1);
+        assert_eq!(repair.dropped_orphan_results, 0);
+        assert_eq!(
+            roles(&messages),
+            vec![ModelRole::User, ModelRole::Assistant, ModelRole::Tool]
+        );
+        let result = &messages[2];
+        assert_eq!(result.tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(result.tool_name.as_deref(), Some("run"));
+        assert!(result.content.contains("interrupted"));
+    }
+
+    #[test]
+    fn repair_fills_gap_before_next_user_message() {
+        // The revert scenario: an interrupted tool call survives in the prefix
+        // while the user submits a later message.
+        let mut messages = vec![
+            ModelMessage::user("old prompt"),
+            ModelMessage::assistant_tool_calls_with_context(vec![call("stale", "run")], "", None),
+            ModelMessage::user("new prompt"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 1);
+        assert_eq!(
+            roles(&messages),
+            vec![
+                ModelRole::User,
+                ModelRole::Assistant,
+                ModelRole::Tool,
+                ModelRole::User
+            ]
+        );
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("stale"));
+        assert_eq!(messages[3].content, "new prompt");
+    }
+
+    #[test]
+    fn repair_only_fills_unanswered_calls_in_partial_batch() {
+        let mut messages = vec![
+            ModelMessage::user("go"),
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("a", "read_file"), call("b", "grep")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("a", "read_file", "ok"),
+            ModelMessage::assistant("done"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 1);
+        assert_eq!(repair.dropped_orphan_results, 0);
+        assert_eq!(
+            roles(&messages),
+            vec![
+                ModelRole::User,
+                ModelRole::Assistant,
+                ModelRole::Tool,
+                ModelRole::Tool,
+                ModelRole::Assistant
+            ]
+        );
+        // The answered call keeps its real result, order preserved.
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("a"));
+        assert_eq!(messages[2].content, "ok");
+        assert_eq!(messages[3].tool_call_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn repair_drops_orphan_tool_result_without_request() {
+        let mut messages = vec![
+            ModelMessage::user("go"),
+            ModelMessage::tool_result("ghost", "read_file", "stale"),
+            ModelMessage::assistant("done"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 0);
+        assert_eq!(repair.dropped_orphan_results, 1);
+        assert_eq!(
+            roles(&messages),
+            vec![ModelRole::User, ModelRole::Assistant]
+        );
+    }
+
+    #[test]
+    fn repair_closes_consecutive_orphan_batches_in_order() {
+        let mut messages = vec![
+            ModelMessage::assistant_tool_calls_with_context(vec![call("a", "run")], "", None),
+            ModelMessage::assistant_tool_calls_with_context(vec![call("b", "grep")], "", None),
+            ModelMessage::user("next"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 2);
+        assert_eq!(
+            roles(&messages),
+            vec![
+                ModelRole::Assistant,
+                ModelRole::Tool,
+                ModelRole::Assistant,
+                ModelRole::Tool,
+                ModelRole::User
+            ]
+        );
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("a"));
+        assert_eq!(messages[3].tool_call_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn repair_is_idempotent() {
+        let mut messages = vec![
+            ModelMessage::user("go"),
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("a", "run"), call("b", "grep")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("a", "run", "ok"),
+        ];
+
+        let first = repair_tool_call_pairing(&mut messages);
+        assert!(first.changed());
+        let after_first = serde_json::to_string(&messages).unwrap();
+
+        let second = repair_tool_call_pairing(&mut messages);
+        assert!(!second.changed());
+        assert_eq!(serde_json::to_string(&messages).unwrap(), after_first);
+    }
+
+    #[test]
+    fn repair_handles_empty_and_prompt_only_histories() {
+        let mut empty: Vec<ModelMessage> = Vec::new();
+        assert!(!repair_tool_call_pairing(&mut empty).changed());
+        assert!(empty.is_empty());
+
+        let mut prompt_only = vec![ModelMessage::system("sys"), ModelMessage::user("hi")];
+        assert!(!repair_tool_call_pairing(&mut prompt_only).changed());
+        assert_eq!(prompt_only.len(), 2);
+    }
+
+    #[test]
+    fn repair_handles_unicode_ids_and_names() {
+        let mut messages = vec![ModelMessage::assistant_tool_calls_with_context(
+            vec![call("chamada-ç-1️⃣", "executar_日本")],
+            "thinking 🧠",
+            Some("reasoning".to_string()),
+        )];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.synthesized_results, 1);
+        assert_eq!(messages[1].tool_call_id.as_deref(), Some("chamada-ç-1️⃣"));
+        assert_eq!(messages[1].tool_name.as_deref(), Some("executar_日本"));
+        // Assistant payload survives the repair untouched.
+        assert_eq!(messages[0].content, "thinking 🧠");
+        assert_eq!(messages[0].thinking_content.as_deref(), Some("reasoning"));
+    }
+
+    #[test]
+    fn repair_drops_tool_result_missing_call_id() {
+        let mut orphan = ModelMessage::tool_result("c1", "run", "x");
+        orphan.tool_call_id = None;
+        let mut messages = vec![ModelMessage::assistant("hi"), orphan];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.dropped_orphan_results, 1);
+        assert_eq!(roles(&messages), vec![ModelRole::Assistant]);
     }
 }

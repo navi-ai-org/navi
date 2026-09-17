@@ -167,6 +167,21 @@ pub async fn run_turn(
     ensure_not_cancelled(ctx)?;
     ensure_system_prompt(ctx, messages).await;
 
+    // Provider APIs reject histories where an assistant `tool_calls` message is
+    // not answered by one tool result per `tool_call_id` (or where a tool result
+    // answers nothing). Interrupted turns — cancel, unresolved approval, model
+    // switch, rewind truncation, crash — can leave such gaps in the host-seeded
+    // history, so repair them before the first request of the turn.
+    let repair = crate::model::repair_tool_call_pairing(messages);
+    if repair.changed() {
+        tracing::warn!(
+            synthesized_results = repair.synthesized_results,
+            dropped_orphan_results = repair.dropped_orphan_results,
+            session_id = %ctx.session_id,
+            "repaired interrupted tool-call pairing before model request"
+        );
+    }
+
     let mut run_state = AgentRunState::default();
     let final_text = loop {
         ensure_not_cancelled(ctx)?;

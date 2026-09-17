@@ -76,6 +76,8 @@ pub use navi_core::session::{
     clean_session_title, current_unix_timestamp, session_title_from_events,
 };
 pub use navi_core::{model_messages_from_agent_events, rehydrate_tool_content_parts};
+// Message-shape utilities
+pub use navi_core::{INTERRUPTED_TOOL_RESULT, ToolPairingRepair, repair_tool_call_pairing};
 // Event/session types
 pub use navi_core::{
     AgentEvent, AgentRunState, ApiMeta, Capability, CapabilityDecision, CapabilityGrant,

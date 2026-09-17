@@ -15,6 +15,19 @@ use crate::runtime::forward_runtime_event_to_tui_for_session;
 use crate::state::{ChatMessage, ChatRole, ThinkingLevel};
 
 pub(crate) fn start_streaming_request(app: &mut TuiApp) {
+    // Close any tool calls left unanswered by an interrupted turn (cancel,
+    // model switch, crash, rewind) before seeding the engine. Providers reject
+    // histories where an assistant `tool_calls` message is not followed by tool
+    // results answering every `tool_call_id`.
+    let pairing_repair = navi_sdk::repair_tool_call_pairing(&mut app.conversation_history);
+    if pairing_repair.changed() {
+        tracing::warn!(
+            synthesized_results = pairing_repair.synthesized_results,
+            dropped_orphan_results = pairing_repair.dropped_orphan_results,
+            "TUI: repaired interrupted tool-call pairing before model request"
+        );
+    }
+
     if !app.provider_configured {
         tracing::warn!(provider = %app.loaded_config.config.model.provider, "cannot start stream without API key");
         push_diagnostic(app, "No API key configured for selected provider.");

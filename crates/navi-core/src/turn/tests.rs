@@ -343,6 +343,62 @@ async fn empty_response_self_repair_retries_with_thinking_off() {
 }
 
 #[tokio::test]
+async fn run_turn_repairs_dangling_tool_call_before_request() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut ctx = build_test_ctx(tempdir.path().to_path_buf());
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    ctx.model_provider = Arc::new(std::sync::RwLock::new(Arc::new(CapturingProvider {
+        requests: requests.clone(),
+    })));
+
+    let policy = crate::harness::policy_for_profile(
+        &ctx.harness_config,
+        crate::config::HarnessProfile::Small,
+    );
+
+    // Simulates history left behind by an interrupted turn (cancel, model
+    // switch, or rewind): the assistant requested a tool that never returned,
+    // then the user spoke again. Sending this verbatim makes providers reject
+    // the request ("assistant message with 'tool_calls' must be followed by
+    // tool messages responding to each 'tool_call_id'").
+    let mut messages = vec![
+        ModelMessage::user("run the tests"),
+        ModelMessage::assistant_tool_calls_with_context(
+            vec![ToolInvocation {
+                id: "call-stale".to_string(),
+                tool_name: "test_tool".to_string(),
+                input: json!({}),
+            }],
+            "",
+            None,
+        ),
+        ModelMessage::user("continue"),
+    ];
+
+    let result = run_turn(&ctx, &mut messages, policy).await.unwrap();
+    assert_eq!(result, "captured");
+
+    // The in-memory history is repaired so later turns stay valid.
+    let repaired = messages
+        .iter()
+        .find(|m| m.role == ModelRole::Tool)
+        .expect("synthetic tool result inserted into live history");
+    assert_eq!(repaired.tool_call_id.as_deref(), Some("call-stale"));
+    assert!(repaired.content.contains("interrupted"));
+
+    // The request sent to the provider has one result per requested call.
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert!(
+        captured[0]
+            .messages
+            .iter()
+            .any(|m| m.role == ModelRole::Tool && m.tool_call_id.as_deref() == Some("call-stale")),
+        "provider request must include a result for the dangling call"
+    );
+}
+
+#[tokio::test]
 async fn shared_tool_calls_overlap_within_one_model_batch() {
     let tempdir = tempfile::tempdir().unwrap();
     let mut ctx = build_test_ctx(tempdir.path().to_path_buf());

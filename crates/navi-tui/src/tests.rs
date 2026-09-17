@@ -845,6 +845,42 @@ fn revert_to_user_message_truncates_cacheable_prefix_without_rewriting_it() {
 }
 
 #[test]
+fn submit_closes_dangling_tool_call_left_by_interrupted_turn() {
+    let mut app = test_app("next prompt");
+    app.provider_configured = false;
+    let system = app.conversation_history[0].clone();
+    // An interrupted turn (cancel, model switch, crash) left an assistant tool
+    // call with no result. Sending that history makes providers reject the
+    // request: "assistant message with 'tool_calls' must be followed by tool
+    // messages responding to each 'tool_call_id'".
+    app.conversation_history = vec![
+        system,
+        ModelMessage::user("first"),
+        ModelMessage::assistant_tool_call(ToolInvocation {
+            id: "call-orphan".to_string(),
+            tool_name: "run".to_string(),
+            input: serde_json::json!({ "command": "sleep 30" }),
+        }),
+    ];
+
+    submit_message(&mut app);
+
+    let tool = app
+        .conversation_history
+        .iter()
+        .find(|message| message.role == navi_sdk::ModelRole::Tool)
+        .expect("synthetic tool result inserted for the dangling call");
+    assert_eq!(tool.tool_call_id.as_deref(), Some("call-orphan"));
+    assert_eq!(tool.tool_name.as_deref(), Some("run"));
+    assert!(tool.content.contains("interrupted"));
+
+    // The repaired result sits before the new user prompt.
+    let last = app.conversation_history.last().expect("user prompt");
+    assert_eq!(last.role, navi_sdk::ModelRole::User);
+    assert_eq!(last.content, "next prompt");
+}
+
+#[test]
 fn fork_from_user_message_saves_original_and_keeps_prefix_in_new_session() {
     let mut app = test_app("");
     app.session_id = SessionId::new("old-session".to_string());

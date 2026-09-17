@@ -117,10 +117,10 @@ pub use logging::{LoggingGuard, LoggingRuntimeConfig, init_logging, log_dir, log
 pub use mcp_firewall::{McpFirewallDecision, McpFirewallPolicy, McpProvenance, McpTaint};
 pub use model::{
     ApiMeta, AttachmentKind, BINARY_REASONING_LEVELS, ContentPart, DEFAULT_REASONING_LEVELS,
-    ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole, ModelStream,
-    ModelStreamEvent, RateLimits, ThinkingConfig, ThinkingRequest, effort_display_label,
-    is_binary_effort_model, parse_reasoning_level, resolve_effort_label,
-    resolve_model_thinking_level, thinking_levels_for_model,
+    INTERRUPTED_TOOL_RESULT, ModelMessage, ModelProvider, ModelRequest, ModelResponse, ModelRole,
+    ModelStream, ModelStreamEvent, RateLimits, ThinkingConfig, ThinkingRequest, ToolPairingRepair,
+    effort_display_label, is_binary_effort_model, parse_reasoning_level, repair_tool_call_pairing,
+    resolve_effort_label, resolve_model_thinking_level, thinking_levels_for_model,
 };
 pub use model_router::{ModelRoute, ModelRouteRole, ModelRouter, ModelScorecard};
 pub use notify::{NotificationUrgency, NotifyRequest, notify_desktop, open_url};
