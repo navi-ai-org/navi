@@ -26,5 +26,10 @@ tracing.workspace = true
 # never executes component code; this crate executes.
 matrix-core = { path = "/home/lain/projects/matrix/crates/matrix-core" }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Process tier: third-party components as child processes (spawn, sessions,
+# supervision). The host spawns children via matrix-guard with a launch token.
+matrix-host = { path = "/home/lain/projects/matrix/crates/matrix-host" }
+
 [dev-dependencies]
 tempfile.workspace = true

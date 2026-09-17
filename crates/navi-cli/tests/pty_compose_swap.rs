@@ -87,6 +87,35 @@ fn force_kill(child: &mut Box<dyn Child + Send + Sync>) {
     let _ = wait_until_exit(child, Instant::now() + Duration::from_secs(1));
 }
 
+/// Kills the spawned NAVI on drop, including when an assertion panics mid-test.
+///
+/// Without this a failing run leaves a live `navi` holding a PTY that nobody
+/// reads, which is exactly the kind of stray process that confuses later runs.
+struct ChildGuard(Option<Box<dyn Child + Send + Sync>>);
+
+impl ChildGuard {
+    fn new(child: Box<dyn Child + Send + Sync>) -> Self {
+        Self(Some(child))
+    }
+
+    fn child(&mut self) -> &mut Box<dyn Child + Send + Sync> {
+        self.0.as_mut().expect("child present")
+    }
+
+    /// Takes the child out for the normal exit path.
+    fn disarm(&mut self) -> Option<Box<dyn Child + Send + Sync>> {
+        self.0.take()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            force_kill(&mut child);
+        }
+    }
+}
+
 /// Reads the supervisor's published status snapshot.
 fn read_status(xdg_data: &Path) -> Option<serde_json::Value> {
     let path = xdg_data.join("navi/compose/status.json");
@@ -140,8 +169,11 @@ fn pty_compose_swaps_frontend_at_runtime() {
     cmd.env("NAVI_NO_REGISTRY_UPDATE", "1");
     cmd.args(["--ui", "navi.ui.tui"]);
 
-    let mut child = pair.slave.spawn_command(cmd).expect("spawn navi");
+    let child = pair.slave.spawn_command(cmd).expect("spawn navi");
     drop(pair.slave);
+    // Everything below may panic on assertion failure: the guard kills the
+    // spawned NAVI so a failing run never leaves a stray process behind.
+    let mut guard = ChildGuard::new(child);
 
     let mut reader = pair.master.try_clone_reader().expect("clone reader");
     let mut writer = pair.master.take_writer().expect("take writer");
@@ -230,18 +262,19 @@ fn pty_compose_swaps_frontend_at_runtime() {
     //    retired TUI generation may still hold stdin).
     let _ = writer.write_all(b"exit\n");
     let _ = writer.flush();
-    let mut exited = wait_until_exit(&mut child, Instant::now() + Duration::from_secs(3));
+    let mut exited = wait_until_exit(guard.child(), Instant::now() + Duration::from_secs(3));
     if !exited {
-        if let Some(pid) = child.process_id() {
+        if let Some(pid) = guard.child().process_id() {
             let _ = std::process::Command::new("kill")
                 .args(["-TERM", &pid.to_string()])
                 .status();
         }
-        exited = wait_until_exit(&mut child, Instant::now() + Duration::from_secs(15));
+        exited = wait_until_exit(guard.child(), Instant::now() + Duration::from_secs(15));
     }
     if !exited {
-        force_kill(&mut child);
+        force_kill(guard.child());
     }
+    let _ = guard.disarm();
     drop(pair.master);
     let (done_tx, done_rx) = mpsc::channel();
     std::thread::spawn(move || {

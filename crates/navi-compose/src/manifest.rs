@@ -96,6 +96,20 @@ impl Execution {
         }
     }
 
+    /// Host-side execution marker for a child process with arguments.
+    ///
+    /// The process host expands `{sock}` and `{id}` inside the args at spawn
+    /// time, so a plugin manifest declares e.g.
+    /// `["--matrix-sock", "{sock}", "--id", "{id}"]`.
+    pub fn process_with_args(entrypoint: impl Into<String>, args: Vec<String>) -> Self {
+        Execution::Detailed {
+            kind: "process".to_string(),
+            entrypoint: Some(entrypoint.into()),
+            args,
+            timeout_ms: Some(30_000),
+        }
+    }
+
     /// The entrypoint string as declared (defaults to the in-process sentinel).
     pub fn entrypoint(&self) -> Option<&str> {
         match self {

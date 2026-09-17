@@ -1,0 +1,27 @@
+# Third-party NAVI component (process tier).
+#
+# Install with:
+#   sed "s|@PLUGIN_BINARY@|$PWD/target/debug/navi-plugin-demo|" \
+#       crates/navi-plugin-demo/manifest.toml > /tmp/roll-dice.toml
+#   navi components install /tmp/roll-dice.toml
+#
+# `{sock}` and `{id}` are expanded by the process host at spawn time.
+
+id = "navi.plugin.roll_dice"
+version = "0.1.0"
+description = "Dice-rolling tool plugin (runs out of process)"
+kind = "tool"
+tier = "local"
+trust = "trusted"
+restart = "on-failure"
+
+capabilities = [
+    "navi.plugin.info@1",
+    "navi.tool.roll_dice.definition@1",
+    "navi.tool.roll_dice@1",
+]
+
+execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
+    "--matrix-sock", "{sock}",
+    "--id", "{id}",
+], timeout_ms = 15000 }

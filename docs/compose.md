@@ -96,15 +96,52 @@ and the journal to `{data_dir}/compose/journal.jsonl`.
 | cascade withdraw | `uninstalling_a_provider_cascades_consumers_to_waiting` |
 | reload semantics | `runtime_reload_swaps_the_frontend_generation` |
 | TUI honours quiesce | `crates/navi-tui/tests/compose_control.rs` |
+| out-of-process plugin | `crates/navi-plugin-demo/tests/process_tier.rs` |
+
+## Process tier: third-party components
+
+A component whose `execution.entrypoint` is a real binary runs **out of process**
+(Linux): the supervisor attaches `matrix-host`, which spawns the plugin with a
+launch token and a Unix socket, and dispatch flows
+`kernel → host forwarder → child session → plugin`.
+
+```toml
+id = "navi.plugin.roll_dice"
+kind = "tool"
+tier = "local"
+capabilities = ["navi.plugin.info@1", "navi.tool.roll_dice.definition@1", "navi.tool.roll_dice@1"]
+execution = { kind = "process", entrypoint = "/path/to/plugin", args = ["--matrix-sock", "{sock}", "--id", "{id}"], timeout_ms = 15000 }
+```
+
+```bash
+navi components install roll-dice.toml       # into {data_dir}/compose/manifests/
+navi --ui navi.ui.tui                        # plugin activated; its tool joins the session
+navi components reload navi.plugin.roll_dice # new generation = a fresh process
+```
+
+`crates/navi-plugin-demo` is a working example (a dice-rolling tool) written with
+the Matrix component SDK. `crates/navi-plugin-demo/tests/process_tier.rs` proves
+out-of-process execution (a different pid), tool dispatch through the kernel, the
+generation swap and the kill on withdraw.
+
+Rules that keep the two tiers apart:
+
+- a tool plugin declares `navi.tool.<tool>@1` plus `navi.tool.<tool>.definition@1`
+  (one definition capability per tool, so several plugins coexist without
+  ambiguity); NAVI reads the definition and registers the tool for the session;
+- the `inproc:<id>` sentinel never reaches the process host (the composite hook
+  filters it), so first-party components are never spawned as processes;
+- the plugin inherits an empty environment and no terminal: it talks to NAVI only
+  through the socket.
 
 ## Trust model
 
 In-process components are **trusted first-party code**: Rust provides no plugin
-isolation (Matrix CHARTER #6). Untrusted/third-party components belong to the
-process tier (`matrix-host` + `matrix-guard`), which is **not** part of this
-prototype — the manifest field `execution.entrypoint` already distinguishes
-`inproc:<id>` from a real binary path, so the process tier plugs in without
-changing the composition model.
+isolation (Matrix CHARTER #6). Third-party components belong to the **process
+tier**: their own process, a launch token, an empty environment, no terminal.
+Operators who want stronger isolation can use Matrix's sandbox profile (`bwrap` +
+seccomp via `matrix-guard`) by declaring the component in `HostPolicy` with a
+`Sandbox` instead of `None` (explicitly trusted process).
 
 ## Known limits
 

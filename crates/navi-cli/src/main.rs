@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use navi_compose::{Compose, ComposeOptions, default_home, default_manifests};
+use navi_compose::{Compose, ComposeOptions, PluginToolProxy, default_home, default_manifests};
 use navi_core::{LoadedConfig, LoggingRuntimeConfig, init_logging, log_path};
 use navi_sdk::{
     EngineDriver, NaviAcpServer, NaviConfigSaveTarget, NaviEngineBuilder, NaviSessionRequest,
@@ -690,25 +690,46 @@ async fn run_composed(
     active_skills: Vec<String>,
     ui_id: String,
 ) -> Result<()> {
-    let engine = NaviEngineBuilder::from_project(cwd.clone())
-        .loaded_config(loaded_config.clone())
-        .build()?;
-    let driver: Arc<dyn EngineDriver> = Arc::new(engine);
-
     let compose = Compose::new(ComposeOptions {
         home: default_home(&loaded_config.data_dir),
         project_dir: cwd.clone(),
         loaded_config: loaded_config.clone(),
         dry_run: false,
         terminal_effects: true,
+        process_components: true,
     })?;
-    compose.set_engine(driver);
     compose.set_frontend_context(task, active_skills.clone());
     compose.install_definitions(&default_manifests())?;
+    // Third-party components installed earlier live in the same compose home.
+    compose.load_installed()?;
 
     // Root component first: frontends bind to the engine's capabilities.
     let engine_outcome = compose.activate("navi.engine")?;
     tracing::info!(state = %engine_outcome.state, "engine component active");
+
+    // Third-party tool plugins run out of process; their tools become part of
+    // this session's tool set (the invocation is admitted by the kernel and
+    // delivered to the plugin process).
+    let plugin_tools = compose.activate_tool_plugins();
+    for (component, spec) in &plugin_tools {
+        tracing::info!(
+            component = %component,
+            tool = %spec.name,
+            "third-party tool registered for the session"
+        );
+    }
+
+    let mut builder = NaviEngineBuilder::from_project(cwd.clone())
+        .loaded_config(loaded_config.clone());
+    for (_component, spec) in &plugin_tools {
+        builder = builder.host_tool(Arc::new(PluginToolProxy::new(
+            compose.kernel().clone(),
+            spec.clone(),
+        )));
+    }
+    let engine = builder.build()?;
+    let driver: Arc<dyn EngineDriver> = Arc::new(engine);
+    compose.set_engine(driver);
 
     // The session lives in the engine: it survives any frontend swap. Without
     // credentials the engine cannot build a provider yet — the frontend still

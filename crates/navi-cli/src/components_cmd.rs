@@ -4,7 +4,7 @@
 //! It reads the live status snapshot the supervisor publishes, or the installed
 //! manifests when no composed session is running.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use navi_compose::{Compose, ComposeOptions, default_home, default_manifests};
@@ -21,6 +21,14 @@ pub enum ComponentsAction {
     Reload {
         /// Component id, e.g. `navi.ui.plain`
         id: String,
+    },
+    /// Install a third-party component from a manifest file (TOML or JSON)
+    Install {
+        /// Path to the component manifest
+        path: PathBuf,
+        /// Activate it immediately (default: install only)
+        #[arg(long, default_value_t = false)]
+        activate: bool,
     },
     /// Print the kernel manifest JSON for an installed component
     Manifest {
@@ -46,18 +54,30 @@ pub fn handle_components_command(
     let home = default_home(&loaded_config.data_dir);
     match action {
         ComponentsAction::List => {
-            println!("{:<24} {:<10} {:<12} {}", "id", "kind", "version", "capabilities");
-            for manifest in default_manifests() {
+            let compose = Compose::new(ComposeOptions {
+                home: home.clone(),
+                project_dir: cwd.to_path_buf(),
+                loaded_config: loaded_config.clone(),
+                dry_run: true,
+                terminal_effects: false,
+                process_components: false,
+            })?;
+            compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
+            println!("{:<28} {:<10} {:<8} {:<8} {}", "id", "kind", "version", "tier", "capabilities");
+            for manifest in compose.manifests() {
                 println!(
-                    "{:<24} {:<10} {:<12} {}",
+                    "{:<28} {:<10} {:<8} {:<8} {}",
                     manifest.id,
                     format!("{:?}", manifest.kind).to_lowercase(),
                     manifest.version,
+                    manifest.tier,
                     manifest.capabilities.join(", ")
                 );
             }
             println!();
             println!("state dir: {}", home.display());
+            println!("install a third-party component with: navi components install <manifest.toml>");
             Ok(())
         }
         ComponentsAction::Status => {
@@ -65,16 +85,27 @@ pub fn handle_components_command(
                 print_live_status(&snapshot);
                 return Ok(());
             }
+            let compose = Compose::new(ComposeOptions {
+                home: home.clone(),
+                project_dir: cwd.to_path_buf(),
+                loaded_config: loaded_config.clone(),
+                dry_run: true,
+                terminal_effects: false,
+                process_components: false,
+            })?;
+            compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
             println!(
                 "no composed session is running (no status snapshot at {})",
                 home.join("status.json").display()
             );
-            println!("installed definitions:");
-            for manifest in default_manifests() {
+            println!("installed components:");
+            for manifest in compose.manifests() {
                 println!(
-                    "  {:<24} {:<10} {}",
+                    "  {:<28} {:<10} {:<8} {}",
                     manifest.id,
                     format!("{:?}", manifest.kind).to_lowercase(),
+                    manifest.tier,
                     manifest.capabilities.join(", ")
                 );
             }
@@ -89,14 +120,52 @@ pub fn handle_components_command(
                 loaded_config: loaded_config.clone(),
                 dry_run: false,
                 terminal_effects: false,
+                process_components: false,
             })?;
             compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
             compose.request_reload(&id)?;
             println!("reload requested for `{id}`");
             println!(
                 "the running supervisor applies it within ~50ms (request file: {})",
                 compose.reload_request_path().display()
             );
+            Ok(())
+        }
+        ComponentsAction::Install { path, activate } => {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|err| anyhow::anyhow!("cannot read {}: {err}", path.display()))?;
+            let manifest = match path.extension().and_then(|ext| ext.to_str()) {
+                Some("json") => navi_compose::ComponentManifest::from_json(&text),
+                _ => navi_compose::ComponentManifest::from_toml(&text),
+            }
+            .map_err(|err| anyhow::anyhow!("invalid manifest {}: {err}", path.display()))?;
+            let id = manifest.id.clone();
+            let is_process = !manifest.execution.is_inproc();
+            let compose = Compose::new(ComposeOptions {
+                home: home.clone(),
+                project_dir: cwd.to_path_buf(),
+                loaded_config: loaded_config.clone(),
+                dry_run: false,
+                terminal_effects: false,
+                process_components: is_process,
+            })?;
+            compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
+            compose.install_definition(manifest)?;
+            println!("installed `{id}` ({} component)", if is_process { "process" } else { "in-process" });
+            if activate {
+                let outcome = compose.activate(&id)?;
+                println!(
+                    "activated `{id}`: state={} generation={:?} reason={:?}",
+                    outcome.state, outcome.generation, outcome.waiting_reason
+                );
+                // Activation may have spawned a child process (process tier);
+                // this CLI is short-lived, so it must not leave it behind.
+                compose.shutdown();
+            } else {
+                println!("activate it with: navi components reload {id}");
+            }
             Ok(())
         }
         ComponentsAction::Manifest { id } => {
@@ -106,8 +175,10 @@ pub fn handle_components_command(
                 loaded_config: loaded_config.clone(),
                 dry_run: true,
                 terminal_effects: false,
+                process_components: false,
             })?;
             compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
             let manifest = compose
                 .manifests()
                 .into_iter()
@@ -134,8 +205,10 @@ pub fn handle_components_command(
                 loaded_config: loaded_config.clone(),
                 dry_run: true,
                 terminal_effects: false,
+                process_components: false,
             })?;
             compose.install_definitions(&default_manifests())?;
+            compose.load_installed()?;
             for manifest in default_manifests() {
                 compose.activate(&manifest.id)?;
             }

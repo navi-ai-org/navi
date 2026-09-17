@@ -114,6 +114,7 @@ fn compose_with_frontends(
         loaded_config: test_loaded_config(tempdir.path()),
         dry_run: false,
         terminal_effects: false,
+        process_components: false,
     })
     .expect("compose");
     let driver: Arc<dyn EngineDriver> = Arc::new(MockEngine::with_config(test_loaded_config(

@@ -38,6 +38,12 @@ composition authority, with NAVI as its **host**:
 - The **frontend is a component**. `navi-cli` builds the engine once, activates
   `navi.engine`, starts the session, then activates the requested frontend
   (`--ui`). The supervisor owns the lifecycle.
+- **Third-party components run out of process.** `navi-compose` attaches
+  `matrix-host`, which spawns a component whose `execution.entrypoint` is a real
+  binary with a launch token and a Unix socket (`matrix.component` v0.1). A tool
+  plugin's tool joins the session's tool set (`PluginToolProxy`); `navi components
+  reload` swaps it by generation, and `navi components install <manifest>` is the
+  install path.
 - The terminal is an **exclusive resource** (`TerminalLease`, one owner,
   released on withdraw). A runtime swap quiesces the current generation, releases
   the lease, and activates the successor with fresh bindings.
@@ -62,9 +68,10 @@ Positive:
   (`CleanupPending` → `Disposed`), not by convention.
 - The composition is auditable: generations, bindings, pending work and the
   journal are inspectable (`navi components status|journal|inventory`).
-- The process tier for third-party components (`matrix-host` + guard) plugs into
-  the same manifests (`execution.entrypoint` = binary vs `inproc:<id>`) without
-  reintroducing WASM.
+- The process tier for third-party components is implemented on Linux
+  (`matrix-host` + `matrix-guard` launch tokens); a sandboxed profile is
+  available in Matrix for operators who want `bwrap` + seccomp isolation instead
+  of the explicitly-trusted process.
 
 Negative:
 

@@ -30,6 +30,7 @@ use serde_json::{Value, json};
 
 use crate::manifest::{ComponentKind, ComponentManifest, INPROC_PREFIX};
 use crate::native::{Handler, HandlerResult, HandlerTable, Invocation, NativeForwarder};
+use crate::tool_proxy::PluginToolSpec;
 use crate::ui::{PlainFrontend, TuiFrontend, UiFrontend};
 
 /// Where the compose state lives (`{data_dir}/compose`).
@@ -52,6 +53,9 @@ pub struct ComposeOptions {
     /// `false` uses [`TerminalLease::acquire_detached`]: the exclusivity
     /// contract is enforced but raw mode is not touched (headless hosts, CI).
     pub terminal_effects: bool,
+    /// Attach the process host so third-party components can run as child
+    /// processes (`matrix-host` + `matrix.component`). Linux-only.
+    pub process_components: bool,
 }
 
 /// Outcome of an activation/reload.
@@ -135,6 +139,7 @@ struct ComposeInner {
     last_error: Mutex<Option<String>>,
     last_status_fingerprint: Mutex<String>,
     terminal_effects: bool,
+    process_host: RwLock<Option<Arc<ProcessHost>>>,
 }
 
 /// The compose supervisor handle. Cheap to clone (wraps an `Arc`).
@@ -143,19 +148,73 @@ pub struct Compose {
     inner: Arc<ComposeInner>,
 }
 
-struct LifecycleQueue {
+/// Host type for process components (Linux only; `()` elsewhere).
+#[cfg(target_os = "linux")]
+type ProcessHost = matrix_host::Host;
+#[cfg(not(target_os = "linux"))]
+type ProcessHost = ();
+
+/// Fans lifecycle events out to the process host *and* the supervisor queue.
+///
+/// In-process components are declared to the kernel as `process` with the
+/// `inproc:<id>` sentinel (the kernel's built-in reducer dispatch is a closed
+/// set, so every NAVI capability is served through the host forwarder). Those
+/// sentinels must never reach the process host, or it would try to spawn them.
+struct CompositeHook {
     inner: Weak<ComposeInner>,
+    #[cfg(target_os = "linux")]
+    host: Option<Arc<matrix_host::Host>>,
 }
 
-impl LifecycleHook for LifecycleQueue {
+impl LifecycleHook for CompositeHook {
     fn on_lifecycle(&self, event: LifecycleEvent) {
-        // Non-blocking by contract: the kernel never waits for the host while
-        // holding locks, so the host only queues and reconciles on its own
-        // schedule (`Compose::tick`).
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(host) = self.host.as_ref() {
+                let forward = match &event {
+                    LifecycleEvent::Activated { entrypoint, .. } => {
+                        !entrypoint.starts_with(crate::manifest::INPROC_PREFIX)
+                    }
+                    // Withdrawn/Removed carry no entrypoint: forwarding is
+                    // harmless (killing an unknown child is a no-op).
+                    LifecycleEvent::Withdrawn { .. } | LifecycleEvent::Removed { .. } => true,
+                };
+                if forward {
+                    host.on_lifecycle(event.clone());
+                }
+            }
+        }
         if let Some(inner) = self.inner.upgrade() {
             inner.lifecycle.lock().push(event);
         }
     }
+}
+
+/// Attaches the process host and re-installs NAVI's chained forwarder + hook.
+#[cfg(target_os = "linux")]
+fn attach_process_host(inner: &Arc<ComposeInner>) -> Result<Option<Arc<ProcessHost>>> {
+    let sock_dir = inner.home.join("host");
+    let host = matrix_host::Host::attach(inner.kernel.clone(), &sock_dir)
+        .map_err(|err| anyhow!("matrix-host attach failed: {err}"))?;
+    // `attach` installed the host as forwarder/hook/event-sink. Re-install the
+    // chain so native capabilities stay in-process and everything else is
+    // delegated to the child sessions; the host keeps the event sink (it
+    // delivers events to components that declare `subscriptions`).
+    inner.kernel.set_forwarder(Arc::new(
+        NativeForwarder::new(inner.handlers.clone())
+            .with_process(host.clone() as Arc<dyn matrix_core::external::CallForwarder>),
+    ));
+    inner.kernel.set_hook(Arc::new(CompositeHook {
+        inner: Arc::downgrade(inner),
+        host: Some(host.clone()),
+    }));
+    tracing::info!(socket = %host.sock_path().display(), "process host attached");
+    Ok(Some(host))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn attach_process_host(_inner: &Arc<ComposeInner>) -> Result<Option<Arc<ProcessHost>>> {
+    Ok(None)
 }
 
 /// Capability handler for a frontend's command interface.
@@ -297,12 +356,39 @@ impl Compose {
             last_error: Mutex::new(None),
             last_status_fingerprint: Mutex::new(String::new()),
             terminal_effects: options.terminal_effects,
+            process_host: RwLock::new(None),
         });
 
         kernel.set_forwarder(Arc::new(NativeForwarder::new(inner.handlers.clone())));
-        kernel.set_hook(Arc::new(LifecycleQueue {
+        kernel.set_hook(Arc::new(CompositeHook {
             inner: Arc::downgrade(&inner),
+            #[cfg(target_os = "linux")]
+            host: None,
         }));
+
+        // Process tier: third-party components run as child processes under
+        // `matrix-host` (spawn + `matrix.component` sessions + supervision).
+        // Attaching replaces the forwarder/hook/event-sink, so it happens here
+        // and our chained forwarder + composite hook are installed afterwards.
+        if options.process_components {
+            match attach_process_host(&inner) {
+                Ok(Some(host)) => {
+                    *inner.process_host.write() = Some(host);
+                }
+                Ok(None) => {
+                    tracing::info!(
+                        "process components are not supported on this platform; \
+                         only in-process components are available"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to attach the process host; process components are unavailable"
+                    );
+                }
+            }
+        }
 
         let compose = Self { inner };
         compose.register_builtin_frontends();
@@ -397,8 +483,9 @@ impl Compose {
 
     /// Records a manifest on disk **without** activating it.
     ///
-    /// `navi components` can then show it as installed-but-inactive, and
-    /// [`Compose::activate`] loads it into the kernel on demand.
+    /// Two files are written per component: `<id>.json` (the kernel manifest the
+    /// kernel loads) and `<id>.toml` (the NAVI manifest, so a later process can
+    /// list/activate the component with its full metadata, including `kind`).
     pub fn install_definition(&self, manifest: ComponentManifest) -> Result<PathBuf> {
         self.inner
             .manifests
@@ -411,7 +498,44 @@ impl Compose {
         }
         std::fs::write(&path, manifest.to_kernel_json().to_string())
             .map_err(|err| anyhow!("failed to write manifest {}: {err}", path.display()))?;
+        let toml_path = self.navi_manifest_path(&manifest.id);
+        std::fs::write(&toml_path, manifest.to_toml())
+            .map_err(|err| anyhow!("failed to write manifest {}: {err}", toml_path.display()))?;
         Ok(path)
+    }
+
+    /// Loads every component installed in this compose home (without activating).
+    ///
+    /// Lets a fresh CLI process see third-party components installed earlier:
+    /// their NAVI manifests (with `kind`, description and execution) are on disk
+    /// next to the kernel manifests.
+    pub fn load_installed(&self) -> Result<usize> {
+        let dir = self.inner.home.join("manifests");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Ok(0);
+        };
+        let mut loaded = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            match ComponentManifest::from_toml(&text) {
+                Ok(manifest) => {
+                    self.inner.manifests.write().insert(manifest.id.clone(), manifest);
+                    loaded += 1;
+                }
+                Err(err) => tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "ignoring unreadable installed manifest"
+                ),
+            }
+        }
+        Ok(loaded)
     }
 
     /// Installs (writes + loads) a component manifest and reconciles.
@@ -474,6 +598,7 @@ impl Compose {
         let outcome = self.withdraw(id)?;
         self.inner.manifests.write().remove(id);
         let _ = std::fs::remove_file(self.manifest_path(id));
+        let _ = std::fs::remove_file(self.navi_manifest_path(id));
         Ok(outcome)
     }
 
@@ -557,9 +682,14 @@ impl Compose {
         withdrawn
     }
 
-    /// Path of an installed manifest.
+    /// Path of an installed manifest (kernel schema).
     pub fn manifest_path(&self, id: &str) -> PathBuf {
         self.inner.home.join("manifests").join(format!("{id}.json"))
+    }
+
+    /// Path of an installed manifest (NAVI schema, for inspection).
+    pub fn navi_manifest_path(&self, id: &str) -> PathBuf {
+        self.inner.home.join("manifests").join(format!("{id}.toml"))
     }
 
     /// Kernel generation of a component's live activation.
@@ -602,6 +732,10 @@ impl Compose {
                         if let Err(err) = self.start_frontend(&logical, instance, generation) {
                             notes.push(format!("frontend start failed for {logical}: {err}"));
                         }
+                    } else {
+                        notes.push(format!(
+                            "process component {logical} activated; the process host spawns it"
+                        ));
                     }
                 }
                 LifecycleEvent::Withdrawn {
@@ -1010,6 +1144,7 @@ impl Compose {
             }
             self.publish_status_if_changed();
             if self.started_any_frontend() && !self.has_running_frontend() {
+                self.shutdown();
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(40)).await;
@@ -1054,6 +1189,110 @@ impl Compose {
     /// Component id of the currently running frontend, if exactly one.
     pub fn running_frontend(&self) -> Option<String> {
         self.inner.running.lock().keys().next().cloned()
+    }
+
+    /// The process host, when attached (Linux + `process_components`).
+    pub fn process_host(&self) -> Option<Arc<ProcessHost>> {
+        self.inner.process_host.read().clone()
+    }
+
+    /// Installed tool plugins (process tier, `kind = tool`).
+    ///
+    /// Convention: a tool plugin declares `navi.tool.<name>@1` (the tool) plus
+    /// `navi.tool.<name>.definition@1` (its definition), so several plugins
+    /// coexist without capability ambiguity.
+    pub fn tool_plugins(&self) -> Vec<(String, String, String)> {
+        self.manifests()
+            .into_iter()
+            .filter(|manifest| manifest.kind == ComponentKind::Tool && !manifest.execution.is_inproc())
+            .filter_map(|manifest| {
+                let definition = manifest
+                    .capabilities
+                    .iter()
+                    .find(|capability| {
+                        capability.starts_with("navi.tool.") && capability.ends_with(".definition@1")
+                    })?
+                    .clone();
+                let tool = manifest
+                    .capabilities
+                    .iter()
+                    .find(|capability| {
+                        capability.starts_with("navi.tool.") && !capability.ends_with(".definition@1")
+                    })?
+                    .clone();
+                Some((manifest.id, tool, definition))
+            })
+            .collect()
+    }
+
+    /// Fetches a plugin's tool definition, waiting for the child to connect.
+    ///
+    /// Activation spawns the process asynchronously, so the first calls can
+    /// fail with `outcome-unknown` until the handshake completes.
+    pub fn fetch_tool_spec(
+        &self,
+        component: &str,
+        definition_capability: &str,
+        timeout: Duration,
+    ) -> Option<PluginToolSpec> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let (value, ok) = self
+                .inner
+                .kernel
+                .invoke(definition_capability, &json!({}));
+            if ok && let Some(spec) = PluginToolSpec::from_response(component, &value) {
+                return Some(spec);
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    component = %component,
+                    capability = %definition_capability,
+                    "plugin tool definition unavailable"
+                );
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Activates every installed tool plugin and returns their tool proxies.
+    ///
+    /// Called by the CLI before building the engine, so the session's tool set
+    /// includes the third-party tools.
+    pub fn activate_tool_plugins(&self) -> Vec<(String, PluginToolSpec)> {
+        let mut activated = Vec::new();
+        for (component, _tool, definition) in self.tool_plugins() {
+            match self.activate(&component) {
+                Ok(outcome) => tracing::info!(
+                    component = %component,
+                    state = %outcome.state,
+                    generation = ?outcome.generation,
+                    "tool plugin activated"
+                ),
+                Err(err) => {
+                    tracing::warn!(component = %component, error = %err, "tool plugin activation failed");
+                    continue;
+                }
+            }
+            if let Some(spec) = self.fetch_tool_spec(&component, &definition, Duration::from_secs(5)) {
+                activated.push((component, spec));
+            }
+        }
+        activated
+    }
+
+    /// Tears the composition down: kills process children and stops the host.
+    ///
+    /// The kernel journal and the installed manifests stay on disk.
+    pub fn shutdown(&self) {
+        #[cfg(target_os = "linux")]
+        {
+            let host = self.inner.process_host.read().clone();
+            if let Some(host) = host {
+                host.shutdown();
+            }
+        }
     }
 
     /// Asks every running frontend to quit (used by signal-driven shutdown).

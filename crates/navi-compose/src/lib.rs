@@ -23,6 +23,7 @@
 pub mod host;
 pub mod manifest;
 pub mod native;
+pub mod tool_proxy;
 pub mod ui;
 
 pub use host::{
@@ -36,6 +37,7 @@ pub use ui::{
     PlainFrontend, TuiFrontend, UiFrontend, command_capability, default_manifests,
     engine_manifest, ui_manifest,
 };
+pub use tool_proxy::{PluginToolProxy, PluginToolSpec};
 
 /// Frontend host vocabulary (re-exported from `navi-tui`).
 pub use navi_tui::host::{
