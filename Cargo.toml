@@ -156,6 +156,12 @@ incremental = true
 codegen-units = 256
 lto = false
 
+# External dependencies don't need debug info for local iteration: dropping it
+# shrinks the debug target and the linker input substantially (matters on
+# RAM/disk-constrained machines). Workspace crates keep line tables above.
+[profile.dev.package."*"]
+debug = false
+
 # Release: full optimization for shipping (Cargo defaults: lto=false, codegen-units=16).
 # Prefer `cargo build --release` / `just build-release` for distribution binaries.
 
