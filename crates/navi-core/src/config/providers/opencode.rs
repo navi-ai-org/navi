@@ -58,6 +58,13 @@ pub(super) fn opencode_zen_model_id(model: &str) -> Option<String> {
         "muse-spark-1.2-contributor" | "muse-spark-1.2-contributor-free" => {
             Some("muse-spark-1.2-contributor-free".to_string())
         }
+        // Same alias for the 1.3 contributor tier (api_name ...-free).
+        "muse-spark-1.3-contributor" | "muse-spark-1.3-contributor-free" => {
+            Some("muse-spark-1.3-contributor-free".to_string())
+        }
+        // Registry main (2026-09-17): Zen serves Ling 3.0 Flash Fin as a
+        // temporary free model.
+        "ling-3.0-flash-fin-free" => Some("ling-3.0-flash-fin-free".to_string()),
         _ => None,
     }
 }
@@ -168,6 +175,10 @@ mod tests {
         assert_eq!(
             opencode_zen_model_id("muse-spark-1.2-contributor-free").as_deref(),
             Some("muse-spark-1.2-contributor-free")
+        );
+        assert_eq!(
+            opencode_zen_model_id("muse-spark-1.3-contributor").as_deref(),
+            Some("muse-spark-1.3-contributor-free")
         );
     }
 
