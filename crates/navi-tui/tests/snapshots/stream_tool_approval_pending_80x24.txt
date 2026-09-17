@@ -16,7 +16,7 @@
     │                                                                      │
     │                                                                      │
     ╰──────────────────────────────────────────────────────────────────────╯
-    ◆ Waiting for approval: tool · 0s (esc to interrupt)
+    φ__(． ． ) Waiting for approval: tool · 0s (esc to interrupt)
 
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ › Type to queue (ctrl+enter) · esc cancels turn                          │
