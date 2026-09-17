@@ -31,7 +31,31 @@ fn format_api_error(
     let provider_error = ProviderErrorBody::parse(body);
     let provider_code = provider_error.code.as_deref();
     let provider_detail = provider_error.detail();
+    let body_lower = body.to_ascii_lowercase();
     let user_message = match (status_code, provider_code) {
+        // OpenCode Go rejects Zen free-tier models on the Go endpoint.
+        // Reproduced headless: opencode-go + mimo-v2.5-free.
+        _ if body.contains("free tier can only be used from within OpenCode")
+            || provider_code == Some("FreeTierError") =>
+        {
+            "This is a free-tier model and can only be used from within OpenCode (Zen), not on the OpenCode Go endpoint. Use ctrl+m to select a Go-included model (e.g. mimo-v2.5, glm-5.2, kimi-k2.6).".to_string()
+        }
+        // OpenCode Go requires a stable x-opencode-session on every request
+        // (https://opencode.ai/docs/go/#where-can-i-use-it). Old NAVI builds
+        // did not send it at all.
+        _ if body_lower.contains("missing x-opencode-session")
+            || provider_code.is_some_and(|code| code.eq_ignore_ascii_case("MissingSessionID")) =>
+        {
+            "The provider rejected the request as missing session routing (x-opencode-session). Update NAVI to the latest build so every OpenCode request carries a stable session id.".to_string()
+        }
+        // The Go/Zen gateway answers 401 + ModelError when the model id is
+        // not in that endpoint's catalog (e.g. a Zen free-tier id on Go).
+        // Without this arm the generic 401 text blames the API key.
+        _ if provider_code == Some("ModelError")
+            || (body_lower.contains("model") && body_lower.contains("not supported")) =>
+        {
+            "The selected model is not available on this provider endpoint. Use ctrl+m to select a model from this provider's catalog (for OpenCode Go, pick a Go-included model, not a Zen free-tier one).".to_string()
+        }
         (400, Some("unsupported_model")) => "The selected model is not in this provider catalog. Use ctrl+m to select a different model.".to_string(),
         (400, Some("invalid_request_error")) => "The provider rejected the request shape. This may mean the selected model is using the wrong endpoint or unsupported parameters.".to_string(),
         (400, _) => {
@@ -168,6 +192,48 @@ mod tests {
 
         assert!(message.contains("wrong endpoint"));
         assert!(message.contains("invalid_request_error"));
+    }
+
+    #[test]
+    fn api_error_guides_free_tier_on_go_endpoint() {
+        let body = r#"{"error":{"message":"OpenCode's free tier can only be used from within OpenCode","type":"FreeTierError"}}"#;
+
+        let message = format_api_error(&StatusCode::FORBIDDEN, body, &None);
+
+        assert!(message.contains("free-tier"), "message: {message}");
+        assert!(message.contains("ctrl+m"), "message: {message}");
+        assert!(message.contains("FreeTierError"), "message: {message}");
+    }
+
+    #[test]
+    fn api_error_guides_missing_opencode_session() {
+        let body = r#"{"error":{"message":"Error from provider (Console Go): Request is missing x-opencode-session and cannot be routed efficiently. Please see https://opencode.ai/docs/go/#where-can-i-use-it","type":"MissingSessionID"}}"#;
+
+        let message = format_api_error(&StatusCode::BAD_REQUEST, body, &None);
+
+        assert!(message.contains("x-opencode-session"), "message: {message}");
+        assert!(message.contains("stable session id"), "message: {message}");
+        assert!(
+            !message.contains("configuration issue"),
+            "message: {message}"
+        );
+    }
+
+    #[test]
+    fn api_error_model_not_supported_is_not_blamed_on_api_key() {
+        let body =
+            r#"{"error":{"message":"Model mimo-v2.5-free is not supported","type":"ModelError"}}"#;
+
+        let message = format_api_error(&StatusCode::UNAUTHORIZED, body, &None);
+
+        assert!(
+            message.contains("not available on this provider endpoint"),
+            "message: {message}"
+        );
+        assert!(
+            !message.contains("Authentication failed"),
+            "message: {message}"
+        );
     }
 
     #[test]
