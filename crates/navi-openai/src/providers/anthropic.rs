@@ -32,10 +32,14 @@ impl crate::provider::OpenAiProvider {
         let behavior = self.behavior.clone();
 
         Box::pin(try_stream! {
-            let headers = behavior.build_headers(
+            let mut headers = behavior.build_headers(
                 &api_key,
                 crate::providers::behavior::Endpoint::AnthropicMessages,
             )?;
+            // Stable session affinity (x-opencode-session, x-grok-*, ...) for
+            // providers that route on it. Required on every opencode-family
+            // request — without it the Go gateway rejects with MissingSessionID.
+            behavior.apply_request_headers(&mut headers, &request)?;
             let model = request.model.clone();
             tracing::info!(provider = %provider_id, model = %model, api = "anthropic-messages", tools = request.tools.len(), "provider stream started");
             let (mut system, messages) =

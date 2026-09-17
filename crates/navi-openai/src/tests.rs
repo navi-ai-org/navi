@@ -1698,6 +1698,57 @@ async fn test_opencode_zen_claude_models_use_messages_endpoint() {
 }
 
 #[tokio::test]
+async fn test_opencode_claude_messages_endpoint_carries_stable_session() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    // The Go/Zen gateway rejects requests without a stable session
+    // (MissingSessionID). The Anthropic-messages path must apply the same
+    // session affinity as the chat/responses paths.
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .and(header("Authorization", "Bearer zen_test_key"))
+        .and(header("User-Agent", "opencode"))
+        .and(header("x-opencode-session", "sess-abc-123"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "opencode".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::new("zen_test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("opencode".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "claude-sonnet-4.5".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+        session_id: Some("sess-abc-123".to_string()),
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn test_request_timeout() {
     use std::time::Duration;
     use wiremock::matchers::{method, path};

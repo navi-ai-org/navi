@@ -33,13 +33,31 @@ pub(super) fn opencode_zen_model_id(model: &str) -> Option<String> {
         .join("-");
 
     match collapsed.as_str() {
-        // Free models from registry-snapshot/providers/opencode.json (pricing 0.0).
+        // Free models from providers/opencode.json (pricing 0.0).
+        // Pinned snapshot bdb55ab: big-pickle, deepseek-v4-flash-free,
+        // mimo-v2.5-free, laguna-s-2.1-free, north-mini-code-free,
+        // nemotron-3-ultra-free. Registry main (2026-09-17) additionally
+        // serves hy3-free, nemotron-3.5-lightning-free, ox-alpha-free /
+        // x-preview-f-free and muse-spark-1.2-contributor-free, so cover
+        // them too instead of breaking on the next registry sync.
         "deepseek-v4-flash-free" => Some("deepseek-v4-flash-free".to_string()),
         "nemotron-3-ultra-free" => Some("nemotron-3-ultra-free".to_string()),
+        "nemotron-3.5-lightning-free" => Some("nemotron-3.5-lightning-free".to_string()),
         "big-pickle" => Some("big-pickle".to_string()),
         "mimo-v2.5-free" => Some("mimo-v2.5-free".to_string()),
         "hy3-free" => Some("hy3-free".to_string()),
+        "laguna-s-2.1-free" => Some("laguna-s-2.1-free".to_string()),
         "north-mini-code-free" => Some("north-mini-code-free".to_string()),
+        // Registry ref ox-alpha-free is served as x-preview-f-free on Zen
+        // (api_name) but as ox-alpha-free on Go: keep identity so alias
+        // normalization (opencode/ prefix, separators) still works on both.
+        "ox-alpha-free" => Some("ox-alpha-free".to_string()),
+        "x-preview-f-free" => Some("x-preview-f-free".to_string()),
+        // Registry ref muse-spark-1.2-contributor is served as
+        // muse-spark-1.2-contributor-free (api_name).
+        "muse-spark-1.2-contributor" | "muse-spark-1.2-contributor-free" => {
+            Some("muse-spark-1.2-contributor-free".to_string())
+        }
         _ => None,
     }
 }
@@ -116,6 +134,10 @@ mod tests {
             Some("nemotron-3-ultra-free")
         );
         assert_eq!(
+            opencode_zen_model_id("nemotron-3.5-lightning-free").as_deref(),
+            Some("nemotron-3.5-lightning-free")
+        );
+        assert_eq!(
             opencode_zen_model_id("big-pickle").as_deref(),
             Some("big-pickle")
         );
@@ -128,8 +150,58 @@ mod tests {
             Some("hy3-free")
         );
         assert_eq!(
+            opencode_zen_model_id("laguna-s-2.1-free").as_deref(),
+            Some("laguna-s-2.1-free")
+        );
+        assert_eq!(
             opencode_zen_model_id("north-mini-code-free").as_deref(),
             Some("north-mini-code-free")
+        );
+        assert_eq!(
+            opencode_zen_model_id("ox-alpha-free").as_deref(),
+            Some("ox-alpha-free")
+        );
+        assert_eq!(
+            opencode_zen_model_id("x-preview-f-free").as_deref(),
+            Some("x-preview-f-free")
+        );
+        assert_eq!(
+            opencode_zen_model_id("muse-spark-1.2-contributor-free").as_deref(),
+            Some("muse-spark-1.2-contributor-free")
+        );
+    }
+
+    #[test]
+    fn zen_id_covers_all_free_models_in_embedded_registry() {
+        // The hardcoded allowlist must stay consistent with the pinned
+        // registry snapshot: every pricing-0 opencode model whose name looks
+        // free must resolve (this caught laguna-s-2.1-free missing).
+        // big-pickle is pricing-0 but has no -free suffix, so it is covered
+        // by the test above instead of this name-based check.
+        let providers =
+            crate::registry::embedded_providers().expect("embedded registry should parse");
+        let opencode = providers
+            .iter()
+            .find(|provider| provider.id == "opencode")
+            .expect("embedded registry should contain opencode");
+        let mut checked = 0;
+        for model in &opencode.models {
+            let priced_free = model.pricing.as_ref().is_some_and(|pricing| {
+                pricing.input_per_1m == Some(0.0) && pricing.output_per_1m == Some(0.0)
+            });
+            if !priced_free || !is_free_model_name(&model.name) {
+                continue;
+            }
+            assert!(
+                opencode_zen_model_id(&model.name).is_some(),
+                "free registry model '{}' must resolve via opencode_zen_model_id",
+                model.name
+            );
+            checked += 1;
+        }
+        assert!(
+            checked >= 5,
+            "expected at least 5 free -free models in embedded opencode registry, got {checked}"
         );
     }
 
