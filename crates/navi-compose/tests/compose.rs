@@ -32,11 +32,13 @@ struct RunRecord {
 }
 
 /// Deterministic frontend: submits scripted commands through the kernel, then
-/// waits for the supervisor to quiesce it.
+/// waits for the supervisor to quiesce it (or quits immediately when
+/// `quit_immediately` is set).
 struct ScriptedFrontend {
     id: String,
     requires_tty: bool,
     commands: Vec<String>,
+    quit_immediately: bool,
     runs: Arc<Mutex<Vec<RunRecord>>>,
 }
 
@@ -57,14 +59,18 @@ impl UiFrontend for ScriptedFrontend {
                 Err(err) => err,
             });
         }
-        let exit = loop {
-            if let Some(message) = host.control.poll() {
-                match message {
-                    ControlMsg::Quiesce { .. } => break UiExit::Quiesced,
-                    ControlMsg::Shutdown => break UiExit::Quit,
+        let exit = if self.quit_immediately {
+            UiExit::Quit
+        } else {
+            loop {
+                if let Some(message) = host.control.poll() {
+                    match message {
+                        ControlMsg::Quiesce { .. } => break UiExit::Quiesced,
+                        ControlMsg::Shutdown => break UiExit::Quit,
+                    }
                 }
+                std::thread::sleep(Duration::from_millis(5));
             }
-            std::thread::sleep(Duration::from_millis(5));
         };
         self.runs.lock().unwrap().push(RunRecord {
             generation: host.generation,
@@ -125,6 +131,18 @@ fn scripted(id: &str, requires_tty: bool, commands: Vec<String>) -> Arc<Scripted
         id: id.to_string(),
         requires_tty,
         commands,
+        quit_immediately: false,
+        runs: Arc::new(Mutex::new(Vec::new())),
+    })
+}
+
+/// A frontend that quits as soon as it starts (user quit / shutdown request).
+fn scripted_quitter(id: &str) -> Arc<ScriptedFrontend> {
+    Arc::new(ScriptedFrontend {
+        id: id.to_string(),
+        requires_tty: false,
+        commands: Vec::new(),
+        quit_immediately: true,
         runs: Arc::new(Mutex::new(Vec::new())),
     })
 }
@@ -508,6 +526,57 @@ fn uninstalling_a_provider_cascades_consumers_to_waiting() {
         .waiting_reason_of("navi.ui.test")
         .expect("waiting reason");
     assert!(!reason.is_empty());
+}
+
+#[test]
+fn activating_another_frontend_withdraws_the_previous_one() {
+    let first = scripted("navi.ui.test", false, Vec::new());
+    let second = scripted("navi.ui.test2", false, Vec::new());
+    let (compose, _dir) = compose_with_frontends(vec![(first.clone(), true), (second.clone(), true)]);
+    compose
+        .install_definitions(&[
+            navi_compose::engine_manifest(),
+            manifest_for(&first),
+            manifest_for(&second),
+        ])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+    compose.activate("navi.ui.test").expect("first ui");
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(compose.running_frontend().as_deref(), Some("navi.ui.test"));
+
+    // The frontend role is exclusive: activating another frontend swaps them.
+    let outcome = compose.activate("navi.ui.test2").expect("second ui");
+    assert_eq!(outcome.state, "Active");
+    assert_eq!(compose.running_frontend().as_deref(), Some("navi.ui.test2"));
+    assert_eq!(
+        compose.state_of("navi.ui.test").as_deref(),
+        Some("Disposed"),
+        "the previous frontend must be withdrawn"
+    );
+    let runs = first.runs.lock().unwrap().clone();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].exit, UiExit::Quiesced);
+    assert_eq!(compose.status().iter().filter(|s| s.ui_running).count(), 1);
+}
+
+#[test]
+fn a_frontend_that_quits_on_its_own_is_reaped() {
+    let frontend = scripted_quitter("navi.ui.test");
+    let (compose, _dir) = compose_with_frontends(vec![(frontend.clone(), true)]);
+    compose
+        .install_definitions(&[navi_compose::engine_manifest(), manifest_for(&frontend)])
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+    compose.activate("navi.ui.test").expect("ui");
+    std::thread::sleep(Duration::from_millis(50));
+
+    // The supervisor must notice the dead generation and drop it, otherwise it
+    // would never exit once the last frontend quits.
+    let reaped = compose.reap_exited_frontends();
+    assert_eq!(reaped, vec!["navi.ui.test".to_string()]);
+    assert!(!compose.has_running_frontend());
+    assert!(compose.reap_exited_frontends().is_empty(), "reaping is idempotent");
 }
 
 #[test]

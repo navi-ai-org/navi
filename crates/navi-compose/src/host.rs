@@ -131,6 +131,7 @@ struct ComposeInner {
     active_skills: RwLock<Vec<String>>,
     runtime: Option<tokio::runtime::Handle>,
     started_ui: AtomicBool,
+    signals_installed: AtomicBool,
     last_error: Mutex<Option<String>>,
     last_status_fingerprint: Mutex<String>,
     terminal_effects: bool,
@@ -292,6 +293,7 @@ impl Compose {
             active_skills: RwLock::new(Vec::new()),
             runtime: tokio::runtime::Handle::try_current().ok(),
             started_ui: AtomicBool::new(false),
+            signals_installed: AtomicBool::new(false),
             last_error: Mutex::new(None),
             last_status_fingerprint: Mutex::new(String::new()),
             terminal_effects: options.terminal_effects,
@@ -493,13 +495,30 @@ impl Compose {
         if !path.exists() {
             bail!("component `{id}` has no manifest on disk ({})", path.display());
         }
+        // The frontend role is exclusive: activating a frontend withdraws any
+        // other live frontend first (one terminal, one owner). The kernel
+        // records the withdrawal; the host reconciles it in `tick`.
+        let kind = self
+            .inner
+            .manifests
+            .read()
+            .get(id)
+            .map(|manifest| manifest.kind);
+        let replaced = if kind == Some(ComponentKind::Ui) {
+            self.withdraw_other_frontends(id)
+        } else {
+            Vec::new()
+        };
         let loaded = self
             .inner
             .kernel
             .load_manifest(&path)
             .map_err(|err| anyhow!("kernel rejected manifest `{id}`: {err}"))?;
         debug_assert_eq!(loaded, id);
-        let notes = self.tick()?;
+        let mut notes = self.tick()?;
+        for replaced in &replaced {
+            notes.push(format!("frontend role: withdrew {replaced}"));
+        }
         Ok(ActivationOutcome {
             component: id.to_string(),
             previous_generation: previous,
@@ -508,6 +527,34 @@ impl Compose {
             waiting_reason: self.inner.kernel.waiting_reason_of(id),
             notes,
         })
+    }
+
+    /// Withdraws every live frontend except `keep`.
+    ///
+    /// NAVI has a single frontend role (one terminal, one owner): activating
+    /// `navi.ui.plain` while `navi.ui.tui` runs must swap them, not run both.
+    fn withdraw_other_frontends(&self, keep: &str) -> Vec<String> {
+        let candidates: Vec<String> = self
+            .inner
+            .manifests
+            .read()
+            .values()
+            .filter(|manifest| manifest.kind == ComponentKind::Ui && manifest.id != keep)
+            .map(|manifest| manifest.id.clone())
+            .collect();
+        let mut withdrawn = Vec::new();
+        for id in candidates {
+            if self.inner.kernel.instance_of(&id).is_some() {
+                tracing::info!(
+                    withdrawn = %id,
+                    successor = keep,
+                    "frontend role is exclusive; withdrawing the previous frontend"
+                );
+                self.inner.kernel.dispose_plugin(&id);
+                withdrawn.push(id);
+            }
+        }
+        withdrawn
     }
 
     /// Path of an installed manifest.
@@ -751,6 +798,26 @@ impl Compose {
         !self.inner.running.lock().is_empty()
     }
 
+    /// Reaps frontends that ended on their own (user quit, shutdown request).
+    ///
+    /// Without this the supervisor would keep a dead generation in its running
+    /// set and never exit when the last frontend quits.
+    pub fn reap_exited_frontends(&self) -> Vec<String> {
+        let exited: Vec<String> = {
+            let running = self.inner.running.lock();
+            running
+                .iter()
+                .filter(|(_, ui)| ui.exit.lock().is_some())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in &exited {
+            let exit = self.stop_frontend(id);
+            tracing::info!(component = %id, exit = ?exit, "frontend exited on its own");
+        }
+        exited
+    }
+
     /// Whether any frontend was ever started (used to decide process exit).
     pub fn started_any_frontend(&self) -> bool {
         self.inner.started_ui.load(Ordering::SeqCst)
@@ -926,8 +993,10 @@ impl Compose {
     /// Supervisor loop: reconciles lifecycle, drains effects, honors reload
     /// requests, and returns when no frontend is running.
     pub async fn run_until_exit(&self) -> Result<()> {
+        self.install_shutdown_signals();
         loop {
             self.tick()?;
+            self.reap_exited_frontends();
             self.drain_commands().await?;
             for id in self.take_reload_requests() {
                 match self.reload(&id) {
@@ -985,5 +1054,68 @@ impl Compose {
     /// Component id of the currently running frontend, if exactly one.
     pub fn running_frontend(&self) -> Option<String> {
         self.inner.running.lock().keys().next().cloned()
+    }
+
+    /// Asks every running frontend to quit (used by signal-driven shutdown).
+    ///
+    /// The frontends restore the terminal and return; the supervisor then exits
+    /// once no frontend is left.
+    pub fn shutdown_frontends(&self) {
+        let running = self.inner.running.lock();
+        for (id, ui) in running.iter() {
+            tracing::info!(component = %id, "shutdown requested; asking the frontend to quit");
+            ui.control.send(ControlMsg::Shutdown);
+        }
+    }
+
+    /// Installs a one-shot SIGTERM/SIGINT/SIGHUP handler for the supervisor.
+    ///
+    /// Without it a composed session has no clean shutdown path: whichever
+    /// frontend is running owns the input loop, and the process would only die
+    /// on SIGKILL (leaving the terminal unrestored).
+    fn install_shutdown_signals(&self) {
+        if self.inner.signals_installed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let compose = self.clone();
+        tokio::spawn(async move {
+            #[cfg(unix)]
+            {
+                use tokio::signal::unix::{SignalKind, signal};
+                let mut terminate = match signal(SignalKind::terminate()) {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to install SIGTERM handler");
+                        return;
+                    }
+                };
+                let mut interrupt = match signal(SignalKind::interrupt()) {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to install SIGINT handler");
+                        return;
+                    }
+                };
+                let mut hangup = match signal(SignalKind::hangup()) {
+                    Ok(stream) => stream,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to install SIGHUP handler");
+                        return;
+                    }
+                };
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = interrupt.recv() => {}
+                    _ = hangup.recv() => {}
+                }
+                compose.shutdown_frontends();
+            }
+            #[cfg(not(unix))]
+            {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    compose.shutdown_frontends();
+                }
+            }
+        });
     }
 }

@@ -73,6 +73,14 @@ Reload v0.1 does **not** promise zero downtime: the terminal handoff is visible.
 | Resource | the terminal (`TerminalLease`, exclusive), plus kernel-tracked handles |
 | Effect | commands admitted through the kernel; async execution drained by the supervisor |
 
+The **frontend role is exclusive**: activating a frontend withdraws any other
+live frontend first (one terminal, one owner), so `navi.ui.plain` replaces
+`navi.ui.tui` instead of running beside it.
+
+Shutdown is signal-driven: SIGTERM/SIGINT/SIGHUP are handled by the supervisor,
+which asks the running frontend to quit and exits once it has (each frontend
+restores the terminal on its way out).
+
 Manifests are written to `{data_dir}/compose/manifests/<id>.json` (kernel schema)
 and the journal to `{data_dir}/compose/journal.jsonl`.
 
@@ -109,7 +117,8 @@ changing the composition model.
   `session_id = None`: a swap then starts a fresh session on the first turn.
 - Windows: the terminal lease uses Unix `termios`; the swap path is Unix-first.
 - `navi.ui.plain` reads stdin on a helper thread so it can poll the control
-  channel. After a swap the retired generation's reader thread may linger until
-  the next stdin line arrives, so a *line-based* frontend can lose a line to the
-  previous generation. The TUI is unaffected (it owns its input loop and stops
-  it on quiesce); a production line frontend should read the TTY directly.
+  channel. crossterm (used by the TUI) keeps an internal stdin reader alive for
+  the process lifetime, so a line-based successor may not receive typed lines
+  after a TUI generation; end such a session with a signal (handled cleanly) or
+  start with the line frontend. The TUI is unaffected — it owns its input loop
+  and stops it on quiesce.
