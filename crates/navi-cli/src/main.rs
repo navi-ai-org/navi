@@ -702,6 +702,11 @@ async fn run_composed(
     compose.install_definitions(&default_manifests())?;
     // Third-party components installed earlier live in the same compose home.
     compose.load_installed()?;
+    // Installed `kind = ui` process components become frontend options
+    // (`navi --ui navi.plugin.tui`, `navi components reload navi.plugin.tui`).
+    for frontend in compose.register_installed_frontends() {
+        tracing::info!(component = %frontend, "process frontend registered");
+    }
 
     // Root component first: frontends bind to the engine's capabilities.
     let engine_outcome = compose.activate("navi.engine")?;

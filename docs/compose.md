@@ -135,6 +135,8 @@ A component whose `execution.entrypoint` is a real binary runs **out of process*
 launch token and a Unix socket, and dispatch flows
 `kernel → host forwarder → child session → plugin`.
 
+### Capability plugins (tools, …)
+
 ```toml
 id = "navi.plugin.roll_dice"
 kind = "tool"
@@ -143,24 +145,43 @@ capabilities = ["navi.plugin.info@1", "navi.tool.roll_dice.definition@1", "navi.
 execution = { kind = "process", entrypoint = "/path/to/plugin", args = ["--matrix-sock", "{sock}", "--id", "{id}"], timeout_ms = 15000 }
 ```
 
-```bash
-navi components install roll-dice.toml       # into {data_dir}/compose/manifests/
-navi --ui navi.ui.tui                        # plugin activated; its tool joins the session
-navi components reload navi.plugin.roll_dice # new generation = a fresh process
+### Frontend plugins (another TUI)
+
+A `kind = ui` component with a real entrypoint is spawned by the **host** (not by
+`matrix-host`, which runs children without a terminal on purpose). The child owns
+the terminal and talks to the host over a control socket:
+
+```toml
+id = "navi.plugin.tui"
+kind = "ui"
+capabilities = ["navi.plugin.tui@1"]
+execution = { kind = "process", entrypoint = "/path/to/navi-plugin-tui", args = ["--control", "{control}", "--session", "{session}"], timeout_ms = 15000 }
 ```
 
-`crates/navi-plugin-demo` is a working example (a dice-rolling tool) written with
-the Matrix component SDK. `crates/navi-plugin-demo/tests/process_tier.rs` proves
-out-of-process execution (a different pid), tool dispatch through the kernel, the
-generation swap and the kill on withdraw.
+* host → plugin: `{"type":"event", …}`, `{"type":"quiesce"}`, `{"type":"shutdown"}`;
+* plugin → host: `{"type":"command","text":…}` (admitted by the kernel), `{"type":"quit"}`.
 
-Rules that keep the two tiers apart:
+The host keeps the exclusive terminal lease as *bookkeeping* (the child performs
+the OS effect), so the successor only starts after the child exits.
+`crates/navi-plugin-tui` is a working example (~300 lines, crossterm only).
+
+```bash
+navi components install plugin-tui.toml
+navi components reload navi.plugin.tui   # the third-party TUI takes over the terminal
+navi components reload navi.ui.tui       # and hands it back
+```
+
+`crates/navi-cli/tests/pty_plugin_tui_swap.rs` proves the round trip in a real
+PTY: built-in TUI → third-party process TUI → built-in TUI (generation 2) → clean
+exit, with both directions recorded in the kernel journal.
+
+### Rules that keep the tiers apart
 
 - a tool plugin declares `navi.tool.<tool>@1` plus `navi.tool.<tool>.definition@1`
   (one definition capability per tool, so several plugins coexist without
   ambiguity); NAVI reads the definition and registers the tool for the session;
 - the `inproc:<id>` sentinel never reaches the process host (the composite hook
-  filters it), so first-party components are never spawned as processes;
+  filters it), and frontends are never spawned by it either — the host runs them;
 - the plugin inherits an empty environment and no terminal: it talks to NAVI only
   through the socket.
 
@@ -175,6 +196,13 @@ seccomp via `matrix-guard`) by declaring the component in `HostPolicy` with a
 
 ## Known limits
 
+- The TUI reads terminal input on a dedicated thread and delivers events over a
+  channel. `crossterm::event::poll` was observed to block indefinitely in a bare
+  PTY (see `crates/navi-tui/examples/poll_probe.rs`), and a frontend that polls
+  the terminal inline can never honour a swap while it waits for a key. The
+  reader thread may stay blocked in `event::read()` after a quiesce and consume
+  one key from a successor; a production line frontend should read the TTY
+  directly.
 - `withdraw` removes the kernel definition (Matrix v0.1 keeps a registered
   definition continuously desired, so "stop and stay stopped" = remove it); the
   installed manifest stays on disk and `activate` restores it.

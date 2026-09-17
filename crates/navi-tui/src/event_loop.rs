@@ -65,15 +65,82 @@ pub trait InputSource {
 }
 
 /// Production input source backed by `crossterm::event`.
-pub struct CrosstermInput;
+///
+/// Events are read on a dedicated thread and delivered over a channel: the
+/// event loop must never depend on the terminal's poll timing, because a
+/// blocking terminal poll would also stall the compose control channel (a
+/// frontend swap could then never be honoured). With this shape the loop wakes
+/// at least every `timeout` and checks control first.
+pub struct CrosstermInput {
+    rx: std::sync::mpsc::Receiver<Event>,
+    pending: Option<Event>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CrosstermInput {
+    /// Starts the reader thread and returns the input source.
+    pub fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_reader = stop.clone();
+        let _ = std::thread::Builder::new()
+            .name("navi-tui-input".to_string())
+            .spawn(move || {
+                while !stop_reader.load(std::sync::atomic::Ordering::SeqCst) {
+                    match event::read() {
+                        Ok(event) => {
+                            if tx.send(event).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+        Self {
+            rx,
+            pending: None,
+            stop,
+        }
+    }
+}
+
+impl Default for CrosstermInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for CrosstermInput {
+    fn drop(&mut self) {
+        // The reader may be blocked in `event::read()`: it exits at the next
+        // event. The flag keeps it from lingering once an event arrives.
+        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 impl InputSource for CrosstermInput {
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        event::poll(timeout)
+        if self.pending.is_some() {
+            return Ok(true);
+        }
+        match self.rx.recv_timeout(timeout) {
+            Ok(event) => {
+                self.pending = Some(event);
+                Ok(true)
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(false),
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Ok(false),
+        }
     }
 
     fn read(&mut self) -> io::Result<Event> {
-        event::read()
+        if let Some(event) = self.pending.take() {
+            return Ok(event);
+        }
+        self.rx.recv().map_err(|_| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "terminal input thread stopped")
+        })
     }
 }
 
@@ -89,7 +156,7 @@ pub fn run(app: TuiApp) -> Result<()> {
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
-    let mut input = CrosstermInput;
+    let mut input = CrosstermInput::new();
     let mut app = app;
     install_exit_signal_forwarder(&app);
     let result = run_loop(&mut terminal, &mut app, &mut input);
@@ -122,10 +189,12 @@ pub fn run_with_host(app: TuiApp, host: crate::host::UiHost) -> Result<crate::ho
     }
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
-    let mut input = CrosstermInput;
+    let mut input = CrosstermInput::new();
     install_exit_signal_forwarder(&app);
     let exit = run_loop_with_control(&mut terminal, &mut app, &mut input, Some(&host.control))?;
+    tracing::info!(?exit, "tui loop returned");
     flush_session_checkpoint(&mut app);
+    tracing::info!("tui checkpoint flushed");
     let cursor_result = terminal.show_cursor();
     let restore_result = match host.lease.as_ref() {
         Some(lease) => lease.release(),
@@ -907,6 +976,7 @@ where
         if let Some(control) = control {
             match control.poll() {
                 Some(crate::host::ControlMsg::Quiesce { .. }) => {
+                    tracing::info!("tui loop: quiesce received");
                     exit = LoopExit::Quiesced;
                     break;
                 }

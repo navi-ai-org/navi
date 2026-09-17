@@ -1,0 +1,28 @@
+# Third-party NAVI frontend (process tier): another TUI, in its own process.
+#
+# Install with:
+#   sed "s|@PLUGIN_BINARY@|$PWD/target/debug/navi-plugin-tui|" \
+#       crates/navi-plugin-tui/manifest.toml > /tmp/plugin-tui.toml
+#   navi components install /tmp/plugin-tui.toml
+#
+# Then swap frontends while a session runs:
+#   navi components reload navi.plugin.tui    # hand the terminal to the plugin
+#   navi components reload navi.ui.tui        # hand it back to the built-in TUI
+#
+# `{control}` is the host's control socket and `{session}` the live session id;
+# both are expanded per activation.
+
+id = "navi.plugin.tui"
+version = "0.1.0"
+description = "Third-party terminal frontend (crossterm, out of process)"
+kind = "ui"
+tier = "local"
+trust = "trusted"
+restart = "on-failure"
+
+capabilities = ["navi.plugin.tui@1"]
+
+execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
+    "--control", "{control}",
+    "--session", "{session}",
+], timeout_ms = 15000 }

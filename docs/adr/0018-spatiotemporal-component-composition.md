@@ -51,6 +51,14 @@ composition authority, with NAVI as its **host**:
   holds a proxy that resolves the slot per call. `navi components reload
   navi.compaction.terse` therefore changes the running session's compaction
   policy.
+- **A frontend can be another process.** A `kind = ui` component with a real
+  entrypoint is spawned by the host with the terminal inherited and a control
+  socket: the child owns raw mode, receives engine events and sends commands back
+  (admitted by the kernel). `navi components reload navi.plugin.tui` hands the
+  terminal to a third-party TUI and `navi components reload navi.ui.tui` hands it
+  back, both proven in a real PTY. The TUI's own input is read on a thread and
+  delivered over a channel, so a blocking terminal poll can never stall the
+  control channel.
 - The terminal is an **exclusive resource** (`TerminalLease`, one owner,
   released on withdraw). A runtime swap quiesces the current generation, releases
   the lease, and activates the successor with fresh bindings.

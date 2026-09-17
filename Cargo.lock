@@ -3015,6 +3015,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "navi-plugin-tui"
+version = "0.8.0"
+dependencies = [
+ "crossterm",
+ "serde_json",
+]
+
+[[package]]
 name = "navi-providers"
 version = "0.8.0"
 dependencies = [

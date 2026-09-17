@@ -24,6 +24,7 @@ pub mod host;
 pub mod manifest;
 pub mod native;
 pub mod parts;
+pub mod process_frontend;
 pub mod slots;
 pub mod tool_proxy;
 pub mod ui;
@@ -41,6 +42,7 @@ pub use ui::{
 };
 pub use tool_proxy::{PluginToolProxy, PluginToolSpec};
 pub use parts::{BrandedPrompt, ComponentValues, TerseCompaction};
+pub use process_frontend::ProcessFrontend;
 pub use slots::{ComposeCompaction, ComposePrompt, Slots};
 
 /// Frontend host vocabulary (re-exported from `navi-tui`).

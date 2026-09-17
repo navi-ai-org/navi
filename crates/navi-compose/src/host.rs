@@ -174,9 +174,22 @@ struct CompositeHook {
 
 impl LifecycleHook for CompositeHook {
     fn on_lifecycle(&self, event: LifecycleEvent) {
+        let inner = self.inner.upgrade();
+        // Frontends are executed by this host (in-process or as a child that
+        // owns the terminal); the process host must never spawn them.
+        let is_frontend = inner
+            .as_ref()
+            .map(|inner| inner.uis.read().contains_key(match &event {
+                LifecycleEvent::Activated { logical, .. }
+                | LifecycleEvent::Withdrawn { logical, .. }
+                | LifecycleEvent::Removed { logical } => logical,
+            }))
+            .unwrap_or(false);
         #[cfg(target_os = "linux")]
         {
-            if let Some(host) = self.host.as_ref() {
+            if let Some(host) = self.host.as_ref()
+                && !is_frontend
+            {
                 let forward = match &event {
                     LifecycleEvent::Activated { entrypoint, .. } => {
                         !entrypoint.starts_with(crate::manifest::INPROC_PREFIX)
@@ -190,7 +203,12 @@ impl LifecycleHook for CompositeHook {
                 }
             }
         }
-        if let Some(inner) = self.inner.upgrade() {
+        if let Some(inner) = inner {
+            tracing::info!(
+                event = ?std::mem::discriminant(&event),
+                is_frontend,
+                "lifecycle event queued"
+            );
             inner.lifecycle.lock().push(event);
         }
     }
@@ -813,6 +831,9 @@ impl Compose {
             let mut queue = self.inner.lifecycle.lock();
             std::mem::take(&mut *queue)
         };
+        if !events.is_empty() {
+            tracing::info!(count = events.len(), "reconciling lifecycle events");
+        }
         let mut notes = Vec::new();
         for event in events {
             match event {
@@ -826,12 +847,19 @@ impl Compose {
                     notes.push(format!(
                         "activated {logical} (instance={instance} generation={generation})"
                     ));
-                    if entrypoint.starts_with(INPROC_PREFIX) {
+                    // A frontend is started by *this* host — in-process ones and
+                    // process-tier ones (which own the terminal themselves).
+                    // Everything else with a real entrypoint is a capability
+                    // component the process host spawns.
+                    let is_frontend = self.inner.uis.read().contains_key(&logical);
+                    if is_frontend || entrypoint.starts_with(INPROC_PREFIX) {
                         self.install_component_values(&logical, generation);
+                    }
+                    if is_frontend {
                         if let Err(err) = self.start_frontend(&logical, instance, generation) {
                             notes.push(format!("frontend start failed for {logical}: {err}"));
                         }
-                    } else {
+                    } else if !entrypoint.starts_with(INPROC_PREFIX) {
                         notes.push(format!(
                             "process component {logical} activated; the process host spawns it"
                         ));
@@ -861,6 +889,12 @@ impl Compose {
 
     fn start_frontend(&self, logical: &str, instance: u64, generation: u64) -> Result<()> {
         let frontend = self.inner.uis.read().get(logical).cloned();
+        tracing::info!(
+            component = %logical,
+            generation,
+            registered = frontend.is_some(),
+            "frontend activation requested"
+        );
         let Some(frontend) = frontend else {
             return Ok(()); // not a frontend (engine, tool pack, …)
         };
@@ -891,7 +925,9 @@ impl Compose {
         };
 
         let lease = if frontend.requires_tty() {
-            let acquired = if self.inner.terminal_effects {
+            // A process-tier frontend performs the terminal OS effect itself;
+            // the host keeps the exclusive-ownership bookkeeping only.
+            let acquired = if self.inner.terminal_effects && !frontend.child_owns_terminal() {
                 TerminalLease::acquire(format!("{logical}#{generation}"))
             } else {
                 TerminalLease::acquire_detached(format!("{logical}#{generation}"))
@@ -951,6 +987,7 @@ impl Compose {
         let runtime = self.inner.runtime.clone();
         let frontend_thread = frontend.clone();
         let exit_writer = exit_slot.clone();
+        let logical_owned = logical.to_string();
         let thread_name = format!("navi-ui-{logical}");
         let join = std::thread::Builder::new()
             .name(thread_name)
@@ -958,7 +995,15 @@ impl Compose {
                 // Keep the CLI's tokio runtime available to the frontend: the
                 // TUI spawns async work with `Handle::try_current()`.
                 let _guard = runtime.as_ref().map(|handle| handle.enter());
-                let exit = frontend_thread.run(host);
+                // A panicking frontend must still report an exit: otherwise the
+                // supervisor would wait for a quiesce that can never come.
+                let exit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    frontend_thread.run(host)
+                }))
+                .unwrap_or_else(|_| {
+                    tracing::error!(component = %logical_owned, "frontend panicked");
+                    UiExit::Error
+                });
                 *exit_writer.lock() = Some(exit);
             })
             .map_err(|err| anyhow!("failed to spawn frontend thread: {err}"))?;
@@ -997,6 +1042,12 @@ impl Compose {
             std::thread::sleep(Duration::from_millis(10));
         }
         let exit = *running.exit.lock();
+        tracing::info!(
+            component = logical,
+            generation = running.generation,
+            exit = ?exit,
+            "frontend quiesce settled"
+        );
         if exit.is_some()
             && let Some(join) = running.join.take()
         {
@@ -1289,6 +1340,35 @@ impl Compose {
     /// Component id of the currently running frontend, if exactly one.
     pub fn running_frontend(&self) -> Option<String> {
         self.inner.running.lock().keys().next().cloned()
+    }
+
+    /// Registers process-tier frontends for installed `kind = ui` components.
+    ///
+    /// A frontend component whose `execution.entrypoint` is a real binary runs
+    /// as a child that owns the terminal (`ProcessFrontend`). Call this after
+    /// loading installed manifests and before activating the frontend.
+    pub fn register_installed_frontends(&self) -> Vec<String> {
+        let mut registered = Vec::new();
+        for manifest in self.manifests() {
+            if manifest.kind != ComponentKind::Ui || manifest.execution.is_inproc() {
+                continue;
+            }
+            let Some(entrypoint) = manifest.execution.entrypoint() else {
+                continue;
+            };
+            let args = match &manifest.execution {
+                crate::manifest::Execution::Detailed { args, .. } => args.clone(),
+                crate::manifest::Execution::Kind(_) => Vec::new(),
+            };
+            self.register_ui(Arc::new(crate::process_frontend::ProcessFrontend::new(
+                manifest.id.clone(),
+                entrypoint,
+                args,
+                self.inner.home.join("ui"),
+            )));
+            registered.push(manifest.id);
+        }
+        registered
     }
 
     /// The process host, when attached (Linux + `process_components`).

@@ -27,6 +27,15 @@ pub trait UiFrontend: Send + Sync {
         true
     }
 
+    /// Whether the frontend's own process performs the terminal OS effect.
+    ///
+    /// In-process frontends enter raw mode through the lease; a process-tier
+    /// frontend (`ProcessFrontend`) owns the terminal itself, so the host only
+    /// keeps the exclusive-ownership bookkeeping.
+    fn child_owns_terminal(&self) -> bool {
+        false
+    }
+
     /// Runs until the user quits, the supervisor quiesces the generation, or an
     /// error stops it. Blocking: the supervisor runs it on a dedicated thread.
     fn run(&self, host: UiHost) -> UiExit;
