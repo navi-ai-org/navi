@@ -4,6 +4,7 @@ use navi_core::{ApiMeta, ModelRequest, ModelStreamEvent, ProviderId, RateLimits}
 use reqwest::header::USER_AGENT;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ─── Provider base URLs ───────────────────────────────────────────────────────
 
@@ -393,6 +394,112 @@ impl ProviderBehavior for GitHubCopilotBehavior {
 
 // ─── Opencode ─────────────────────────────────────────────────────────────────
 
+/// OpenCode Zen's limiter routes unidentified clients into a strict per-IP
+/// free bucket (`FreeUsageLimitError`) even when the request carries a valid
+/// API key. Sending the same client fingerprint as the official OpenCode
+/// CLI/desktop (`User-Agent: opencode` plus `x-opencode-*` correlation
+/// headers) attributes traffic to the account instead.
+const OPENCODE_USER_AGENT: &str = "opencode";
+const OPENCODE_CLIENT_HEADER: HeaderName = HeaderName::from_static("x-opencode-client");
+const OPENCODE_CLIENT_VALUE: HeaderValue = HeaderValue::from_static("tui");
+const OPENCODE_PROJECT_HEADER: HeaderName = HeaderName::from_static("x-opencode-project");
+const OPENCODE_PROJECT_VALUE: HeaderValue = HeaderValue::from_static("navi");
+const OPENCODE_SESSION_HEADER: HeaderName = HeaderName::from_static("x-opencode-session");
+const OPENCODE_REQUEST_HEADER: HeaderName = HeaderName::from_static("x-opencode-request");
+
+/// Opaque per-request id for `x-opencode-request` correlation headers.
+fn opencode_new_request_id() -> String {
+    static NEXT_OPENCODE_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let sequence = NEXT_OPENCODE_REQUEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let digest = Sha256::digest(format!("navi-zen:{nanos}:{sequence}").as_bytes());
+    let mut hex = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        hex.push(b"0123456789abcdef"[(byte >> 4) as usize] as char);
+        hex.push(b"0123456789abcdef"[(byte & 0x0f) as usize] as char);
+    }
+    format!("req-{hex}")
+}
+
+/// Static client fingerprint sent on every opencode-family request.
+///
+/// Session/request ids default to a fresh per-call id so auxiliary calls that
+/// skip [`ProviderBehavior::apply_request_headers`] still carry the full
+/// fingerprint the Zen limiter expects.
+fn insert_opencode_identity_headers(headers: &mut HeaderMap) -> Result<(), ProviderError> {
+    insert_header(
+        headers,
+        USER_AGENT.as_str(),
+        OPENCODE_USER_AGENT,
+        "User-Agent",
+    )?;
+    headers.insert(OPENCODE_CLIENT_HEADER, OPENCODE_CLIENT_VALUE);
+    headers.insert(OPENCODE_PROJECT_HEADER, OPENCODE_PROJECT_VALUE);
+    let request_id = opencode_new_request_id();
+    insert_header(
+        headers,
+        OPENCODE_SESSION_HEADER.as_str(),
+        &request_id,
+        "x-opencode-session",
+    )?;
+    insert_header(
+        headers,
+        OPENCODE_REQUEST_HEADER.as_str(),
+        &request_id,
+        "x-opencode-request",
+    )?;
+    Ok(())
+}
+
+/// Correlate an agent turn: stable session id when available, unique id per request.
+fn apply_opencode_session_headers(
+    headers: &mut HeaderMap,
+    request: &ModelRequest,
+) -> Result<(), ProviderError> {
+    let request_id = opencode_new_request_id();
+    let session = request
+        .session_id
+        .as_deref()
+        .map(|raw| opencode_header_value(raw, &request_id))
+        .unwrap_or_else(|| request_id.clone());
+    insert_header(
+        headers,
+        OPENCODE_SESSION_HEADER.as_str(),
+        &session,
+        "x-opencode-session",
+    )?;
+    insert_header(
+        headers,
+        OPENCODE_REQUEST_HEADER.as_str(),
+        &request_id,
+        "x-opencode-request",
+    )?;
+    Ok(())
+}
+
+/// Best-effort sanitization for correlation header values.
+///
+/// These headers must never break a request, so keep only visible ASCII
+/// (the `http` crate would otherwise pass obs-text bytes through), cap the
+/// length, and fall back to the generated request id when nothing survives.
+fn opencode_header_value(raw: &str, fallback: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .filter(|c| ('\u{21}'..='\u{7e}').contains(c))
+        .take(128)
+        .collect();
+    if sanitized.is_empty() {
+        fallback.to_string()
+    } else {
+        sanitized
+    }
+}
+
 pub(crate) struct OpencodeBehavior;
 
 impl ProviderBehavior for OpencodeBehavior {
@@ -419,7 +526,17 @@ impl ProviderBehavior for OpencodeBehavior {
             endpoint,
             Endpoint::ChatCompletions | Endpoint::AnthropicMessages
         );
-        standard_bearer_headers(api_key, content_type)
+        let mut headers = standard_bearer_headers(api_key, content_type)?;
+        insert_opencode_identity_headers(&mut headers)?;
+        Ok(headers)
+    }
+
+    fn apply_request_headers(
+        &self,
+        headers: &mut HeaderMap,
+        request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        apply_opencode_session_headers(headers, request)
     }
 
     fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
@@ -448,7 +565,17 @@ impl ProviderBehavior for OpencodeZenBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        standard_bearer_headers(api_key, true)
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        insert_opencode_identity_headers(&mut headers)?;
+        Ok(headers)
+    }
+
+    fn apply_request_headers(
+        &self,
+        headers: &mut HeaderMap,
+        request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        apply_opencode_session_headers(headers, request)
     }
 
     fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
@@ -477,7 +604,17 @@ impl ProviderBehavior for OpencodeGoBehavior {
         api_key: &str,
         _endpoint: Endpoint,
     ) -> Result<HeaderMap, ProviderError> {
-        standard_bearer_headers(api_key, true)
+        let mut headers = standard_bearer_headers(api_key, true)?;
+        insert_opencode_identity_headers(&mut headers)?;
+        Ok(headers)
+    }
+
+    fn apply_request_headers(
+        &self,
+        headers: &mut HeaderMap,
+        request: &ModelRequest,
+    ) -> Result<(), ProviderError> {
+        apply_opencode_session_headers(headers, request)
     }
 
     fn supports_parallel_tool_calls(&self, endpoint: Endpoint) -> bool {
@@ -1224,17 +1361,38 @@ mod tests {
             (
                 ProviderId::OPENCODE,
                 Some(OPENCODE_ZEN_BASE_URL),
-                vec!["authorization"],
+                vec![
+                    "authorization",
+                    "user-agent",
+                    "x-opencode-client",
+                    "x-opencode-project",
+                    "x-opencode-session",
+                    "x-opencode-request",
+                ],
             ),
             (
                 ProviderId::OPENCODE_ZEN,
                 Some(OPENCODE_ZEN_BASE_URL),
-                vec!["authorization"],
+                vec![
+                    "authorization",
+                    "user-agent",
+                    "x-opencode-client",
+                    "x-opencode-project",
+                    "x-opencode-session",
+                    "x-opencode-request",
+                ],
             ),
             (
                 ProviderId::OPENCODE_GO,
                 Some(OPENCODE_GO_BASE_URL),
-                vec!["authorization"],
+                vec![
+                    "authorization",
+                    "user-agent",
+                    "x-opencode-client",
+                    "x-opencode-project",
+                    "x-opencode-session",
+                    "x-opencode-request",
+                ],
             ),
             (
                 ProviderId::COMMANDCODE,
@@ -1307,6 +1465,186 @@ mod tests {
             behavior.stream_route("opencode/other", OpenAiApiKind::ChatCompletions),
             StreamRoute::ChatCompletions
         ));
+    }
+
+    fn opencode_test_request(session_id: Option<&str>) -> navi_core::ModelRequest {
+        navi_core::ModelRequest {
+            model: "mimo-v2.5-free".to_string(),
+            instructions: None,
+            messages: Vec::new(),
+            thinking: navi_core::ThinkingConfig::Off,
+            tools: Vec::new(),
+            session_id: session_id.map(String::from),
+        }
+    }
+
+    fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+        headers.get(name).and_then(|value| value.to_str().ok())
+    }
+
+    #[test]
+    fn opencode_family_sends_client_fingerprint_headers() {
+        for id in [
+            ProviderId::OPENCODE,
+            ProviderId::OPENCODE_ZEN,
+            ProviderId::OPENCODE_GO,
+        ] {
+            let behavior = behavior_for_provider(&ProviderId::from_config_id(id));
+            for endpoint in [
+                Endpoint::ChatCompletions,
+                Endpoint::Responses,
+                Endpoint::AnthropicMessages,
+                Endpoint::Models,
+            ] {
+                let headers = behavior.build_headers("k", endpoint).unwrap();
+                assert_eq!(
+                    header_str(&headers, "user-agent"),
+                    Some("opencode"),
+                    "{id} {endpoint:?} user-agent"
+                );
+                assert_eq!(
+                    header_str(&headers, "x-opencode-client"),
+                    Some("tui"),
+                    "{id} {endpoint:?} client"
+                );
+                assert_eq!(
+                    header_str(&headers, "x-opencode-project"),
+                    Some("navi"),
+                    "{id} {endpoint:?} project"
+                );
+                let session = header_str(&headers, "x-opencode-session");
+                let request = header_str(&headers, "x-opencode-request");
+                assert!(
+                    session.is_some_and(|s| s.starts_with("req-") && s.len() > 8),
+                    "{id} {endpoint:?} session fallback missing: {session:?}"
+                );
+                assert!(
+                    request.is_some_and(|s| s.starts_with("req-") && s.len() > 8),
+                    "{id} {endpoint:?} request id missing: {request:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn opencode_apply_request_headers_prefers_session_id_and_rotates_request_id() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENCODE));
+        let request = opencode_test_request(Some("sess-abc-123"));
+
+        let mut first = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        behavior
+            .apply_request_headers(&mut first, &request)
+            .unwrap();
+        assert_eq!(
+            header_str(&first, "x-opencode-session"),
+            Some("sess-abc-123")
+        );
+        let first_req = header_str(&first, "x-opencode-request")
+            .unwrap()
+            .to_string();
+
+        let mut second = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        behavior
+            .apply_request_headers(&mut second, &request)
+            .unwrap();
+        assert_eq!(
+            header_str(&second, "x-opencode-session"),
+            Some("sess-abc-123")
+        );
+        let second_req = header_str(&second, "x-opencode-request")
+            .unwrap()
+            .to_string();
+
+        assert_ne!(first_req, second_req, "request id must rotate per call");
+    }
+
+    #[test]
+    fn opencode_empty_or_missing_session_falls_back_to_generated_ids() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENCODE_ZEN));
+
+        for session_id in [None, Some("")] {
+            let request = opencode_test_request(session_id);
+            let mut headers = behavior
+                .build_headers("k", Endpoint::ChatCompletions)
+                .unwrap();
+            behavior
+                .apply_request_headers(&mut headers, &request)
+                .unwrap();
+            let session = header_str(&headers, "x-opencode-session").unwrap();
+            assert!(
+                session.starts_with("req-"),
+                "fallback session expected, got {session:?}"
+            );
+            assert_eq!(
+                session,
+                header_str(&headers, "x-opencode-request").unwrap(),
+                "fallback session should match the generated request id"
+            );
+        }
+    }
+
+    #[test]
+    fn opencode_session_value_is_sanitized_never_breaks_request() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENCODE_ZEN));
+
+        // Emoji and control chars are stripped, visible ASCII survives.
+        let request = opencode_test_request(Some("sess-\u{1F600}-bad\u{7}id"));
+        let mut headers = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .unwrap();
+        assert_eq!(
+            header_str(&headers, "x-opencode-session"),
+            Some("sess--badid")
+        );
+
+        // A value with no visible ASCII falls back to the generated id.
+        let request = opencode_test_request(Some("\u{1F600}\u{7}"));
+        let mut headers = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .unwrap();
+        assert!(
+            header_str(&headers, "x-opencode-session").is_some_and(|s| s.starts_with("req-")),
+            "fully invalid session should fall back to generated id"
+        );
+
+        // Overly long values are capped.
+        let long = "x".repeat(500);
+        let request = opencode_test_request(Some(&long));
+        let mut headers = behavior
+            .build_headers("k", Endpoint::ChatCompletions)
+            .unwrap();
+        behavior
+            .apply_request_headers(&mut headers, &request)
+            .unwrap();
+        assert_eq!(
+            header_str(&headers, "x-opencode-session").unwrap().len(),
+            128
+        );
+    }
+
+    #[test]
+    fn opencode_request_ids_are_unique_across_builds() {
+        let behavior = behavior_for_provider(&ProviderId::from_config_id(ProviderId::OPENCODE_GO));
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..64 {
+            let headers = behavior
+                .build_headers("k", Endpoint::ChatCompletions)
+                .unwrap();
+            let request = header_str(&headers, "x-opencode-request")
+                .unwrap()
+                .to_string();
+            assert!(seen.insert(request), "request ids must not repeat");
+        }
     }
 
     #[test]

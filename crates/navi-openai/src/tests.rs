@@ -1507,7 +1507,7 @@ async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
 
 #[tokio::test]
 async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
-    use wiremock::matchers::{header, method, path};
+    use wiremock::matchers::{header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let mock_server = MockServer::start().await;
@@ -1515,6 +1515,13 @@ async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
     Mock::given(method("POST"))
         .and(path("/chat/completions"))
         .and(header("Authorization", "Bearer zen_test_key"))
+        // Zen's limiter classifies clients by this fingerprint; without it
+        // requests fall into the strict per-IP free bucket (FreeUsageLimitError).
+        .and(header("User-Agent", "opencode"))
+        .and(header("x-opencode-client", "tui"))
+        .and(header("x-opencode-project", "navi"))
+        .and(header_exists("x-opencode-session"))
+        .and(header_exists("x-opencode-request"))
         .respond_with(
             ResponseTemplate::new(200)
                 .set_body_string(
@@ -1545,6 +1552,55 @@ async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
         thinking: navi_core::ThinkingConfig::Off,
         tools: vec![],
         session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn test_opencode_zen_chat_request_correlates_session_header() {
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(header("Authorization", "Bearer zen_test_key"))
+        .and(header("x-opencode-session", "sess-e2e-42"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "opencode-zen".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::new("zen_test_key".to_string())
+        .with_base_url(mock_server.uri())
+        .with_api_kind(OpenAiApiKind::ChatCompletions)
+        .with_provider_id("opencode-zen".to_string())
+        .with_config(config);
+
+    let request = navi_core::ModelRequest {
+        model: "mimo-v2.5-free".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("Hi".to_string())],
+        thinking: navi_core::ThinkingConfig::Off,
+        tools: vec![],
+        session_id: Some("sess-e2e-42".to_string()),
     };
 
     let mut stream = provider.stream(request);
