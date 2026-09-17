@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.1...v0.7.2
+
+### Changed
+
+- Workspace crate versions bumped from 0.7.1 to 0.7.2.
+- Embedded registry snapshot bumped to navi-registry `0ece2a3`: OpenCode
+  Zen/Go catalogs refreshed from the live APIs (new models, current prices)
+  and the daily probe now covers the OpenCode endpoints; the free-model
+  allowlist gained `muse-spark-1.3-contributor(-free)` and
+  `ling-3.0-flash-fin-free`.
+
+### Fixed
+
+- **TUI blinking while the pointer moves** — the draw gate treated the idle
+  animation as "draw on every iteration", so with free-motion mouse reporting
+  (`?1003`, enabled for drag-select) every motion event forced a full redraw.
+  Animation redraws are now paced (≈30fps active, ≈10fps idle) while input
+  and state changes still paint immediately; a pty measurement drops the same
+  motion sweep from 148 to 19 synchronized redraws.
+- **Stale TUI snapshot goldens** — the committed welcome/stream snapshots
+  still described the pre-kaomoji layout, failing 14 screenshot tests on any
+  machine that reached them; regenerated and verified byte-identical to the
+  intended baselines.
+
 ## [0.7.1] - 2026-09-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.0...v0.7.1
