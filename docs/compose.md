@@ -98,6 +98,36 @@ and the journal to `{data_dir}/compose/journal.jsonl`.
 | TUI honours quiesce | `crates/navi-tui/tests/compose_control.rs` |
 | out-of-process plugin | `crates/navi-plugin-demo/tests/process_tier.rs` |
 
+## Engine parts as components (typed slots)
+
+Some parts of NAVI are not JSON capabilities but Rust trait objects the engine
+calls directly. Those go through a **typed slot** keyed by the capability:
+
+* activating a provider installs its value for that generation;
+* withdrawing it pops the slot back to the previous provider;
+* the engine holds a *proxy* (`ComposeCompaction`, `ComposePrompt`) that reads
+the slot on every call — so a swap changes behavior on the next use, with no
+restart and no rebuild.
+
+| Capability | Component | Effect when active |
+|---|---|---|
+| `navi.compaction@1` | `navi.compaction.default` | NAVI's standard micro-compaction (read-only tool results) |
+| `navi.compaction@1` | `navi.compaction.terse` | clears **every** old tool result |
+| `navi.prompt@1` | `navi.prompt.branded` | stamps a marker into the base instructions |
+
+```bash
+navi components reload navi.compaction.terse   # engine compaction changes mid-session
+navi components reload navi.prompt.branded     # next turn uses the other prompt builder
+```
+
+The kernel still decides *who* is active (generations, admission, withdraw
+cascade); the host owns the typed handle. `navi components status` shows both
+providers with their generations, and the log records every slot install:
+
+```
+installing component into the compaction slot component="navi.compaction.terse" generation=1 role="navi.compaction@1"
+```
+
 ## Process tier: third-party components
 
 A component whose `execution.entrypoint` is a real binary runs **out of process**

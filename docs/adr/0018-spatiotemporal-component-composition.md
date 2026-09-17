@@ -44,6 +44,13 @@ composition authority, with NAVI as its **host**:
   plugin's tool joins the session's tool set (`PluginToolProxy`); `navi components
   reload` swaps it by generation, and `navi components install <manifest>` is the
   install path.
+- **Engine parts are components too.** Parts the engine calls as Rust trait
+  objects (the compaction strategy, the system-prompt builder) live in a typed
+  *slot* keyed by capability: activating a provider installs its value for that
+  generation, withdrawing it falls back to the previous provider, and the engine
+  holds a proxy that resolves the slot per call. `navi components reload
+  navi.compaction.terse` therefore changes the running session's compaction
+  policy.
 - The terminal is an **exclusive resource** (`TerminalLease`, one owner,
   released on withdraw). A runtime swap quiesces the current generation, releases
   the lease, and activates the successor with fresh bindings.

@@ -30,6 +30,8 @@ use serde_json::{Value, json};
 
 use crate::manifest::{ComponentKind, ComponentManifest, INPROC_PREFIX};
 use crate::native::{Handler, HandlerResult, HandlerTable, Invocation, NativeForwarder};
+use crate::parts::ComponentValues;
+use crate::slots::Slots;
 use crate::tool_proxy::PluginToolSpec;
 use crate::ui::{PlainFrontend, TuiFrontend, UiFrontend};
 
@@ -140,6 +142,10 @@ struct ComposeInner {
     last_status_fingerprint: Mutex<String>,
     terminal_effects: bool,
     process_host: RwLock<Option<Arc<ProcessHost>>>,
+    /// Typed values installed by activating components (compaction, prompt, …).
+    slots: Slots,
+    /// Values each component contributes when it activates.
+    component_values: RwLock<HashMap<String, ComponentValues>>,
 }
 
 /// The compose supervisor handle. Cheap to clone (wraps an `Arc`).
@@ -278,14 +284,14 @@ impl Handler for EngineInfoHandler {
     }
 }
 
-/// Handler for the swappable compaction component: reports its generation so a
-/// swap is observable without a full engine turn.
+/// Handler for the swappable compaction component: reports the *providing*
+/// component and its generation, so a swap is observable without a full turn.
 struct CompactionHandler;
 
 impl Handler for CompactionHandler {
     fn invoke(&self, invocation: &Invocation, _input: &Value) -> HandlerResult {
         Ok(json!({
-            "strategy": "default",
+            "strategy": invocation.component,
             "generation": invocation.generation,
             "instance": invocation.instance,
         }))
@@ -357,6 +363,8 @@ impl Compose {
             last_status_fingerprint: Mutex::new(String::new()),
             terminal_effects: options.terminal_effects,
             process_host: RwLock::new(None),
+            slots: Slots::new(),
+            component_values: RwLock::new(HashMap::new()),
         });
 
         kernel.set_forwarder(Arc::new(NativeForwarder::new(inner.handlers.clone())));
@@ -392,7 +400,97 @@ impl Compose {
 
         let compose = Self { inner };
         compose.register_builtin_frontends();
+        compose.register_builtin_values();
         Ok(compose)
+    }
+
+    /// Registers the typed values the built-in components provide.
+    ///
+    /// A component that contributes a Rust-side part (the compaction strategy,
+    /// the prompt builder) installs it into the matching slot when it activates;
+    /// the engine holds a proxy that resolves the slot per call.
+    fn register_builtin_values(&self) {
+        use std::sync::Arc;
+        self.register_component_values(
+            "navi.compaction.default",
+            ComponentValues {
+                compaction: Some(Arc::new(navi_core::DefaultCompactionStrategy)),
+                ..Default::default()
+            },
+        );
+        self.register_component_values(
+            "navi.compaction.terse",
+            ComponentValues {
+                compaction: Some(Arc::new(crate::parts::TerseCompaction)),
+                ..Default::default()
+            },
+        );
+        self.register_component_values(
+            "navi.prompt.branded",
+            ComponentValues {
+                prompt: Some(Arc::new(crate::parts::BrandedPrompt::new(
+                    Arc::new(navi_core::DefaultPromptBuilder),
+                    "[prompt component: navi.prompt.branded]",
+                ))),
+                ..Default::default()
+            },
+        );
+    }
+
+    /// Registers the typed values a component installs on activation.
+    pub fn register_component_values(&self, component: &str, values: ComponentValues) {
+        self.inner
+            .component_values
+            .write()
+            .insert(component.to_string(), values);
+    }
+
+    /// The typed slots the engine proxies read from.
+    pub fn slots(&self) -> Slots {
+        self.inner.slots.clone()
+    }
+
+    fn install_component_values(&self, component: &str, generation: u64) {
+        let values = self.inner.component_values.read().get(component).cloned();
+        let Some(values) = values else { return };
+        if values.is_empty() {
+            return;
+        }
+        if let Some(compaction) = values.compaction {
+            tracing::info!(
+                component,
+                generation,
+                role = self.inner.slots.compaction.role(),
+                "installing component into the compaction slot"
+            );
+            self.inner.slots.compaction.install(component, generation, compaction);
+        }
+        if let Some(prompt) = values.prompt {
+            tracing::info!(
+                component,
+                generation,
+                role = self.inner.slots.prompt.role(),
+                "installing component into the prompt slot"
+            );
+            self.inner.slots.prompt.install(component, generation, prompt);
+        }
+    }
+
+    fn clear_component_values(&self, component: &str, generation: u64) {
+        if self.inner.slots.compaction.clear_if_owner(component, generation) {
+            tracing::info!(
+                component,
+                generation,
+                "compaction slot fell back to the previous provider"
+            );
+        }
+        if self.inner.slots.prompt.clear_if_owner(component, generation) {
+            tracing::info!(
+                component,
+                generation,
+                "prompt slot fell back to the previous provider"
+            );
+        }
     }
 
     fn register_builtin_frontends(&self) {
@@ -729,6 +827,7 @@ impl Compose {
                         "activated {logical} (instance={instance} generation={generation})"
                     ));
                     if entrypoint.starts_with(INPROC_PREFIX) {
+                        self.install_component_values(&logical, generation);
                         if let Err(err) = self.start_frontend(&logical, instance, generation) {
                             notes.push(format!("frontend start failed for {logical}: {err}"));
                         }
@@ -746,6 +845,7 @@ impl Compose {
                     notes.push(format!(
                         "withdrawn {logical} (instance={instance} generation={generation})"
                     ));
+                    self.clear_component_values(&logical, generation);
                     if let Some(exit) = self.stop_frontend(&logical) {
                         notes.push(format!("frontend {logical} stopped ({exit:?})"));
                     }

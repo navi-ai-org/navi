@@ -253,7 +253,56 @@ pub fn default_manifests() -> Vec<ComponentManifest> {
             engine_requires,
         ),
         compaction,
+        terse_compaction(),
+        branded_prompt(),
     ]
+}
+
+/// A second provider of `navi.compaction@1`: activating it swaps the engine's
+/// compaction strategy at runtime (most recently activated provider wins).
+pub fn terse_compaction() -> ComponentManifest {
+    let mut manifest = ComponentManifest {
+        id: "navi.compaction.terse".to_string(),
+        version: "0.1.0".to_string(),
+        description: "Aggressive compaction: clears every old tool result".to_string(),
+        capabilities: vec!["navi.compaction@1".to_string()],
+        requires: Vec::new(),
+        subscriptions: Vec::new(),
+        execution: Execution::inproc("navi.compaction.terse"),
+        tier: "core".into(),
+        trust: "trusted".into(),
+        restart: "on-failure".into(),
+        calls: Default::default(),
+        kind: ComponentKind::Compaction,
+    };
+    manifest.calls.insert(
+        "navi.compaction@1".to_string(),
+        crate::manifest::CallPolicySpec {
+            on_withdraw: Some("drain".to_string()),
+            drain_ms: Some(250),
+        },
+    );
+    manifest
+}
+
+/// A provider of `navi.prompt@1` that stamps a marker into the base
+/// instructions, so a prompt swap is observable.
+pub fn branded_prompt() -> ComponentManifest {
+    ComponentManifest {
+        id: "navi.prompt.branded".to_string(),
+        version: "0.1.0".to_string(),
+        description: "System-prompt builder that stamps a marker into the base instructions"
+            .to_string(),
+        capabilities: vec!["navi.prompt@1".to_string()],
+        requires: Vec::new(),
+        subscriptions: Vec::new(),
+        execution: Execution::inproc("navi.prompt.branded"),
+        tier: "core".into(),
+        trust: "trusted".into(),
+        restart: "on-failure".into(),
+        calls: Default::default(),
+        kind: ComponentKind::Prompt,
+    }
 }
 
 /// Command capability for a frontend component id.

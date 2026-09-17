@@ -707,6 +707,16 @@ async fn run_composed(
     let engine_outcome = compose.activate("navi.engine")?;
     tracing::info!(state = %engine_outcome.state, "engine component active");
 
+    // The engine's compaction strategy is a component: activate the default
+    // provider now, and the slot lets `navi components reload
+    // navi.compaction.terse` swap it while the session runs.
+    let compaction_outcome = compose.activate("navi.compaction.default")?;
+    tracing::info!(
+        state = %compaction_outcome.state,
+        generation = ?compaction_outcome.generation,
+        "compaction component active"
+    );
+
     // Third-party tool plugins run out of process; their tools become part of
     // this session's tool set (the invocation is admitted by the kernel and
     // delivered to the plugin process).
@@ -727,7 +737,22 @@ async fn run_composed(
             spec.clone(),
         )));
     }
-    let engine = builder.build()?;
+    // Engine parts resolved through the composition: the proxies read the typed
+    // slots on every call, so a component swap changes behavior immediately.
+    let slots = compose.slots();
+    let compaction: Arc<dyn navi_core::CompactionStrategy> = Arc::new(
+        navi_compose::ComposeCompaction::new(
+            slots.clone(),
+            Arc::new(navi_core::DefaultCompactionStrategy),
+        ),
+    );
+    let prompt: Arc<dyn navi_core::PromptBuilder> = Arc::new(navi_compose::ComposePrompt::new(
+        slots,
+        Arc::new(navi_sdk::ProfilePromptBuilder::new(
+            navi_sdk::NaviPromptProfile::default(),
+        )),
+    ));
+    let engine = builder.compaction(compaction).prompt(prompt).build()?;
     let driver: Arc<dyn EngineDriver> = Arc::new(engine);
     compose.set_engine(driver);
 

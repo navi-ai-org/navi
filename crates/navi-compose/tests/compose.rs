@@ -387,7 +387,7 @@ fn default_manifests_install_without_activating() {
     assert_eq!(compaction.state, "Active");
     let (value, ok) = compose.kernel().invoke("navi.compaction@1", &json!({}));
     assert!(ok, "compaction handler reachable: {value}");
-    assert_eq!(value["strategy"], "default");
+    assert_eq!(value["strategy"], "navi.compaction.default");
 
     // A non-UI component swap is observable through its generation.
     let first = compaction.generation.expect("generation");
@@ -578,6 +578,126 @@ fn a_frontend_that_quits_on_its_own_is_reaped() {
     assert_eq!(reaped, vec!["navi.ui.test".to_string()]);
     assert!(!compose.has_running_frontend());
     assert!(compose.reap_exited_frontends().is_empty(), "reaping is idempotent");
+}
+
+#[test]
+fn compaction_strategy_swaps_at_runtime_through_the_slots() {
+    use navi_compose::ComposeCompaction;
+    use navi_core::{CompactionStrategy, DefaultCompactionStrategy, ModelMessage, ModelRole};
+
+    fn now_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+    fn old_tool_result(tool: &str) -> ModelMessage {
+        ModelMessage {
+            role: ModelRole::Tool,
+            content: "file contents".to_string(),
+            content_parts: Vec::new(),
+            tool_call_id: Some(format!("call-{tool}")),
+            tool_name: Some(tool.to_string()),
+            tool_calls: Vec::new(),
+            created_at: Some(now_millis().saturating_sub(3_600_000)),
+            thinking_content: None,
+        }
+    }
+    fn old_assistant() -> ModelMessage {
+        ModelMessage {
+            role: ModelRole::Assistant,
+            content: "done".to_string(),
+            content_parts: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_calls: Vec::new(),
+            created_at: Some(now_millis().saturating_sub(3_600_000)),
+            thinking_content: None,
+        }
+    }
+    fn messages() -> Vec<ModelMessage> {
+        vec![
+            old_tool_result("read_file"),
+            old_tool_result("edit"),
+            old_assistant(),
+        ]
+    }
+
+    let (compose, _dir) = compose_with_frontends(Vec::new());
+    compose
+        .install_definitions(&default_manifests())
+        .expect("install");
+    let proxy = ComposeCompaction::new(
+        compose.slots(),
+        std::sync::Arc::new(DefaultCompactionStrategy),
+    );
+
+    // No provider active yet: the proxy falls back to the built-in default.
+    assert_eq!(proxy.micro_compact(&mut messages(), 60), 1);
+
+    compose
+        .activate("navi.compaction.default")
+        .expect("activate default");
+    assert_eq!(
+        compose.slots().compaction.current().map(|(c, _, _)| c),
+        Some("navi.compaction.default".to_string())
+    );
+    assert_eq!(proxy.micro_compact(&mut messages(), 60), 1);
+
+    // Activating another provider of the same capability swaps the engine's
+    // strategy at runtime: no restart, no rebuild.
+    compose
+        .activate("navi.compaction.terse")
+        .expect("activate terse");
+    assert_eq!(
+        compose.slots().compaction.current().map(|(c, _, _)| c),
+        Some("navi.compaction.terse".to_string())
+    );
+    assert_eq!(
+        proxy.micro_compact(&mut messages(), 60),
+        2,
+        "the engine now uses the terse strategy"
+    );
+
+    // Reloading bumps the generation and keeps the provider active.
+    let outcome = compose.reload("navi.compaction.terse").expect("reload");
+    assert_eq!(outcome.generation, Some(2));
+    assert_eq!(
+        compose.slots().compaction.current().map(|(_, g, _)| g),
+        Some(2)
+    );
+    assert_eq!(proxy.micro_compact(&mut messages(), 60), 2);
+
+    // Withdrawing the active provider falls back to the previous one.
+    compose.withdraw("navi.compaction.terse").expect("withdraw");
+    assert_eq!(
+        compose.slots().compaction.current().map(|(c, _, _)| c),
+        Some("navi.compaction.default".to_string())
+    );
+    assert_eq!(proxy.micro_compact(&mut messages(), 60), 1);
+}
+
+#[test]
+fn prompt_builder_component_installs_and_clears_its_slot() {
+    let (compose, _dir) = compose_with_frontends(Vec::new());
+    compose
+        .install_definitions(&default_manifests())
+        .expect("install");
+    assert!(compose.slots().prompt.current().is_none());
+
+    compose
+        .activate("navi.prompt.branded")
+        .expect("activate prompt");
+    assert_eq!(
+        compose.slots().prompt.current().map(|(c, g, _)| (c, g)),
+        Some(("navi.prompt.branded".to_string(), 1))
+    );
+
+    compose.withdraw("navi.prompt.branded").expect("withdraw");
+    assert!(
+        compose.slots().prompt.current().is_none(),
+        "withdrawing the only prompt provider leaves the slot empty"
+    );
 }
 
 #[test]
