@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-17
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.2...v0.7.3
+
+### Fixed
+
+- **Ghostty: blank freeze and flicker after returning focus.** `FocusGained`
+  called `Terminal::clear()`, which issues a cursor-position query (DSR,
+  `ESC [ 6 n`) and blocks reading the reply from stdin — inside a `?2026`
+  synchronized-update bracket. A terminal that defers the reply while
+  buffering never answers, so the app deadlocked waiting for a reply that only
+  arrives after the sync end it is holding open. Focus recovery now clears the
+  viewport and resets the diff buffers with plain writes and repaints every
+  cell in a single sync bracket; no cursor query remains on the focus path.
+- **Animations speeding up with pointer movement.** The frame pacer moved
+  `advance_tick` out of the draw block, so every loop iteration (including each
+  mouse-motion event) advanced the animation clock, which render code treats as
+  ~80ms per tick. The tick now advances on a fixed 80ms wall-clock cadence,
+  decoupled from input volume and from the paced draw loop.
+
+### Changed
+
+- Synchronized output stays enabled on every terminal (the earlier
+  Ghostty-specific skip caused constant tearing and was reverted). The bracket
+  closes through a drop guard and the restore path closes it before leaving the
+  alternate screen; `NAVI_SYNCHRONIZED_OUTPUT=0/1` overrides it manually.
+- Workspace crate versions bumped from 0.7.2 to 0.7.3.
+
 ## [0.7.2] - 2026-09-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.1...v0.7.2
