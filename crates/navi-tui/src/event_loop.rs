@@ -763,6 +763,16 @@ mod tests {
     }
 }
 
+/// Minimum interval between animation-only redraws.
+///
+/// Input/state changes still paint immediately; these only pace the always-on
+/// activity and idle kaomoji animations. Without the pacer, `idle_animating`
+/// made the loop draw on *every* iteration, so a mouse-motion flood (`?1003`
+/// free-motion) turned into a redraw per event — which reads as the whole UI
+/// blinking on terminals that present every synchronized update.
+const ACTIVE_FRAME: Duration = Duration::from_millis(33);
+const IDLE_FRAME: Duration = Duration::from_millis(100);
+
 /// The TUI's main loop, factored out so it can be tested with a `TestBackend`
 /// and an in-memory input source.
 ///
@@ -781,6 +791,7 @@ where
     }
 
     let mut needs_draw = true;
+    let mut last_draw: Option<std::time::Instant> = None;
     let mut leaked_terminal_sequence_filter = LeakedTerminalSequenceFilter::default();
     loop {
         // composer expand/collapse animation.
@@ -809,16 +820,31 @@ where
             && !activity_transition_animating;
 
         if needs_draw || composer_animating || activity_animating || idle_animating {
-            // Bracket each frame in DECSET 2026 synchronized output so the
-            // terminal presents it atomically. Without this, the ~30fps redraws
-            // during streaming/tools tear on Windows Terminal (cursor and cells
-            // repaint mid-frame). Ratatui 0.30 does not wrap draw() in sync
-            // automatically, and crossterm's BeginSynchronizedUpdate is gated
-            // behind is_ansi_code_supported() which returns false on Windows.
-            let mut stdout = io::stdout();
-            with_synchronized_update(&mut stdout, || terminal.draw(|frame| render(frame, app)))?;
+            // Tick every candidate frame so animations advance at the same
+            // cadence as before; the pacer only decides when to actually paint.
             app.advance_tick();
-            needs_draw = false;
+            let active_animating = composer_animating || activity_animating;
+            let frame = if active_animating {
+                ACTIVE_FRAME
+            } else {
+                IDLE_FRAME
+            };
+            let animation_due = (active_animating || idle_animating)
+                && last_draw.map_or(true, |at| at.elapsed() >= frame);
+            if needs_draw || animation_due {
+                // Bracket each frame in DECSET 2026 synchronized output so the
+                // terminal presents it atomically. Without this, the ~30fps redraws
+                // during streaming/tools tear on Windows Terminal (cursor and cells
+                // repaint mid-frame). Ratatui 0.30 does not wrap draw() in sync
+                // automatically, and crossterm's BeginSynchronizedUpdate is gated
+                // behind is_ansi_code_supported() which returns false on Windows.
+                let mut stdout = io::stdout();
+                with_synchronized_update(&mut stdout, || {
+                    terminal.draw(|frame| render(frame, app))
+                })?;
+                last_draw = Some(std::time::Instant::now());
+                needs_draw = false;
+            }
         }
 
         if expire_notification(app) {
@@ -962,6 +988,13 @@ where
         } else if app.is_loading || app.messages.is_empty() || visible_notification(app).is_some() {
             needs_draw = true;
         }
+    }
+
+    // Final frame: the pacer may have skipped the last animation-only draw,
+    // and callers (tests included) assert the screen right after exit.
+    {
+        let mut stdout = io::stdout();
+        with_synchronized_update(&mut stdout, || terminal.draw(|frame| render(frame, app)))?;
     }
 
     flush_session_checkpoint(app);
