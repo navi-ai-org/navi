@@ -16,7 +16,7 @@
 
 
 
-    ◆ Waiting for model · 0s (esc to interrupt)
+    φ__(． ． ) Waiting for model · 0s (esc to interrupt)
 
   ╭──────────────────────────────────────────────────────────────────────────╮
   │ › Type to queue (ctrl+enter) · esc cancels turn                          │
