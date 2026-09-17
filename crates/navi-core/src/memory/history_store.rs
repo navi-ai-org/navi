@@ -4,6 +4,19 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Clamp a caller-provided history `limit`.
+///
+/// SQLite reads a negative `LIMIT` as "no limit", so an unbounded scan is one
+/// `limit: -1` away: non-positive values fall back to the default instead.
+fn clamp_history_limit(limit: Option<i64>) -> i64 {
+    const DEFAULT_LIMIT: i64 = 50;
+    const MAX_LIMIT: i64 = 1000;
+    match limit {
+        Some(n) if n > 0 => n.min(MAX_LIMIT),
+        _ => DEFAULT_LIMIT,
+    }
+}
+
 /// A thread-safe handle to the SQLite history database.
 #[derive(Clone)]
 pub struct HistoryStore {
@@ -309,7 +322,7 @@ impl HistoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
-        let limit_val = limit.unwrap_or(50);
+        let limit_val = clamp_history_limit(limit);
         let like_query = format!("%{}%", query);
 
         let mut sql = "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, \
@@ -340,7 +353,7 @@ impl HistoryStore {
             .conn
             .lock()
             .map_err(|e| anyhow::anyhow!("history-store lock poisoned: {e}"))?;
-        let limit_val = limit.unwrap_or(50);
+        let limit_val = clamp_history_limit(limit);
         let mut results = conn.query_rows(
             "SELECT id, session_id, sequence, event_type, role, content, tool_name, tool_input_json, tool_output, token_estimate, created_at, metadata_json 
              FROM events 

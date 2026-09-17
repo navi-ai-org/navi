@@ -113,6 +113,18 @@ impl SandboxTool {
         };
 
         let paths = self.resolve_paths(&raw_paths);
+        if paths.is_empty() {
+            // Every entry was a non-string (e.g. `[42]`): report the same
+            // actionable error instead of snapshotting nothing and claiming ok.
+            return Ok(helpers::ok(
+                invocation.id.clone(),
+                json!({
+                    "status": "error",
+                    "error": "`paths` must contain at least one non-empty string path.",
+                    "hint": "Example: {\"action\": \"snapshot\", \"paths\": [\".\"]}",
+                }),
+            ));
+        }
 
         // Verify all paths exist.
         let missing: Vec<String> = paths

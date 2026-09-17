@@ -794,7 +794,12 @@ pub fn discover_tests(root: &Path, touched_paths: &[PathBuf]) -> Vec<TestTarget>
     dedupe_tests(targets.into_values().collect())
 }
 
-pub fn churn_from_git_log(root: &Path, max_entries: usize) -> Vec<ChurnRecord> {
+/// Git churn for `root`, or a human-readable error when git is unavailable or
+/// `root` is not a repository.
+///
+/// Returning `Result` (instead of an empty vec) keeps a git failure
+/// distinguishable from a churn-free history.
+pub fn churn_from_git_log(root: &Path, max_entries: usize) -> Result<Vec<ChurnRecord>, String> {
     let mut cmd = std::process::Command::new("git");
     cmd.arg("log")
         .arg("--name-only")
@@ -805,12 +810,18 @@ pub fn churn_from_git_log(root: &Path, max_entries: usize) -> Vec<ChurnRecord> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let output = cmd.output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
+    let output = cmd.output().map_err(|err| {
+        format!(
+            "`git log` could not be started ({err}); churn analysis needs the git binary on PATH"
+        )
+    })?;
     if !output.status.success() {
-        return Vec::new();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "`git log` failed in {} (is this a git repository?): {}",
+            root.display(),
+            stderr.trim()
+        ));
     }
     let mut counts = BTreeMap::<PathBuf, u32>::new();
     for line in String::from_utf8_lossy(&output.stdout).lines() {
@@ -831,7 +842,7 @@ pub fn churn_from_git_log(root: &Path, max_entries: usize) -> Vec<ChurnRecord> {
             .then_with(|| left.path.cmp(&right.path))
     });
     records.truncate(max_entries);
-    records
+    Ok(records)
 }
 
 fn build_index_with_cache(
@@ -871,8 +882,20 @@ fn build_index_with_cache(
             continue;
         }
 
-        let content = fs::read_to_string(&absolute)
-            .with_context(|| format!("failed to read source file {}", absolute.display()))?;
+        // Skip unreadable/undecodable files instead of aborting the whole
+        // index: one non-UTF-8 (or deleted-mid-walk) file used to disable every
+        // index-backed action.
+        let content = match fs::read_to_string(&absolute) {
+            Ok(content) => content,
+            Err(err) => {
+                tracing::debug!(
+                    path = %absolute.display(),
+                    %err,
+                    "repo intelligence: skipping unreadable source file"
+                );
+                continue;
+            }
+        };
         let language = language_for_path(&relative).to_string();
         let hash = hash_content(&content);
         let indexed = IndexedFile {

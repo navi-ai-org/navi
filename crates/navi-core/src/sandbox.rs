@@ -91,12 +91,12 @@ impl SandboxManager {
                 root_set.insert(p.clone());
                 collect_files(p, &mut entries, &mut visited);
             } else if p.is_file() {
-                let snapshot_path = p.clone();
-                if let Some(parent) = snapshot_path.parent() {
-                    root_set.insert(parent.to_path_buf());
-                }
-                if visited.insert(snapshot_path.clone()) {
-                    entries.push(snapshot_file(&snapshot_path));
+                // Root the snapshot at the file itself, never at its parent
+                // directory: a parent root makes `rollback` delete unrelated
+                // sibling files (and `status` report them as created).
+                root_set.insert(p.clone());
+                if visited.insert(p.clone()) {
+                    entries.push(snapshot_file(p));
                 }
             } else {
                 // Path doesn't exist yet (pre-write snapshot of a file that
@@ -604,5 +604,47 @@ mod tests {
         let snap = SandboxManager::create_snapshot(&[a.clone()]);
         assert!(snap.is_path_in_entry(&a));
         assert!(!snap.is_path_in_entry(&dir.path().join("nonexistent.txt")));
+    }
+
+    // ── Single-file snapshots must not claim the parent directory ────────
+
+    #[test]
+    fn rollback_of_single_file_snapshot_keeps_siblings() {
+        // Regression: an existing file's parent directory used to be added as
+        // a snapshot root, so rollback deleted every unrelated sibling file
+        // (and `compute_changes` reported them as created).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target.txt");
+        let sibling = dir.path().join("sibling.txt");
+        write(&target, "original");
+        write(&sibling, "keep me");
+
+        let snap = SandboxManager::create_snapshot(std::slice::from_ref(&target));
+        write(&target, "modified");
+        write(&dir.path().join("created.txt"), "new");
+
+        SandboxManager::rollback(&snap).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "original");
+        assert!(sibling.exists(), "sibling file must survive rollback");
+        assert!(
+            dir.path().join("created.txt").exists(),
+            "untracked file must not be deleted by a single-file rollback"
+        );
+    }
+
+    #[test]
+    fn compute_changes_for_single_file_snapshot_ignores_siblings() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = dir.path().join("target.txt");
+        write(&target, "original");
+        write(&dir.path().join("sibling.txt"), "keep me");
+
+        let snap = SandboxManager::create_snapshot(std::slice::from_ref(&target));
+        let changes = SandboxManager::compute_changes(&snap);
+        assert!(
+            changes.files_created.is_empty(),
+            "siblings must not be reported as created: {:?}",
+            changes.files_created
+        );
     }
 }

@@ -341,7 +341,7 @@ fn source_files(
     write: bool,
 ) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
-    collect_source_files(policy, root, max_files, write, &mut files)?;
+    collect_source_files(policy, root, max_files, write, &mut files, true)?;
     Ok(files)
 }
 
@@ -351,8 +351,11 @@ fn collect_source_files(
     max_files: usize,
     write: bool,
     files: &mut Vec<PathBuf>,
+    is_root: bool,
 ) -> Result<()> {
-    if files.len() >= max_files || should_skip(path) {
+    // `should_skip` guards the walk, not an explicitly requested root: asking
+    // for `path: "build"` must not silently return zero files.
+    if files.len() >= max_files || (!is_root && should_skip(path)) {
         return Ok(());
     }
     if path.is_file() {
@@ -377,7 +380,17 @@ fn collect_source_files(
         if files.len() >= max_files {
             break;
         }
-        collect_source_files(policy, &entry.path(), max_files, write, files)?;
+        // Never follow symlinks: a directory alias/cycle (`link -> ..`)
+        // re-collects the same files until the path length explodes, and
+        // duplicates then eat the max_files budget.
+        if entry
+            .file_type()
+            .map(|kind| kind.is_symlink())
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        collect_source_files(policy, &entry.path(), max_files, write, files, false)?;
     }
     Ok(())
 }

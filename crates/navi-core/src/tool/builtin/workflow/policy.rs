@@ -117,39 +117,57 @@ pub fn intersect_agent_policy(run: &RunPolicy, opts: &AgentPolicyOpts) -> Effect
 
 fn intersect_paths(a: &[String], b: &[String]) -> Vec<String> {
     // If either side is a universal allow, return the other.
-    let a_univ = a.iter().any(|p| p == "**" || p == "*" || p == ".");
-    let b_univ = b.iter().any(|p| p == "**" || p == "*" || p == ".");
-    if a_univ {
+    if a.iter().any(|p| is_universal_pattern(p)) {
         return b.to_vec();
     }
-    if b_univ {
+    if b.iter().any(|p| is_universal_pattern(p)) {
         return a.to_vec();
     }
-    let set: std::collections::BTreeSet<_> = a.iter().cloned().collect();
-    b.iter().filter(|p| set.contains(*p)).cloned().collect()
+    // Pattern containment, not string equality: run `src/**` + opts `src/a.rs`
+    // must keep `src/a.rs` (string equality dropped it and denied everything).
+    let mut out: Vec<String> = Vec::new();
+    for pattern in b {
+        if a.iter().any(|run| pattern_covers(run, pattern)) {
+            out.push(pattern.clone());
+        }
+    }
+    for pattern in a {
+        if b.iter().any(|opts| pattern_covers(opts, pattern))
+            && !out.iter().any(|kept| kept == pattern)
+        {
+            out.push(pattern.clone());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+fn is_universal_pattern(pattern: &str) -> bool {
+    matches!(pattern.trim(), "**" | "*" | ".")
+}
+
+/// True when `wide` matches everything `narrow` matches (approximated on the
+/// literal base of `narrow`, which covers the `<dir>/**` and exact-path shapes
+/// the policies use).
+fn pattern_covers(wide: &str, narrow: &str) -> bool {
+    let narrow_base = literal_base(narrow);
+    let wide_base = literal_base(wide);
+    crate::security::write_scope_path_matches(wide, narrow_base) || wide_base == narrow_base
+}
+
+/// `src/**` → `src`, `src/*` → `src`, `src/a.rs` → `src/a.rs`.
+fn literal_base(pattern: &str) -> &str {
+    let trimmed = pattern.trim().trim_start_matches("./");
+    let trimmed = trimmed.strip_suffix("/**").unwrap_or(trimmed);
+    let trimmed = trimmed.strip_suffix("/*").unwrap_or(trimmed);
+    trimmed.trim_end_matches('/')
 }
 
 #[cfg(test)]
 fn path_matches(pattern: &str, path: &str) -> bool {
-    if pattern == "**" || pattern == "*" {
-        return true;
-    }
-    if let Some(prefix) = pattern.strip_suffix("/**") {
-        return path == prefix || path.starts_with(&format!("{prefix}/"));
-    }
-    if let Some(prefix) = pattern.strip_suffix("/**") {
-        return path == prefix || path.starts_with(&format!("{prefix}/"));
-    }
-    if let Some(prefix) = pattern.strip_suffix("/*") {
-        if path == prefix {
-            return true;
-        }
-        if let Some(rest) = path.strip_prefix(&format!("{prefix}/")) {
-            return !rest.contains('/');
-        }
-        return false;
-    }
-    pattern == path || path.starts_with(&format!("{pattern}/"))
+    // Delegate to the enforcement matcher so tests cannot drift from it.
+    crate::security::write_scope_path_matches(pattern, path)
 }
 
 #[cfg(test)]
@@ -257,5 +275,60 @@ mod policy_tests {
         assert_eq!(clamp_max_agents(0), 1);
         assert_eq!(clamp_max_agents(1000), 1000);
         assert_eq!(clamp_max_agents(99999), MAX_AGENTS_CEILING);
+    }
+
+    // ── path_allow intersection (must narrow, not deny everything) ───────
+
+    #[test]
+    fn agent_path_allow_narrows_without_denying_everything() {
+        let mut run = default_run_policy();
+        run.path_allow = vec!["src/**".into()];
+        let opts = AgentPolicyOpts {
+            path_allow: Some(vec!["src/a.rs".into()]),
+            ..Default::default()
+        };
+        let eff = intersect_agent_policy(&run, &opts);
+        assert_eq!(eff.path_allow, vec!["src/a.rs".to_string()]);
+    }
+
+    #[test]
+    fn agent_path_allow_disjoint_stays_empty() {
+        let mut run = default_run_policy();
+        run.path_allow = vec!["src/**".into()];
+        let opts = AgentPolicyOpts {
+            path_allow: Some(vec!["lib/**".into()]),
+            ..Default::default()
+        };
+        let eff = intersect_agent_policy(&run, &opts);
+        assert!(eff.path_allow.is_empty(), "{:?}", eff.path_allow);
+    }
+
+    #[test]
+    fn agent_path_allow_wide_opts_keeps_narrow_run() {
+        let mut run = default_run_policy();
+        run.path_allow = vec!["src/a.rs".into()];
+        let opts = AgentPolicyOpts {
+            path_allow: Some(vec!["src/**".into()]),
+            ..Default::default()
+        };
+        let eff = intersect_agent_policy(&run, &opts);
+        assert_eq!(eff.path_allow, vec!["src/a.rs".to_string()]);
+    }
+
+    #[test]
+    fn default_run_path_deny_covers_nested_git_dirs() {
+        let run = default_run_policy();
+        assert!(
+            run.path_deny
+                .iter()
+                .any(|d| path_matches(d, "vendor/dep/.git/config")),
+            "default deny must protect nested .git dirs: {:?}",
+            run.path_deny
+        );
+        assert!(
+            !run.path_deny.iter().any(|d| path_matches(d, "src/main.rs")),
+            "ordinary source paths must stay allowed: {:?}",
+            run.path_deny
+        );
     }
 }

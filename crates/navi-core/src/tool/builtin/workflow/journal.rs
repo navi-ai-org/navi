@@ -16,6 +16,9 @@ pub struct WorkflowJournal {
     meta_path: PathBuf,
     phases: Vec<String>,
     logs: Vec<String>,
+    /// Start-time meta (script/args hashes, limits, project root) merged into
+    /// the final meta so a finished run still identifies what it ran.
+    start_meta: Option<Value>,
 }
 
 impl WorkflowJournal {
@@ -29,6 +32,7 @@ impl WorkflowJournal {
             meta_path,
             phases: Vec::new(),
             logs: Vec::new(),
+            start_meta: None,
         };
         journal.append_line(&json!({
             "event": "run_started",
@@ -63,18 +67,23 @@ impl WorkflowJournal {
         });
         fs::write(&self.meta_path, serde_json::to_vec_pretty(&meta)?)
             .with_context(|| format!("write {}", self.meta_path.display()))?;
+        self.start_meta = Some(meta);
         Ok(())
     }
 
     pub fn record_phase(&mut self, title: &str) {
         self.phases.push(title.to_string());
-        let _ = self.append_line(&json!({"event": "phase", "title": title}));
+        if let Err(err) = self.append_line(&json!({"event": "phase", "title": title})) {
+            tracing::warn!(%err, title, "workflow journal: failed to append phase");
+        }
     }
 
     pub fn record_log(&mut self, message: &str) {
         let redacted = redact_secrets(message);
         self.logs.push(redacted.clone());
-        let _ = self.append_line(&json!({"event": "log", "message": redacted}));
+        if let Err(err) = self.append_line(&json!({"event": "log", "message": redacted})) {
+            tracing::warn!(%err, "workflow journal: failed to append log");
+        }
     }
 
     pub fn take_phases(&self) -> Vec<String> {
@@ -94,12 +103,16 @@ impl WorkflowJournal {
             "status": status,
             "error": error.map(redact_secrets),
         }))?;
-        let meta = json!({
-            "status": status,
-            "stats": stats,
-            "phases": self.phases,
-            "error": error.map(redact_secrets),
-        });
+        // Merge into the start meta instead of replacing it: the finished run
+        // must still identify its script/args/project.
+        let mut meta = self.start_meta.clone().unwrap_or_else(|| json!({}));
+        if let Value::Object(ref mut map) = meta {
+            map.insert("status".into(), json!(status));
+            map.insert("stats".into(), json!(stats));
+            map.insert("phases".into(), json!(self.phases));
+            map.insert("error".into(), json!(error.map(redact_secrets)));
+            map.insert("logs".into(), json!(self.logs));
+        }
         fs::write(&self.meta_path, serde_json::to_vec_pretty(&meta)?)?;
         Ok(())
     }

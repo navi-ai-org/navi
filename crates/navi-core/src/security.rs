@@ -1216,7 +1216,14 @@ fn git_subcommand_is(program: &str, candidates: &[&str]) -> bool {
 }
 
 /// Glob-ish match for workflow write_allow / path_deny (relative path strings).
-fn write_scope_path_matches(pattern: &str, path: &str) -> bool {
+///
+/// Supported shapes: `**` / `*` (everything), `<prefix>/**` (prefix plus
+/// everything below it), `<prefix>/*` (direct children only), `**/<rest>`
+/// (any segment-aligned suffix, e.g. `**/.git/**`), and exact/prefix matches.
+///
+/// `pub(crate)` so workflow policy tests exercise the same matcher the
+/// enforcement path uses (no drifting test-only copy).
+pub(crate) fn write_scope_path_matches(pattern: &str, path: &str) -> bool {
     let pattern = pattern.trim().trim_start_matches("./").replace('\\', "/");
     let path = path.trim().trim_start_matches("./").replace('\\', "/");
     if pattern.is_empty() {
@@ -1224,6 +1231,22 @@ fn write_scope_path_matches(pattern: &str, path: &str) -> bool {
     }
     if pattern == "**" || pattern == "*" {
         return true;
+    }
+    // `**/<rest>`: match `rest` against every segment-aligned suffix of the
+    // path. Without this, the default deny entry `**/.git/**` never matched
+    // anything (a nested `vendor/dep/.git/config` was writable).
+    if let Some(rest) = pattern.strip_prefix("**/") {
+        if write_scope_path_matches(rest, &path) {
+            return true;
+        }
+        let mut search = path.as_str();
+        while let Some(idx) = search.find('/') {
+            search = &search[idx + 1..];
+            if write_scope_path_matches(rest, search) {
+                return true;
+            }
+        }
+        return false;
     }
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path == prefix || path.starts_with(&format!("{prefix}/"));
@@ -3515,6 +3538,42 @@ mod tests {
             matches!(decision, SecurityDecision::Deny(ref m) if m.contains("create_files")),
             "{decision:?}"
         );
+    }
+
+    // ── write_scope_path_matches (workflow allow/deny globs) ──────────────
+
+    #[test]
+    fn write_scope_path_matches_supports_leading_double_star() {
+        // Regression: `**/.git/**` never matched, so the default deny entry
+        // (and any `**/x/**` write_allow) was inert.
+        assert!(write_scope_path_matches(
+            "**/.git/**",
+            "vendor/dep/.git/config"
+        ));
+        assert!(write_scope_path_matches("**/.git/**", ".git/config"));
+        assert!(write_scope_path_matches("**/.git/**", ".git"));
+        assert!(write_scope_path_matches(
+            "**/target/**",
+            "a/b/target/debug/x"
+        ));
+        assert!(!write_scope_path_matches("**/.git/**", "src/main.rs"));
+        assert!(!write_scope_path_matches(
+            "**/target/**",
+            "src/target_file.rs"
+        ));
+    }
+
+    #[test]
+    fn write_scope_path_matches_keeps_existing_shapes() {
+        assert!(write_scope_path_matches("**", "anything/at/all"));
+        assert!(write_scope_path_matches("src/**", "src/a/b.rs"));
+        assert!(write_scope_path_matches("src/**", "src"));
+        assert!(!write_scope_path_matches("src/**", "lib/a.rs"));
+        assert!(write_scope_path_matches("src/*", "src/a.rs"));
+        assert!(!write_scope_path_matches("src/*", "src/a/b.rs"));
+        assert!(write_scope_path_matches("src/a.rs", "src/a.rs"));
+        assert!(write_scope_path_matches("src", "src/a.rs"));
+        assert!(!write_scope_path_matches("", "src/a.rs"));
     }
 
     // ── Computer-use redaction (ADR 0016) ───────────────────────────────

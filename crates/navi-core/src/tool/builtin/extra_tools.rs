@@ -187,9 +187,9 @@ impl Tool for ContextRemainingTool {
                 "used_tokens": used_tokens,
                 "remaining_tokens": remaining,
                 "usage_percent": format!("{:.1}%", usage_pct),
-                "status": if remaining < context_window / 10 {
+                "status": if remaining == 0 || remaining.saturating_mul(10) <= context_window {
                     "CRITICAL — very little context remaining"
-                } else if remaining < context_window / 4 {
+                } else if remaining.saturating_mul(4) <= context_window {
                     "WARNING — context running low"
                 } else {
                     "OK — sufficient context remaining"
@@ -769,6 +769,34 @@ mod tests {
         assert!(result.ok);
         assert_eq!(result.output["remaining_tokens"], 0);
         assert_eq!(result.output["usage_percent"], "0.0%");
+    }
+
+    #[tokio::test]
+    async fn context_remaining_zero_left_is_critical_for_small_windows() {
+        // Regression: integer division made both thresholds 0 for windows < 10,
+        // so a fully consumed context reported "OK".
+        for (window, used) in [(3u64, 3u64), (1000, 1000), (0, 0)] {
+            let tool = ContextRemainingTool::new();
+            let result = tool
+                .invoke(ToolInvocation {
+                    id: "t11".into(),
+                    tool_name: "get_context_remaining".into(),
+                    input: json!({ "context_window": window, "used_tokens": used }),
+                })
+                .await
+                .unwrap();
+
+            assert!(result.ok);
+            assert_eq!(result.output["remaining_tokens"], 0);
+            assert!(
+                result.output["status"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("CRITICAL"),
+                "window={window} used={used} must be CRITICAL: {}",
+                result.output
+            );
+        }
     }
 
     // ── RequestUserInputTool ─────────────────────────────────────────────

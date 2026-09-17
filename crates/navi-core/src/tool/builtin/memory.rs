@@ -12,6 +12,21 @@ use crate::memory::auto_memory::{new_entry, sanitize_id};
 use crate::tool::builtin::helpers;
 use crate::tool::{Tool, ToolDefinition, ToolInvocation, ToolKind, ToolResult};
 
+/// Upper bound for `memory` list/search `limit` values.
+const MAX_MEMORY_LIMIT: usize = 500;
+
+/// Resolve a caller-provided `limit` for list/search.
+///
+/// Non-positive values are invalid (a negative i64 cast to `usize` wraps to
+/// `usize::MAX`, which SQLite then reads as "no limit") and fall back to the
+/// action's default instead.
+fn memory_limit(input: &Value, default: usize) -> usize {
+    match input.get("limit").and_then(Value::as_i64) {
+        Some(n) if n > 0 => (n as usize).min(MAX_MEMORY_LIMIT),
+        _ => default,
+    }
+}
+
 /// Tool to append observations to the session notes scratchpad (SQLite).
 pub(crate) struct AppendNoteTool {
     project_root: PathBuf,
@@ -300,11 +315,7 @@ impl Tool for MemoryTool {
             }
 
             "list" => {
-                let limit = invocation
-                    .input
-                    .get("limit")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(50) as usize;
+                let limit = memory_limit(&invocation.input, 50);
                 let status_filter = invocation
                     .input
                     .get("status")
@@ -333,11 +344,7 @@ impl Tool for MemoryTool {
 
             "search" => {
                 let query = helpers::required_string(&invocation.input, "query")?;
-                let limit = invocation
-                    .input
-                    .get("limit")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(20) as usize;
+                let limit = memory_limit(&invocation.input, 20);
 
                 // Text matching over name, description, and body (SQL LIKE).
                 let search_results: Vec<(
@@ -379,6 +386,11 @@ impl Tool for MemoryTool {
 
             "update" => {
                 let id = sanitize_id(helpers::required_string(&invocation.input, "id")?);
+                if store.get(&id)?.is_none() {
+                    anyhow::bail!(
+                        "memory `{id}` not found. Use action='list' or action='search' to find the right id."
+                    );
+                }
 
                 if let Some(status_str) = invocation.input.get("status").and_then(|v| v.as_str())
                     && let Some(status) = MemoryStatus::from_str(status_str)
@@ -401,6 +413,11 @@ impl Tool for MemoryTool {
 
             "delete" => {
                 let id = sanitize_id(helpers::required_string(&invocation.input, "id")?);
+                if store.get(&id)?.is_none() {
+                    anyhow::bail!(
+                        "memory `{id}` not found. Use action='list' or action='search' to find the right id."
+                    );
+                }
                 store.delete(&id)?;
 
                 json!({
@@ -1137,5 +1154,84 @@ mod tests {
             !std::ptr::eq(path1.as_path(), path2.as_path()),
             "db_path should return a fresh value, not a cached reference"
         );
+    }
+
+    // ── MemoryTool: limit handling ────────────────────────────────────────
+
+    #[test]
+    fn memory_limit_rejects_non_positive_values() {
+        // Regression: `-1 as usize` wrapped to `usize::MAX`, which SQLite reads
+        // as "no limit" — the tool returned every row instead of erroring.
+        assert_eq!(memory_limit(&json!({"limit": -1}), 20), 20);
+        assert_eq!(memory_limit(&json!({"limit": 0}), 20), 20);
+        assert_eq!(memory_limit(&json!({"limit": "10"}), 20), 20);
+        assert_eq!(memory_limit(&json!({}), 20), 20);
+        assert_eq!(memory_limit(&json!({"limit": 5}), 20), 5);
+        assert_eq!(
+            memory_limit(&json!({"limit": 10_000}), 20),
+            MAX_MEMORY_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_search_negative_limit_is_bounded() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        for i in 0..3 {
+            let inv = make_invocation(
+                "m-neg-w",
+                "memory",
+                json!({
+                    "action": "write",
+                    "id": format!("neg-{i}"),
+                    "memory_type": "user",
+                    "name": format!("Neg {i}"),
+                    "description": "needle",
+                    "body": "needle",
+                }),
+            );
+            tool.invoke(inv).await.unwrap();
+        }
+
+        let inv = make_invocation(
+            "m-neg-s",
+            "memory",
+            json!({"action": "search", "query": "needle", "limit": -1}),
+        );
+        let result = tool.invoke(inv).await.unwrap();
+        assert!(result.ok, "{:?}", result.output);
+        assert_eq!(result.output["count"], 3);
+    }
+
+    // ── MemoryTool: update/delete of missing ids ──────────────────────────
+
+    #[tokio::test]
+    async fn memory_update_missing_id_returns_err_with_hint() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m-upd-missing",
+            "memory",
+            json!({"action": "update", "id": "does-not-exist", "name": "x"}),
+        );
+        let err = tool.invoke(inv).await.unwrap_err().to_string();
+        assert!(err.contains("not found"), "unexpected error: {err}");
+        assert!(
+            err.contains("action='list'") || err.contains("action='search'"),
+            "error must include a recovery hint: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn memory_delete_missing_id_returns_err_with_hint() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_memory_tool(temp.path());
+        let inv = make_invocation(
+            "m-del-missing",
+            "memory",
+            json!({"action": "delete", "id": "does-not-exist"}),
+        );
+        let err = tool.invoke(inv).await.unwrap_err().to_string();
+        assert!(err.contains("not found"), "unexpected error: {err}");
     }
 }

@@ -152,13 +152,17 @@ impl Tool for CodeExecTool {
         let mut results = Vec::new();
         for (idx, op) in request.ops.iter().enumerate() {
             if let CodeExecOp::TraceNote { note } = op {
+                // Respect max_output_bytes for trace notes too (they were
+                // emitted unbounded with a hardcoded `output_truncated: false`).
+                let (output, output_truncated) =
+                    truncate_value(json!({ "note": note }), max_output_bytes);
                 results.push(json!({
                     "index": idx,
                     "op": "trace-note",
                     "tool": null,
                     "ok": true,
-                    "output": { "note": note },
-                    "output_truncated": false,
+                    "output": output,
+                    "output_truncated": output_truncated,
                 }));
                 continue;
             }
@@ -227,7 +231,9 @@ fn nested_invocation(index: usize, op: &CodeExecOp) -> Result<ToolInvocation> {
             path,
             max_results,
         } => {
-            let mut input = json!({ "pattern": pattern, "path": path });
+            // The unified `search` tool requires `action`; without it the nested
+            // invocation fails schema validation (`invalid_arguments`).
+            let mut input = json!({ "action": "grep", "pattern": pattern, "path": path });
             if let Some(value) = max_results
                 && let Value::Object(ref mut map) = input
             {

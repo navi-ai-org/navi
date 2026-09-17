@@ -233,7 +233,7 @@ impl Tool for PlanTool {
             "complete_step" => action_complete_step(&invocation, store),
             "get" => action_get(&invocation, store),
             "list" => action_list(&invocation, store, &project_id),
-            "active" => action_active(store, &project_id),
+            "active" => action_active(&invocation, store, &project_id),
             _ => Ok(ToolResult {
                 invocation_id: invocation.id,
                 ok: false,
@@ -627,7 +627,11 @@ fn action_list(
     ))
 }
 
-fn action_active(store: &PlanStore, project_id: &str) -> Result<ToolResult> {
+fn action_active(
+    invocation: &ToolInvocation,
+    store: &PlanStore,
+    project_id: &str,
+) -> Result<ToolResult> {
     // Prefer active; fall back to proposed (awaiting user review).
     let plan = store.active(project_id)?.or_else(|| {
         store
@@ -636,9 +640,9 @@ fn action_active(store: &PlanStore, project_id: &str) -> Result<ToolResult> {
             .and_then(|mut v| v.pop())
     });
     match plan {
-        Some(plan) => Ok(helpers::ok("active".to_string(), plan_to_json(&plan))),
+        Some(plan) => Ok(helpers::ok(invocation.id.clone(), plan_to_json(&plan))),
         None => Ok(helpers::ok(
-            "active".to_string(),
+            invocation.id.clone(),
             json!({
                 "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
                 "active_plan": null,

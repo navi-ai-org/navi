@@ -424,13 +424,12 @@ impl GrepInput {
 }
 
 impl SearchTool {
-    async fn run_grep(
-        &self,
-        invocation_id: &str,
-        input: &Value,
-        _path: &str,
-    ) -> Result<ToolResult> {
-        let grep_input = GrepInput::from_json(input)?;
+    async fn run_grep(&self, invocation_id: &str, input: &Value, path: &str) -> Result<ToolResult> {
+        let mut grep_input = GrepInput::from_json(input)?;
+        // `invoke` already resolved the target path (including the
+        // `directory` alias); honor it so grep does not silently fall back
+        // to the project root when only `directory` was provided.
+        grep_input.path = path.to_string();
         let project_root = self.project_root.clone();
         let result = tokio::task::spawn_blocking(move || run_grep(&project_root, grep_input))
             .await
@@ -992,12 +991,14 @@ fn glob_match(text: &str, pattern: &str) -> bool {
         }
         return false;
     }
-    let text_bytes = text.as_bytes();
-    let pat_bytes = pattern.as_bytes();
-    glob_match_impl(text_bytes, pat_bytes)
+    let text_chars: Vec<char> = text.chars().collect();
+    let pat_chars: Vec<char> = pattern.chars().collect();
+    glob_match_impl(&text_chars, &pat_chars)
 }
 
-fn glob_match_impl(text: &[u8], pattern: &[u8]) -> bool {
+/// `?` matches exactly one *character* (not one byte), so non-ASCII file
+/// names behave as documented instead of failing (or splitting a char).
+fn glob_match_impl(text: &[char], pattern: &[char]) -> bool {
     // Iterative glob with backtracking for `*`.
     let mut ti = 0;
     let mut pi = 0;
@@ -1005,12 +1006,12 @@ fn glob_match_impl(text: &[u8], pattern: &[u8]) -> bool {
     let mut star_ti = 0;
 
     while ti < text.len() {
-        if pi < pattern.len() && pattern[pi] == b'*' {
+        if pi < pattern.len() && pattern[pi] == '*' {
             star_pi = Some(pi);
             star_ti = ti;
             pi += 1;
         } else if pi < pattern.len()
-            && (pattern[pi] == b'?' || pattern[pi].eq_ignore_ascii_case(&text[ti]))
+            && (pattern[pi] == '?' || pattern[pi].eq_ignore_ascii_case(&text[ti]))
         {
             ti += 1;
             pi += 1;
@@ -1025,7 +1026,7 @@ fn glob_match_impl(text: &[u8], pattern: &[u8]) -> bool {
     }
 
     // Consume trailing `*` in pattern.
-    while pi < pattern.len() && pattern[pi] == b'*' {
+    while pi < pattern.len() && pattern[pi] == '*' {
         pi += 1;
     }
     pi == pattern.len()
@@ -1364,5 +1365,45 @@ mod tests {
     fn glob_match_case_insensitive() {
         assert!(glob_match("Sample.TXT", "*.txt"));
         assert!(glob_match("MAIN.RS", "main.rs"));
+    }
+
+    #[test]
+    fn glob_match_question_mark_matches_one_character() {
+        // `?` is documented as "single char": non-ASCII names must match too
+        // (byte-wise matching used to fail on multibyte characters).
+        assert!(glob_match("é.txt", "?.txt"));
+        assert!(glob_match("a.txt", "?.txt"));
+        assert!(!glob_match("ab.txt", "?.txt"));
+        assert!(glob_match("日本.rs", "??.rs"));
+        assert!(!glob_match("日本.rs", "?.rs"));
+    }
+
+    #[tokio::test]
+    async fn grep_honors_directory_alias() {
+        // `directory` is a documented alias for `path`; it used to be resolved
+        // by `invoke` and then dropped, so grep searched the project root.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/hit.txt"), "needle here\n").unwrap();
+        std::fs::write(dir.path().join("root.txt"), "needle at root\n").unwrap();
+
+        let tool = SearchTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "grep-dir-alias".into(),
+                tool_name: "search".into(),
+                input: json!({"action": "grep", "pattern": "needle", "directory": "src"}),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok, "{:?}", result.output);
+        let matches = result.output["matches"].as_array().unwrap();
+        assert_eq!(
+            matches.len(),
+            1,
+            "grep must stay inside `directory`: {matches:?}"
+        );
+        assert_eq!(matches[0]["path"], "src/hit.txt");
     }
 }

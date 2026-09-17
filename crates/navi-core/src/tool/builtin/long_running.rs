@@ -151,6 +151,9 @@ impl Tool for InitSessionTool {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(sanitize_feature_id)
+                // An id made only of non-alphanumerics sanitizes to "": keep a
+                // usable id so `mark_feature_done` can ever reference it.
+                .filter(|id| !id.is_empty())
                 .unwrap_or_else(|| format!("feature-{}", index + 1));
             let verification_steps = value
                 .get("verification_steps")

@@ -37,6 +37,10 @@ pub struct SubagentOptions {
 }
 
 const MAX_BACKGROUND_SUBAGENTS: usize = 8;
+/// Prefix the background worker uses for runtime failures. Poll/list use it to
+/// mark the task `Failed` instead of `Done` (the worker always sends its final
+/// string, including on error/cancel).
+const SUBAGENT_FAILURE_PREFIX: &str = "Background subagent failed:";
 /// Nested agent spawners must not be available inside subagents.
 /// `repo_explore` is now BM25+symbols (cheap) and is allowed for subagents.
 const NESTED_AGENT_TOOLS: &[&str] = &["subagent", "workflow"];
@@ -108,6 +112,8 @@ enum SubagentBgStatus {
 struct SubagentBgState {
     status: SubagentBgStatus,
     error: String,
+    /// Final worker output, surfaced by poll/list once the task is terminal.
+    result: Option<String>,
 }
 
 impl SubagentBgState {
@@ -115,6 +121,7 @@ impl SubagentBgState {
         Self {
             status: SubagentBgStatus::Running,
             error: String::new(),
+            result: None,
         }
     }
 
@@ -122,6 +129,15 @@ impl SubagentBgState {
         Self {
             status: SubagentBgStatus::Done,
             error: String::new(),
+            result: None,
+        }
+    }
+
+    fn done_with(result: String) -> Self {
+        Self {
+            status: SubagentBgStatus::Done,
+            error: String::new(),
+            result: Some(result),
         }
     }
 
@@ -129,6 +145,15 @@ impl SubagentBgState {
         Self {
             status: SubagentBgStatus::Failed,
             error: err,
+            result: None,
+        }
+    }
+
+    fn failed_with(err: String, result: String) -> Self {
+        Self {
+            status: SubagentBgStatus::Failed,
+            error: err,
+            result: Some(result),
         }
     }
 
@@ -136,6 +161,7 @@ impl SubagentBgState {
         Self {
             status: SubagentBgStatus::Cancelled,
             error: String::new(),
+            result: None,
         }
     }
 
@@ -167,6 +193,9 @@ impl SubagentBackgroundTask {
         if !state.error.is_empty() {
             value["error"] = json!(state.error);
         }
+        if let Some(result) = state.result.clone() {
+            value["result"] = json!(result);
+        }
         if !state.is_final() {
             value["message"] = json!(format!(
                 "Subagent is still running. Poll with subagent({{\"task_id\":\"{}\"}}) or cancel with subagent({{\"task_id\":\"{}\",\"action\":\"cancel\"}}).",
@@ -181,8 +210,21 @@ impl SubagentBackgroundTask {
         let rx = rx_guard.as_mut()?;
         match rx.try_recv() {
             Ok(result) => {
-                let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-                *state = SubagentBgState::done();
+                {
+                    let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                    if state.status == SubagentBgStatus::Running {
+                        // The worker prefixes runtime failures with this marker
+                        // (see the spawn task) — a failed run must not report
+                        // `done`.
+                        *state = if result.starts_with(SUBAGENT_FAILURE_PREFIX) {
+                            SubagentBgState::failed_with(result.clone(), result.clone())
+                        } else {
+                            SubagentBgState::done_with(result.clone())
+                        };
+                    } else if state.result.is_none() {
+                        state.result = Some(result.clone());
+                    }
+                }
                 *rx_guard = None;
                 Some(result)
             }
@@ -564,7 +606,7 @@ impl SubagentTool {
                 Ok(output) => output,
                 Err(err) => format!("Background subagent failed: {err:#}"),
             };
-            let failed = output.starts_with("Background subagent failed:");
+            let failed = output.starts_with(SUBAGENT_FAILURE_PREFIX);
             emit_subagent_transcript(
                 &parent_event_tx,
                 &parent_invocation_id,
@@ -663,6 +705,8 @@ impl SubagentTool {
                     SubagentBgStatus::Failed => "failed",
                     SubagentBgStatus::Cancelled => "cancelled",
                 },
+                "error": state.error,
+                "result": state.result,
                 "elapsed_ms": task.started_at.elapsed().as_millis() as u64,
             }));
         }
@@ -834,7 +878,13 @@ fn emit_terminal_transcript_for_task(
         return;
     }
     let (status_str, detail) = match state.status {
-        SubagentBgStatus::Done => ("done", "Background subagent completed".to_string()),
+        SubagentBgStatus::Done => (
+            "done",
+            state
+                .result
+                .clone()
+                .unwrap_or_else(|| "Background subagent completed".to_string()),
+        ),
         SubagentBgStatus::Failed => ("failed", state.error.clone()),
         SubagentBgStatus::Cancelled => ("cancelled", "Cancelled by user".to_string()),
         SubagentBgStatus::Running => return,
@@ -1380,6 +1430,7 @@ mod tests {
         let task = make_test_task(SubagentBgState {
             status: SubagentBgStatus::Failed,
             error: "model crashed".to_string(),
+            result: None,
         });
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentEvent>();
         emit_terminal_transcript_for_task(&task, &Some(tx));
@@ -3756,5 +3807,57 @@ mod tests {
             path_deny: Some(vec!["y".into()]),
         };
         assert_ne!(a, c);
+    }
+
+    // ── Background task result/status (poll + list surface it) ────────────
+
+    fn background_task(
+        task_id: &str,
+        rx: tokio::sync::oneshot::Receiver<String>,
+    ) -> SubagentBackgroundTask {
+        SubagentBackgroundTask {
+            task_id: task_id.to_string(),
+            parent_invocation_id: "inv-spawn".to_string(),
+            prompt: "do the thing".to_string(),
+            description: None,
+            elapsed_ms: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(SubagentBgState::running()),
+            started_at: Instant::now(),
+            result_rx: tokio::sync::Mutex::new(Some(rx)),
+            cancel_token: CancelToken::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn background_task_surfaces_success_result() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = background_task("bg_1", rx);
+        tx.send("final answer".to_string()).unwrap();
+
+        assert_eq!(task.try_read_result().as_deref(), Some("final answer"));
+        let obs = task.observation_json().await;
+        assert_eq!(obs["status"], "done");
+        assert_eq!(
+            obs["result"], "final answer",
+            "poll must surface the worker output: {obs}"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_task_reports_failure_instead_of_done() {
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let task = background_task("bg_2", rx);
+        tx.send(format!("{SUBAGENT_FAILURE_PREFIX} boom")).unwrap();
+
+        assert!(task.try_read_result().is_some());
+        let obs = task.observation_json().await;
+        assert_eq!(
+            obs["status"], "failed",
+            "a failed worker must not report done: {obs}"
+        );
+        assert!(
+            obs["error"].as_str().unwrap_or_default().contains("boom"),
+            "failure payload must be kept: {obs}"
+        );
     }
 }

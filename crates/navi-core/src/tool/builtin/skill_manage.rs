@@ -192,14 +192,18 @@ impl Tool for SkillGetTool {
     }
 
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
-        let requested = invocation
-            .input
-            .get("id")
-            .or_else(|| invocation.input.get("skill"))
-            .or_else(|| invocation.input.get("name"))
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+        // Resolve each alias independently: a present-but-blank `id` must not
+        // shadow a valid `skill`/`name` fallback.
+        let requested = ["id", "skill", "name"]
+            .iter()
+            .find_map(|key| {
+                invocation
+                    .input
+                    .get(*key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            })
             .ok_or_else(|| anyhow::anyhow!("skill_get requires `id`, `skill`, or `name`"))?;
 
         let pool = parse_optional_pool(invocation.input.get("pool"));
@@ -208,7 +212,12 @@ impl Tool for SkillGetTool {
             Some(ref p) if !requested.contains('/') => format!("{p}/{requested}"),
             _ => requested.to_string(),
         };
-        let skill = load_skill_by_id(&config.skills, &self.project_dir, &self.data_dir, &lookup)?;
+        let skill = load_skill_by_id(&config.skills, &self.project_dir, &self.data_dir, &lookup)
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "{err} (call `skill_list` to see available skill ids, or check the `pool` argument)"
+                )
+            })?;
 
         Ok(helpers::ok(
             invocation.id,

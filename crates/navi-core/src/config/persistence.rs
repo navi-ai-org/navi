@@ -218,7 +218,16 @@ pub(crate) fn navi_dirs() -> Result<ProjectDirs> {
 /// directory does not exist, falls back to the platform-native
 /// `ProjectDirs::config_dir()`.
 pub(crate) fn global_config_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+    global_config_dir_with(&|key| std::env::var(key).ok())
+}
+
+/// [`global_config_dir`] with an injectable environment lookup.
+///
+/// Injected so tests are deterministic without mutating the process
+/// environment (a race with other parallel tests reading `HOME`/
+/// `XDG_CONFIG_HOME` made this suite flaky).
+fn global_config_dir_with(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    if let Some(xdg) = env("XDG_CONFIG_HOME")
         && !xdg.trim().is_empty()
     {
         let p = PathBuf::from(xdg).join("navi");
@@ -227,10 +236,8 @@ pub(crate) fn global_config_dir() -> Option<PathBuf> {
         }
     }
     let home_candidates: [Option<String>; 2] = [
-        std::env::var("HOME").ok().filter(|s| !s.trim().is_empty()),
-        std::env::var("USERPROFILE")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
+        env("HOME").filter(|s| !s.trim().is_empty()),
+        env("USERPROFILE").filter(|s| !s.trim().is_empty()),
     ];
     for home in home_candidates.iter().flatten() {
         let p = PathBuf::from(home).join(".config").join("navi");
@@ -486,37 +493,18 @@ name = "gpt-test"
         let xdg_config = tempdir.path().join(".config").join("navi");
         fs::create_dir_all(&xdg_config).expect("mkdir");
 
-        // Save HOME and XDG_CONFIG_HOME, restore on drop.
-        let old_home = std::env::var_os("HOME");
-        let old_xdg = std::env::var_os("XDG_CONFIG_HOME");
-        // On Windows, HOME is typically unset; set it to the temp dir.
-        // SAFETY: tests are single-threaded here; no other thread reads env.
-        unsafe {
-            std::env::set_var("HOME", tempdir.path());
-            std::env::remove_var("XDG_CONFIG_HOME");
-        }
-
-        let resolved = global_config_dir();
+        // No process-env mutation: the lookup is injected, so parallel tests
+        // cannot observe (or corrupt) this test's HOME/XDG values.
+        let home = tempdir.path().to_string_lossy().to_string();
+        let resolved = global_config_dir_with(&|key| match key {
+            "HOME" => Some(home.clone()),
+            _ => None,
+        });
         assert_eq!(
             resolved,
             Some(xdg_config.clone()),
             "global_config_dir should prefer $HOME/.config/navi when it exists"
         );
-
-        // Restore.
-        // SAFETY: same single-threaded context.
-        unsafe {
-            if let Some(v) = old_home {
-                std::env::set_var("HOME", v);
-            } else {
-                std::env::remove_var("HOME");
-            }
-            if let Some(v) = old_xdg {
-                std::env::set_var("XDG_CONFIG_HOME", v);
-            } else {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
     }
 
     #[test]
@@ -529,33 +517,17 @@ name = "gpt-test"
         let _home_config = tempdir.path().join(".config").join("navi");
         fs::create_dir_all(&_home_config).expect("mkdir");
 
-        let old_home = std::env::var_os("HOME");
-        let old_xdg = std::env::var_os("XDG_CONFIG_HOME");
-        // SAFETY: tests are single-threaded here; no other thread reads env.
-        unsafe {
-            std::env::set_var("HOME", tempdir.path());
-            std::env::set_var("XDG_CONFIG_HOME", &xdg_root);
-        }
-
-        let resolved = global_config_dir();
+        let home = tempdir.path().to_string_lossy().to_string();
+        let xdg = xdg_root.to_string_lossy().to_string();
+        let resolved = global_config_dir_with(&|key| match key {
+            "XDG_CONFIG_HOME" => Some(xdg.clone()),
+            "HOME" => Some(home.clone()),
+            _ => None,
+        });
         assert_eq!(
             resolved,
             Some(xdg_config),
             "XDG_CONFIG_HOME should take precedence over $HOME/.config"
         );
-
-        // SAFETY: same single-threaded context.
-        unsafe {
-            if let Some(v) = old_home {
-                std::env::set_var("HOME", v);
-            } else {
-                std::env::remove_var("HOME");
-            }
-            if let Some(v) = old_xdg {
-                std::env::set_var("XDG_CONFIG_HOME", v);
-            } else {
-                std::env::remove_var("XDG_CONFIG_HOME");
-            }
-        }
     }
 }

@@ -176,6 +176,17 @@ pub(super) fn tool_error(
 }
 
 pub(crate) fn truncate_tool_result(mut result: ToolResult) -> ToolResult {
+    // Multimodal payloads (base64 images) must survive truncation: the content
+    // parts are extracted after this point (`take_tool_content_parts`) and a
+    // truncated JSON *text* is useless to the model. The producing tool caps
+    // the image size itself (`MAX_VIEW_IMAGE_BYTES`).
+    if result
+        .output
+        .get(crate::tool::NAVI_CONTENT_PARTS_KEY)
+        .is_some()
+    {
+        return result;
+    }
     result.output = truncate_json(result.output, 128 * 1024);
     result
 }
@@ -183,10 +194,47 @@ pub(crate) fn truncate_tool_result(mut result: ToolResult) -> ToolResult {
 fn truncate_json(value: Value, max_bytes: usize) -> Value {
     let serialized = value.to_string();
     if serialized.len() <= max_bytes {
-        value
-    } else {
-        json!({ "truncated": true, "content": truncate_string(serialized, max_bytes) })
+        return value;
     }
+    // Prefer shrinking the largest string fields in place: keeping the object
+    // shape preserves error_code / hint / next_start_line, which is what makes
+    // a truncated result actionable for the model.
+    if let Value::Object(mut map) = value {
+        let budget = max_bytes.saturating_sub(64);
+        let mut total = serialized.len();
+        while total > budget {
+            let largest = map
+                .iter()
+                .filter_map(|(key, value)| value.as_str().map(|s| (key.clone(), s.len())))
+                .max_by_key(|(_, len)| *len);
+            let Some((key, len)) = largest else {
+                break;
+            };
+            if len <= 16 {
+                break;
+            }
+            let Some(existing) = map.get(&key).and_then(Value::as_str) else {
+                break;
+            };
+            let mut end = (len / 2).min(existing.len());
+            while end > 0 && !existing.is_char_boundary(end) {
+                end -= 1;
+            }
+            let mut shrunk = existing[..end].to_string();
+            shrunk.push_str("\n<truncated>");
+            total = total.saturating_sub(len).saturating_add(shrunk.len());
+            map.insert(key, Value::String(shrunk));
+        }
+        map.insert("truncated".to_string(), Value::Bool(true));
+        let out = Value::Object(map);
+        if out.to_string().len() <= max_bytes {
+            return out;
+        }
+        // Still too large (many fields): fall back to the compact form.
+        let serialized = out.to_string();
+        return json!({ "truncated": true, "content": truncate_string(serialized, max_bytes) });
+    }
+    json!({ "truncated": true, "content": truncate_string(serialized, max_bytes) })
 }
 
 pub(super) fn truncate_string(mut value: String, max_bytes: usize) -> String {
@@ -234,7 +282,16 @@ pub(super) fn grep_path(
         if matches.len() >= max_results {
             break;
         }
-        grep_path(&entry?.path(), pattern, max_results, matches)?;
+        let Ok(entry) = entry else {
+            continue;
+        };
+        // Skip symlinks: following them can cycle (`dir/link -> ..`) and
+        // recurse until the stack overflows. Unreadable entries are skipped
+        // instead of aborting the whole walk.
+        if entry.file_type().map(|t| t.is_symlink()).unwrap_or(true) {
+            continue;
+        }
+        let _ = grep_path(&entry.path(), pattern, max_results, matches);
     }
     Ok(())
 }
@@ -480,16 +537,28 @@ mod tests {
     }
 
     #[test]
-    fn truncate_tool_result_wraps_large_output() {
+    fn truncate_tool_result_shrinks_large_field_in_place() {
         let large_string = "x".repeat(200 * 1024);
         let result = ToolResult {
             invocation_id: "inv".to_string(),
             ok: true,
-            output: json!({"data": large_string}),
+            output: json!({
+                "data": large_string,
+                "error_code": "boom",
+                "hint": "retry with a narrower range",
+            }),
         };
         let truncated = truncate_tool_result(result);
         assert_eq!(truncated.output["truncated"], true);
-        assert!(truncated.output["content"].as_str().is_some());
+        // The object shape (and its actionable keys) survives truncation.
+        assert_eq!(truncated.output["error_code"], "boom");
+        assert_eq!(truncated.output["hint"], "retry with a narrower range");
+        let data = truncated.output["data"]
+            .as_str()
+            .expect("data stays a string");
+        assert!(data.ends_with("<truncated>"), "{data:?}");
+        assert!(data.len() < 200 * 1024);
+        assert!(truncated.output.to_string().len() <= 128 * 1024);
     }
 
     // ── Mutation-killing: should_skip ─────────────────────────────────────

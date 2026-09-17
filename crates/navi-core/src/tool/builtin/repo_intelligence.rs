@@ -228,9 +228,11 @@ fn run_action(
         }
         RepoIntelligenceAction::OwnershipChurn => {
             let max_results = bounded(input, "max_results", 20, 200);
+            // A git failure must surface as an error, not as `churn: []`.
+            let churn = churn_from_git_log(root, max_results).map_err(anyhow::Error::msg)?;
             Ok(json!({
                 "schema_version": helpers::SPECIALIZED_SCHEMA_VERSION,
-                "churn": churn_from_git_log(root, max_results),
+                "churn": churn,
             }))
         }
     }

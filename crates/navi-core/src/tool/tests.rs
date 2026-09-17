@@ -635,14 +635,19 @@ async fn bash_timeout_kills_child_process() {
 
     // Write a pid file then sleep past the timeout. After the tool returns,
     // the process must be gone (not left running under kill_on_drop only).
-    // Cross-platform: PowerShell on Windows, bash on Unix.
+    // Cross-platform: PowerShell on Windows, a POSIX shell on Unix. The Unix
+    // branch runs `sh -c` explicitly: the tool resolves its shell from `$SHELL`
+    // (fish/zsh/nu are valid hosts) and `$$` is not portable across them.
     let command = if cfg!(windows) {
         format!(
             "Set-Content -Path '{marker}' -Value $PID; Start-Sleep -Seconds 30",
             marker = marker_s
         )
     } else {
-        format!("echo $$ > '{marker}'; sleep 30", marker = marker_s)
+        format!(
+            "sh -c 'echo $$ > \"{marker}\"; sleep 30'",
+            marker = marker_s
+        )
     };
     let result = executor
         .invoke(ToolInvocation {
@@ -3153,6 +3158,88 @@ async fn tool_result_truncation_preserves_structure() {
     let content = result.output["content"].as_str().unwrap_or("");
     // Should be truncated but still valid
     assert!(!content.is_empty());
+}
+
+#[tokio::test]
+async fn code_exec_truncates_trace_note_output() {
+    // Regression: trace-note ignored max_output_bytes and always reported
+    // `output_truncated: false`.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    let big_note = "n".repeat(64 * 1024);
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "code-exec-trace".to_string(),
+            tool_name: "code_exec".to_string(),
+            input: json!({
+                "max_output_bytes": 1024,
+                "ops": [{ "op": "trace-note", "note": big_note }]
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(result.output["status"], "passed");
+    assert_eq!(result.output["results"][0]["output_truncated"], true);
+}
+
+#[tokio::test]
+async fn code_exec_runs_repo_search_op() {
+    // Regression: the nested `search` invocation omitted `action`, so every
+    // repo-search op failed schema validation.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("needle.txt"), "needle here\n").unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "code-exec-search".to_string(),
+            tool_name: "code_exec".to_string(),
+            input: json!({
+                "ops": [
+                    { "op": "repo-search", "pattern": "needle", "path": "." }
+                ]
+            }),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert_eq!(result.output["status"], "passed", "{:?}", result.output);
+    assert_eq!(result.output["results"][0]["tool"], "search");
+    assert_eq!(
+        result.output["results"][0]["ok"], true,
+        "repo-search op must succeed: {:?}",
+        result.output
+    );
+}
+
+#[tokio::test]
+async fn large_image_content_parts_survive_result_truncation() {
+    // Regression: the base64 payload pushed the result past the 128 KiB cap and
+    // the whole object (including the content parts) was replaced by a JSON
+    // text blob, so the image was silently dropped on `ok: true`.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+    std::fs::write(tempdir.path().join("big.png"), vec![0u8; 200 * 1024]).unwrap();
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "view-big".to_string(),
+            tool_name: "view_image".to_string(),
+            input: json!({"path": "big.png"}),
+        })
+        .await;
+
+    assert!(result.ok, "{:?}", result.output);
+    assert!(
+        result
+            .output
+            .get(crate::tool::NAVI_CONTENT_PARTS_KEY)
+            .is_some(),
+        "content parts must survive truncation: {:?}",
+        result.output
+    );
 }
 
 // ── Permissive security policy edge case ──────────────────────────────────

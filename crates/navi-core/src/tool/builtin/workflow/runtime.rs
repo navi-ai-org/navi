@@ -94,7 +94,21 @@ pub fn run_lua_workflow(input: LuaRunInput) -> Result<LuaRunOutcome, WorkflowHos
         }
     };
 
-    let result = lua_to_json(&lua, result_lua).unwrap_or(JsonValue::Null);
+    let result = match lua_to_json(&lua, result_lua) {
+        Ok(value) => value,
+        Err(err) => {
+            // Do not report `ok` with a null result when the script returned
+            // something that cannot be serialized.
+            return Ok(outcome_err(
+                &host,
+                WorkflowErrorCode::ScriptRuntimeError,
+                format!("workflow returned a value that cannot be serialized to JSON: {err}"),
+                Some(
+                    "Return only JSON-serializable values: numbers, strings, booleans, and plain tables (no functions, userdata, or cyclic tables).",
+                ),
+            ));
+        }
+    };
     Ok(LuaRunOutcome {
         result,
         phases: take_phases(&host),
@@ -484,17 +498,29 @@ fn resolve_deferred(lua: &Lua, host: &HostState, value: LuaValue) -> mlua::Resul
                 let truncated = truncate_json_value(result.output, AGENT_RESULT_MAX_BYTES);
                 return json_to_lua(lua, &truncated);
             }
-            // Recurse into array-like tables.
+            // Rebuild the table, resolving markers under array *and* string
+            // keys: a marker under a string key (`{out = agent("x")}`) used to
+            // pass through unresolved and its receiver was never drained.
             let len = t.len()?;
-            if len > 0 {
-                let out = lua.create_table()?;
-                for i in 1..=len {
-                    let v: LuaValue = t.get(i)?;
-                    out.set(i, resolve_deferred(lua, host, v)?)?;
+            let mut string_keys: Vec<(LuaValue, LuaValue)> = Vec::new();
+            for pair in t.pairs::<LuaValue, LuaValue>() {
+                let (key, value) = pair?;
+                if !matches!(key, LuaValue::Integer(_)) {
+                    string_keys.push((key, value));
                 }
-                return Ok(LuaValue::Table(out));
             }
-            Ok(LuaValue::Table(t))
+            if len == 0 && string_keys.is_empty() {
+                return Ok(LuaValue::Table(t));
+            }
+            let out = lua.create_table()?;
+            for i in 1..=len {
+                let v: LuaValue = t.get(i)?;
+                out.set(i, resolve_deferred(lua, host, v)?)?;
+            }
+            for (key, value) in string_keys {
+                out.set(key, resolve_deferred(lua, host, value)?)?;
+            }
+            Ok(LuaValue::Table(out))
         }
         other => Ok(other),
     }

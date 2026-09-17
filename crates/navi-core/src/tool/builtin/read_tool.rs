@@ -93,7 +93,11 @@ impl Tool for ReadTool {
             total_lines
         } else {
             match end_line {
-                Some(e) => (e as usize).clamp(start_idx, total_lines),
+                // Clamp so the window always advances by at least one line:
+                // `end_line < start_line` must not yield an empty slice whose
+                // `next_start_line` equals the requested `start_line` (that
+                // makes paging clients re-issue the identical request forever).
+                Some(e) => (e as usize).clamp(start_idx + 1, total_lines),
                 None => (start_idx + DEFAULT_READ_LINE_LIMIT).min(total_lines),
             }
         };
@@ -105,13 +109,19 @@ impl Tool for ReadTool {
         };
 
         let mut sliced_content = sliced_lines.join("\n");
-        if !sliced_content.is_empty()
+        // Decide on the trailing newline from the *slice*, not from the joined
+        // string: a slice of a single empty line joins to "" and used to lose
+        // the newline (content "" for a file whose only line is blank).
+        if !sliced_lines.is_empty()
             && ((end_idx == total_lines && content.ends_with('\n')) || end_idx < total_lines)
         {
             sliced_content.push('\n');
         }
 
-        let truncated = start_idx > 0 || end_idx < total_lines;
+        // `truncated` means "there is more of this file to read". A start past
+        // EOF returns nothing and has no continuation, so it must not claim
+        // truncation (clients that page on `truncated` would spin).
+        let truncated = start_idx < total_lines && (start_idx > 0 || end_idx < total_lines);
 
         let (next_start, remaining) = if end_idx < total_lines {
             (
@@ -423,5 +433,107 @@ mod tests {
         assert_eq!(result.output["start_line"], 1);
         assert_eq!(result.output["end_line"], 1);
         assert_eq!(result.output["total_lines"], 1);
+    }
+
+    // ── Blank-line slices (newline must not be dropped) ────────────────
+
+    #[tokio::test]
+    async fn invoke_blank_line_only_file_keeps_newline() {
+        // Regression: a file that is a single empty line came back as
+        // `content: ""` (the joined slice is empty, so the newline was
+        // dropped) while still reporting `total_lines: 1`.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("blank.txt"), "\n").unwrap();
+
+        let tool = ReadTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "blank".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "blank.txt" }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert_eq!(result.output["total_lines"], 1);
+        assert_eq!(result.output["content"], "\n");
+    }
+
+    #[tokio::test]
+    async fn invoke_blank_line_range_keeps_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("mixed.txt"), "a\n\nb\n").unwrap();
+
+        let tool = ReadTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "blank-range".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "mixed.txt", "start_line": 2, "end_line": 2 }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert_eq!(result.output["content"], "\n");
+        assert_eq!(result.output["start_line"], 2);
+        assert_eq!(result.output["end_line"], 2);
+    }
+
+    // ── Paging safety (no truncated-without-continuation, always progress) ──
+
+    #[tokio::test]
+    async fn invoke_start_line_past_eof_is_not_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("one.txt"), "only line\n").unwrap();
+
+        let tool = ReadTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "past-eof".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "one.txt", "start_line": 10 }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert_eq!(result.output["content"], "");
+        assert!(
+            !result.output["truncated"].as_bool().unwrap(),
+            "past-EOF read must not claim truncation with no continuation: {}",
+            result.output
+        );
+        assert!(result.output["next_start_line"].is_null());
+    }
+
+    #[tokio::test]
+    async fn invoke_end_line_before_start_line_still_advances() {
+        // Regression: `end_line < start_line` used to return an empty window
+        // whose `next_start_line` equalled the requested `start_line`, so a
+        // paging client re-issued the identical request forever.
+        let dir = tempfile::tempdir().unwrap();
+        let lines: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+        fs::write(dir.path().join("ten.txt"), &lines).unwrap();
+
+        let tool = ReadTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "backwards".into(),
+                tool_name: "read_file".into(),
+                input: json!({ "path": "ten.txt", "start_line": 5, "end_line": 2 }),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.ok);
+        assert_eq!(result.output["start_line"], 5);
+        assert_eq!(
+            result.output["end_line"], 5,
+            "window must include at least one line"
+        );
+        assert_eq!(result.output["content"], "line 5\n");
+        assert_eq!(result.output["next_start_line"], 6);
     }
 }

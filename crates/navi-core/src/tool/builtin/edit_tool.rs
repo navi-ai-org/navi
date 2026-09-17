@@ -311,15 +311,19 @@ fn apply_one_edit(
     let matches = count_non_overlapping(content, old_string);
     if matches == 0 {
         // Trailing-newline tolerant fallback (same spirit as write_tool search/replace).
+        // The fallback may only match at a line end (or EOF): accepting a
+        // mid-line match would silently split the line instead of reporting
+        // "old_string not found".
         let old_norm = old_string.strip_suffix('\n').unwrap_or(old_string);
         if old_norm != old_string {
-            let matches_norm = count_non_overlapping(content, old_norm);
+            let matches_norm = count_non_overlapping_at_line_end(content, old_norm);
             if matches_norm == 1 || (replace_all && matches_norm > 0) {
                 let next = if replace_all {
-                    content.replace(old_norm, new_string)
+                    replace_all_at_line_end(content, old_norm, new_string)
                 } else {
-                    content.replacen(old_norm, new_string, 1)
-                };
+                    replace_first_at_line_end(content, old_norm, new_string)
+                }
+                .unwrap_or_else(|| content.to_string());
                 if next == content {
                     return Err("new content is the same as old content. No changes made.".into());
                 }
@@ -366,6 +370,75 @@ fn count_non_overlapping(haystack: &str, needle: &str) -> usize {
         start += pos + needle.len();
     }
     count
+}
+
+/// True when a match ending at `end` sits at a line boundary (end of content
+/// or right before a newline).
+fn is_line_end_match(haystack: &str, end: usize) -> bool {
+    end == haystack.len() || haystack.as_bytes().get(end) == Some(&b'\n')
+}
+
+/// Count occurrences of `needle` that end at a line boundary — the only
+/// positions where the trailing-newline-tolerant fallback may match.
+fn count_non_overlapping_at_line_end(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0usize;
+    let mut start = 0usize;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let end = start + pos + needle.len();
+        if is_line_end_match(haystack, end) {
+            count += 1;
+        }
+        start = end;
+    }
+    count
+}
+
+/// Replace the first line-end occurrence of `needle`; `None` when absent.
+fn replace_first_at_line_end(haystack: &str, needle: &str, replacement: &str) -> Option<String> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut start = 0usize;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let abs = start + pos;
+        let end = abs + needle.len();
+        if is_line_end_match(haystack, end) {
+            let mut out = String::with_capacity(haystack.len() - needle.len() + replacement.len());
+            out.push_str(&haystack[..abs]);
+            out.push_str(replacement);
+            out.push_str(&haystack[end..]);
+            return Some(out);
+        }
+        start = end;
+    }
+    None
+}
+
+/// Replace every line-end occurrence of `needle`; `None` when absent.
+fn replace_all_at_line_end(haystack: &str, needle: &str, replacement: &str) -> Option<String> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(haystack.len());
+    let mut start = 0usize;
+    let mut replaced = 0usize;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let abs = start + pos;
+        let end = abs + needle.len();
+        if is_line_end_match(haystack, end) {
+            out.push_str(&haystack[start..abs]);
+            out.push_str(replacement);
+            replaced += 1;
+        } else {
+            out.push_str(&haystack[start..end]);
+        }
+        start = end;
+    }
+    out.push_str(&haystack[start..]);
+    (replaced > 0).then_some(out)
 }
 
 fn create_new_file(full: &Path, content: &str) -> std::result::Result<EditOutcome, String> {
@@ -879,5 +952,44 @@ mod tests {
             .unwrap();
         assert!(result.ok, "{:?}", result.output);
         assert_eq!(fs::read_to_string(&outside).unwrap(), "b\n");
+    }
+
+    // ── Trailing-newline fallback must not match mid-line ───────────────
+
+    #[test]
+    fn fallback_rejects_mid_line_match() {
+        // `old_string` ends with a newline but only occurs mid-line: the
+        // fallback must report "not found" instead of splitting the line.
+        let content = "let x = foo + 1;\n";
+        let err = apply_one_edit(content, "foo\n", "bar\n", false).unwrap_err();
+        assert!(err.contains("not found"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn fallback_accepts_match_at_end_of_content() {
+        let out = apply_one_edit("a\nb", "b\n", "B\n", false).unwrap();
+        assert_eq!(out, "a\nB\n");
+    }
+
+    #[test]
+    fn fallback_accepts_multiline_match_at_end_of_content() {
+        // Search block spans several lines and the file lacks the final
+        // newline: the fallback matches at EOF and consumes the newline.
+        let out = apply_one_edit("x\na\nb\nc", "a\nb\nc\n", "A\nB\nC\n", false).unwrap();
+        assert_eq!(out, "x\nA\nB\nC\n");
+    }
+
+    #[test]
+    fn fallback_replace_all_only_rewrites_line_end_matches() {
+        let content = "foo + 1;\nfoo";
+        let out = apply_one_edit(content, "foo\n", "bar\n", true).unwrap();
+        assert_eq!(out, "foo + 1;\nbar\n");
+    }
+
+    #[test]
+    fn fallback_returns_error_when_only_mid_line_matches_exist() {
+        let content = "foo + 1;\nfoo + 2;\n";
+        let err = apply_one_edit(content, "foo\n", "bar\n", true).unwrap_err();
+        assert!(err.contains("not found"), "unexpected error: {err}");
     }
 }

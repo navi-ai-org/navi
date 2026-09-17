@@ -1756,21 +1756,29 @@ async fn ask_user_question(
 fn question_request_from_invocation(
     invocation: &crate::tool::ToolInvocation,
 ) -> std::result::Result<crate::event::QuestionRequest, String> {
-    let question = invocation
-        .input
-        .get("question")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| "question must include a non-empty `question` string".to_string())?
-        .trim()
+    let question = ["question", "title", "description"]
+        .iter()
+        .find_map(|key| {
+            invocation
+                .input
+                .get(*key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .ok_or_else(|| {
+            "question must include a non-empty `question`, `title`, or `description` string"
+                .to_string()
+        })?
         .to_string();
     let options_value = invocation
         .input
         .get("options")
         .and_then(Value::as_array)
-        .ok_or_else(|| "question must include an `options` array".to_string())?;
+        .cloned()
+        .unwrap_or_default();
     let mut options = Vec::new();
-    for option in options_value {
+    for option in &options_value {
         if let Some(label) = option.as_str() {
             options.push(crate::event::QuestionOption {
                 label: label.to_string(),
@@ -1796,8 +1804,16 @@ fn question_request_from_invocation(
             description,
         });
     }
+    // Options are optional: omitting them (or `freeform: true`) requests a
+    // free-form answer, matching the `question` tool's own description.
     if options.is_empty() {
-        return Err("question must include at least one option".to_string());
+        return Ok(crate::event::QuestionRequest {
+            id: invocation.id.clone(),
+            question,
+            options,
+            multiple: false,
+            allow_custom: true,
+        });
     }
     Ok(crate::event::QuestionRequest {
         id: invocation.id.clone(),

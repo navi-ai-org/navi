@@ -352,6 +352,13 @@ impl ShellKind {
     }
 }
 
+/// Environment lookup used during shell resolution.
+///
+/// Injected (rather than reading the process env directly) so resolution can
+/// be tested deterministically without mutating the environment of a test
+/// process that runs other tests in parallel threads.
+type ShellEnvLookup<'a> = &'a dyn Fn(&str) -> Option<String>;
+
 /// Resolve the shell program path from config, env, or platform defaults.
 ///
 /// Resolution order:
@@ -361,6 +368,14 @@ impl ShellKind {
 /// 4. `NAVI_BASH_SHELL` env var (legacy, Windows)
 /// 5. Platform default: `bash` on Unix, `pwsh`->`powershell` on Windows
 fn resolve_shell_program(config: &crate::config::ShellConfig) -> PathBuf {
+    resolve_shell_program_with_env(config, &|key| std::env::var(key).ok())
+}
+
+/// [`resolve_shell_program`] with an injectable environment lookup.
+fn resolve_shell_program_with_env(
+    config: &crate::config::ShellConfig,
+    env: ShellEnvLookup<'_>,
+) -> PathBuf {
     // 1. Config
     if let Some(program) = &config.program {
         let trimmed = program.trim();
@@ -369,21 +384,21 @@ fn resolve_shell_program(config: &crate::config::ShellConfig) -> PathBuf {
         }
     }
     // 2. NAVI_SHELL env (cross-platform)
-    if let Ok(shell) = std::env::var("NAVI_SHELL") {
+    if let Some(shell) = env("NAVI_SHELL") {
         let trimmed = shell.trim();
         if !trimmed.is_empty() {
             return resolve_shell_path(trimmed);
         }
     }
     // 3. SHELL env (Unix, but may be set on Windows in Git Bash sessions)
-    if let Ok(shell) = std::env::var("SHELL") {
+    if let Some(shell) = env("SHELL") {
         let trimmed = shell.trim();
         if !trimmed.is_empty() {
             return resolve_shell_path(trimmed);
         }
     }
     // 4. Legacy NAVI_BASH_SHELL (Windows)
-    if let Ok(shell) = std::env::var("NAVI_BASH_SHELL") {
+    if let Some(shell) = env("NAVI_BASH_SHELL") {
         let trimmed = shell.trim();
         if !trimmed.is_empty() {
             return resolve_shell_path(trimmed);
@@ -415,21 +430,49 @@ fn platform_default_shell() -> PathBuf {
     }
 }
 
+/// Extract the final path component of a shell program, accepting both `/`
+/// and `\` as separators on every platform.
+///
+/// `Path::file_name` only splits on the *host* platform's separators, so a
+/// Windows-style program path (`C:\Program Files\PowerShell\7\pwsh.exe`)
+/// collapses into a single component on Unix and detection silently degrades
+/// to [`ShellKind::Unknown`] (wrong shell description + `-c` argv guess).
+fn program_file_name(program: &str) -> String {
+    program
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(program)
+        .trim()
+        .to_ascii_lowercase()
+}
+
 /// Detect which shell kind the tool will invoke, given a shell config.
 fn detect_shell_kind_with(config: &crate::config::ShellConfig) -> ShellKind {
-    let program = resolve_shell_program(config);
-    let name = program
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    ShellKind::from_program_name(&name)
+    detect_shell_kind_with_env(config, &|key| std::env::var(key).ok())
+}
+
+/// [`detect_shell_kind_with`] with an injectable environment lookup.
+fn detect_shell_kind_with_env(
+    config: &crate::config::ShellConfig,
+    env: ShellEnvLookup<'_>,
+) -> ShellKind {
+    let program = resolve_shell_program_with_env(config, env);
+    ShellKind::from_program_name(&program_file_name(&program.to_string_lossy()))
 }
 
 /// Detect which shell kind the tool will invoke using default config (env only).
 #[cfg(test)]
 fn detect_shell_kind() -> ShellKind {
     detect_shell_kind_with(&crate::config::ShellConfig::default())
+}
+
+/// Test-only env lookup that reports "no variables set".
+///
+/// Keeps platform-default assertions independent from the developer's real
+/// `SHELL` (a fish/zsh host would otherwise flip the expected kind).
+#[cfg(test)]
+fn no_env(_key: &str) -> Option<String> {
+    None
 }
 
 /// Resolve the argv prefix for the shell, honoring config overrides.
@@ -1918,7 +1961,9 @@ mod shell_select_tests {
             .status()
             .is_ok_and(|s| s.success());
         assert!(has_bash, "bash should be available on Unix test hosts");
-        let kind = detect_shell_kind();
+        // Platform default with no config/env override must be bash. The
+        // developer's own `SHELL` (fish/zsh/...) must not leak in here.
+        let kind = detect_shell_kind_with_env(&ShellConfig::default(), &no_env);
         assert_eq!(kind, ShellKind::Bash, "Unix default must be bash");
     }
 
@@ -2318,8 +2363,9 @@ mod shell_kind_tests {
     #[test]
     fn no_program_defaults_to_platform_shell() {
         // With no program and no env override, the platform default is used:
-        // bash on Unix, pwsh/powershell on Windows.
-        let kind = detect_shell_kind_with(&cfg(None));
+        // bash on Unix, pwsh/powershell on Windows. Passing `no_env` keeps
+        // this deterministic on hosts whose `SHELL` is fish/zsh.
+        let kind = detect_shell_kind_with_env(&cfg(None), &no_env);
         #[cfg(not(windows))]
         {
             assert_eq!(kind, ShellKind::Bash, "Unix default must be bash");
@@ -2331,6 +2377,91 @@ mod shell_kind_tests {
                 "Windows default must be pwsh or powershell, got: {kind:?}"
             );
         }
+    }
+
+    // --- Env resolution order (config > NAVI_SHELL > SHELL > default) ---
+
+    #[test]
+    fn shell_env_is_honored_when_no_override() {
+        let kind = detect_shell_kind_with_env(&cfg(None), &|key| match key {
+            "SHELL" => Some("/usr/bin/fish".to_string()),
+            _ => None,
+        });
+        assert_eq!(kind, ShellKind::Fish);
+    }
+
+    #[test]
+    fn navi_shell_env_beats_shell_env() {
+        let kind = detect_shell_kind_with_env(&cfg(None), &|key| match key {
+            "NAVI_SHELL" => Some("/usr/bin/zsh".to_string()),
+            "SHELL" => Some("/bin/bash".to_string()),
+            _ => None,
+        });
+        assert_eq!(kind, ShellKind::Zsh);
+    }
+
+    #[test]
+    fn config_program_beats_env_overrides() {
+        let kind = detect_shell_kind_with_env(&cfg(Some("nu")), &|key| match key {
+            "NAVI_SHELL" => Some("zsh".to_string()),
+            "SHELL" => Some("/bin/bash".to_string()),
+            _ => None,
+        });
+        assert_eq!(kind, ShellKind::Nu);
+    }
+
+    #[test]
+    fn blank_env_values_fall_through_to_platform_default() {
+        // Whitespace-only env values are treated as "not set".
+        let kind = detect_shell_kind_with_env(&cfg(None), &|key| match key {
+            "NAVI_SHELL" | "SHELL" | "NAVI_BASH_SHELL" => Some("   ".to_string()),
+            _ => None,
+        });
+        #[cfg(not(windows))]
+        assert_eq!(kind, ShellKind::Bash);
+        #[cfg(windows)]
+        assert!(matches!(kind, ShellKind::Pwsh | ShellKind::PowerShell5));
+    }
+
+    // --- program_file_name (separator-agnostic extraction) ---
+
+    #[test]
+    fn program_file_name_accepts_both_separators() {
+        assert_eq!(program_file_name("bash"), "bash");
+        assert_eq!(program_file_name("/usr/bin/bash"), "bash");
+        assert_eq!(
+            program_file_name(r"C:\Program Files\Git\bin\bash.exe"),
+            "bash.exe"
+        );
+        assert_eq!(
+            program_file_name("C:/Program Files/Git/bin/bash.exe"),
+            "bash.exe"
+        );
+        assert_eq!(
+            program_file_name(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            "powershell.exe"
+        );
+        assert_eq!(program_file_name(r"\\server\share\pwsh.exe"), "pwsh.exe");
+    }
+
+    #[test]
+    fn program_file_name_trims_and_lowercases() {
+        assert_eq!(program_file_name("  BASH  "), "bash");
+        assert_eq!(program_file_name(r"C:\tools\Nu.EXE"), "nu.exe");
+    }
+
+    #[test]
+    fn program_file_name_without_component_is_empty() {
+        assert_eq!(program_file_name("/"), "");
+        assert_eq!(program_file_name(r"C:\"), "");
+        assert_eq!(program_file_name(""), "");
+    }
+
+    #[test]
+    fn program_file_name_handles_unicode_and_emoji_dirs() {
+        assert_eq!(program_file_name("C:\\ユーザー\\pwsh.exe"), "pwsh.exe");
+        assert_eq!(program_file_name("C:\\tools\\🚀\\pwsh.exe"), "pwsh.exe");
+        assert_eq!(program_file_name("バッシュ"), "バッシュ");
     }
 
     // ================================================================
@@ -2582,7 +2713,11 @@ mod shell_kind_tests {
     #[cfg(not(windows))]
     #[test]
     fn unix_detects_bash() {
-        assert_eq!(detect_shell_kind(), ShellKind::Bash);
+        // No config, no env → platform default (bash on Unix).
+        assert_eq!(
+            detect_shell_kind_with_env(&cfg(None), &no_env),
+            ShellKind::Bash
+        );
     }
 
     #[cfg(windows)]

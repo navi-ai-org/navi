@@ -752,11 +752,14 @@ fn apply_search_replace(content: &str, search: &str, replace: &str) -> Option<St
     }
     // Fallback: ignore trailing newline differences in the search block.
     let search_normalized = search.strip_suffix('\n').unwrap_or(search);
-    let replace_normalized = if replace.ends_with('\n') || search.ends_with('\n') {
-        replace.to_string()
-    } else {
-        replace.to_string()
-    };
+    // A newline-only `search` normalizes to an empty needle, which matches at
+    // every offset: the scan below would never advance `cursor` and the tool
+    // would hang. Nothing meaningful to replace — report "not found",
+    // mirroring the empty-needle guard in `edit_tool::count_non_overlapping`.
+    if search_normalized.is_empty() {
+        return None;
+    }
+    let replace_normalized = replace.to_string();
     let mut cursor = 0usize;
     while let Some(pos) = content[cursor..].find(search_normalized) {
         let absolute = cursor + pos;
@@ -2834,5 +2837,95 @@ mod tests {
         assert!(result.ok, "fuzzy patch failed: {:?}", result.output);
         let expected = "import asyncio  # HELLO\n";
         assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+    }
+
+    // ── apply_search_replace (edits mode) ──────────────────────────────
+
+    #[test]
+    fn apply_search_replace_matches_exact_block() {
+        assert_eq!(
+            apply_search_replace("a\nb\nc\n", "b\n", "B\n"),
+            Some("a\nB\nc\n".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_falls_back_when_trailing_newline_missing() {
+        assert_eq!(
+            apply_search_replace("a\nb", "b\n", "B\n"),
+            Some("a\nB\n".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_fallback_handles_multiline_block() {
+        assert_eq!(
+            apply_search_replace("x\na\nb\nc", "a\nb\nc\n", "A\nB\nC\n"),
+            Some("x\nA\nB\nC\n".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_fallback_preserves_unicode_boundaries() {
+        assert_eq!(
+            apply_search_replace("olá\nmundo", "mundo\n", "MUNDO\n"),
+            Some("olá\nMUNDO\n".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_newline_only_search_returns_none() {
+        // Regression: a newline-only `search` normalizes to an empty needle,
+        // which matches at every offset. The scan must terminate instead of
+        // spinning forever (it used to hang the tool on single-line files).
+        assert_eq!(apply_search_replace("single line", "\n", "x"), None);
+        assert_eq!(apply_search_replace("", "\n", "x"), None);
+        // A file that does have newlines still matches exactly.
+        assert_eq!(
+            apply_search_replace("has\nnewline", "\n", "x"),
+            Some("hasxnewline".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_empty_search_inserts_at_start() {
+        assert_eq!(
+            apply_search_replace("abc", "", "X"),
+            Some("Xabc".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_search_replace_returns_none_when_absent() {
+        assert_eq!(apply_search_replace("abc", "zzz\n", "y"), None);
+    }
+
+    #[tokio::test]
+    async fn edits_mode_newline_only_search_fails_without_hanging() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("single.txt"), "no trailing newline").unwrap();
+        let tool = WriteTool::new(dir.path().to_path_buf());
+        let result = tool
+            .invoke(ToolInvocation {
+                id: "edit-newline-search".into(),
+                tool_name: "write".into(),
+                input: json!({
+                    "edits": [{ "path": "single.txt", "search": "\n", "replace": "\n" }]
+                }),
+            })
+            .await
+            .unwrap();
+
+        assert!(!result.ok, "{:?}", result.output);
+        assert_eq!(result.output["error_code"], "edit_failed");
+        let msg = result.output["error"].as_str().unwrap_or_default();
+        assert!(
+            msg.contains("search block not found"),
+            "expected actionable error, got: {msg}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("single.txt")).unwrap(),
+            "no trailing newline"
+        );
     }
 }

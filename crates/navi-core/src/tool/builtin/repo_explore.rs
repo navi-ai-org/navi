@@ -78,7 +78,10 @@ impl Tool for RepoExploreTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let query = helpers::required_string(&invocation.input, "query")?.to_string();
         let context = helpers::optional_string(&invocation.input, "context");
-        let kind = helpers::optional_string(&invocation.input, "kind");
+        // A blank `kind` must mean "no filter": passing "" through would drop
+        // every symbol hit (kind comparison against an empty string).
+        let kind = helpers::optional_string(&invocation.input, "kind")
+            .filter(|kind| !kind.trim().is_empty());
         let max_results = helpers::optional_u64(&invocation.input, "max_results")
             .map(|v| v as usize)
             .unwrap_or(DEFAULT_MAX_RESULTS)
