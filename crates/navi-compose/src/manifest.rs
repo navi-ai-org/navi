@@ -69,6 +69,58 @@ fn default_exec_kind() -> String {
     "inprocess".to_string()
 }
 
+/// Finite sandbox limits for a process component (`matrix-guard` profile).
+///
+/// Declaring one puts the component inside `bwrap` + seccomp with a private
+/// writable workspace; the rest of the host filesystem is invisible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxSpec {
+    /// Writable directory inside the sandbox (`/workspace`).
+    /// Defaults to `{compose_home}/workspaces/<component>`.
+    #[serde(default)]
+    pub workspace: Option<std::path::PathBuf>,
+    /// Operator-selected read-only paths, kept at their original location.
+    #[serde(default)]
+    pub read_only: Vec<std::path::PathBuf>,
+    #[serde(default = "default_sandbox_memory")]
+    pub memory_bytes: u64,
+    #[serde(default = "default_sandbox_cpu")]
+    pub cpu_seconds: u64,
+    #[serde(default = "default_sandbox_file")]
+    pub file_bytes: u64,
+    #[serde(default = "default_sandbox_open_files")]
+    pub open_files: u64,
+}
+
+fn default_sandbox_memory() -> u64 {
+    256 * 1024 * 1024
+}
+
+fn default_sandbox_cpu() -> u64 {
+    30
+}
+
+fn default_sandbox_file() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_sandbox_open_files() -> u64 {
+    64
+}
+
+impl Default for SandboxSpec {
+    fn default() -> Self {
+        Self {
+            workspace: None,
+            read_only: Vec::new(),
+            memory_bytes: default_sandbox_memory(),
+            cpu_seconds: default_sandbox_cpu(),
+            file_bytes: default_sandbox_file(),
+            open_files: default_sandbox_open_files(),
+        }
+    }
+}
+
 impl Default for Execution {
     fn default() -> Self {
         Execution::Kind("inprocess".to_string())
@@ -251,6 +303,9 @@ pub struct ComponentManifest {
     /// NAVI-side classification (UI/engine/tool/…).
     #[serde(default)]
     pub kind: ComponentKind,
+    /// Optional finite sandbox for a process component (Linux, `bwrap`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxSpec>,
 }
 
 fn default_version() -> String {
@@ -285,6 +340,7 @@ impl ComponentManifest {
             restart: "on-failure".into(),
             calls: BTreeMap::new(),
             kind: ComponentKind::Ui,
+            sandbox: None,
         }
     }
 

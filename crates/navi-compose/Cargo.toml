@@ -30,6 +30,9 @@ matrix-core = { path = "/home/lain/projects/matrix/crates/matrix-core" }
 # Process tier: third-party components as child processes (spawn, sessions,
 # supervision). The host spawns children via matrix-guard with a launch token.
 matrix-host = { path = "/home/lain/projects/matrix/crates/matrix-host" }
+# Finite sandbox profile (bwrap + seccomp + rlimits) for components that declare
+# a `[sandbox]` in their manifest.
+matrix-guard = { path = "/home/lain/projects/matrix/crates/matrix-guard" }
 
 [dev-dependencies]
 tempfile.workspace = true

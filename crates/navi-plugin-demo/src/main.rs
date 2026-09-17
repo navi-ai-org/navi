@@ -84,7 +84,33 @@ impl Handler for RollDice {
                 "instance_id": ctx.instance_id,
                 "session_id": ctx.session_id,
                 "calls": n,
+                "cwd": std::env::current_dir()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default(),
+                "sandboxed": std::env::var_os("MATRIX_LAUNCH_TOKEN").is_some(),
             })),
+            // Filesystem probe: proves what a sandboxed plugin can and cannot
+            // reach. `path` is attempted for a write, `read` for a read.
+            "navi.plugin.fs_probe@1" => {
+                let path = input.get("path").and_then(Value::as_str).unwrap_or("");
+                let read = input.get("read").and_then(Value::as_str).unwrap_or("");
+                let write = std::fs::write(path, b"probe")
+                    .map(|_| "ok".to_string())
+                    .unwrap_or_else(|err| err.to_string());
+                let read_result = if read.is_empty() {
+                    "skipped".to_string()
+                } else {
+                    std::fs::read_to_string(read)
+                        .map(|_| "ok".to_string())
+                        .unwrap_or_else(|err| err.to_string())
+                };
+                CallOutcome::Ok(json!({
+                    "write": write,
+                    "read": read_result,
+                    "path": path,
+                    "read_path": read,
+                }))
+            }
             "navi.tool.roll_dice.definition@1" => CallOutcome::Ok(json!({
                 "name": TOOL_NAME,
                 "description": "Roll dice (deterministic given a seed). Runs in a third-party plugin process.",

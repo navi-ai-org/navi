@@ -196,6 +196,7 @@ pub fn engine_manifest() -> ComponentManifest {
         restart: "permanent".into(),
         calls: Default::default(),
         kind: ComponentKind::Engine,
+        sandbox: None,
     }
 }
 
@@ -238,6 +239,7 @@ pub fn default_manifests() -> Vec<ComponentManifest> {
         restart: "on-failure".into(),
         calls: Default::default(),
         kind: ComponentKind::Compaction,
+        sandbox: None,
     };
     compaction.calls.insert(
         "navi.compaction@1".to_string(),
@@ -283,6 +285,7 @@ pub fn terse_compaction() -> ComponentManifest {
         restart: "on-failure".into(),
         calls: Default::default(),
         kind: ComponentKind::Compaction,
+        sandbox: None,
     };
     manifest.calls.insert(
         "navi.compaction@1".to_string(),
@@ -311,6 +314,7 @@ pub fn branded_prompt() -> ComponentManifest {
         restart: "on-failure".into(),
         calls: Default::default(),
         kind: ComponentKind::Prompt,
+        sandbox: None,
     }
 }
 

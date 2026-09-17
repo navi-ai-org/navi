@@ -59,6 +59,11 @@ composition authority, with NAVI as its **host**:
   back, both proven in a real PTY. The TUI's own input is read on a thread and
   delivered over a channel, so a blocking terminal poll can never stall the
   control channel.
+- **Isolation is opt-in and finite.** A process component can declare a
+  `[sandbox]`: `matrix-guard` then runs it under `bwrap` + seccomp with rlimits,
+  a private `/tmp` and only its own workspace writable. Declaring one makes the
+  host policy *secure* (unlisted components are denied), so the policy is built
+  from the installed manifests when the host attaches.
 - **The host supervises; the kernel does not.** The Matrix process host spawns
   children and speaks the protocol, but restart policy belongs to the
   composition owner: a frontend that fails (`UiExit::Error`, including a child

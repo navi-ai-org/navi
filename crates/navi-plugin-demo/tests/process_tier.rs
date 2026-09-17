@@ -58,6 +58,7 @@ fn plugin_manifest(log_path: &Path) -> ComponentManifest {
         restart: "on-failure".to_string(),
         calls: Default::default(),
         kind: ComponentKind::Tool,
+        sandbox: None,
     }
 }
 
@@ -206,6 +207,145 @@ fn third_party_plugin_runs_out_of_process_and_swaps_by_generation() {
         log.contains("cap=navi.plugin.info@1 generation=2"),
         "the successor generation must serve calls too:\n{log}"
     );
+}
+
+/// The dice plugin plus the filesystem probe (used by the sandbox tests).
+fn plugin_manifest_with_probe(log_path: &Path) -> ComponentManifest {
+    let mut manifest = plugin_manifest(log_path);
+    manifest.capabilities.push("navi.plugin.fs_probe@1".to_string());
+    manifest
+}
+
+fn compose_for(tempdir: &tempfile::TempDir) -> Compose {
+    Compose::new(ComposeOptions {
+        home: tempdir.path().join("compose"),
+        project_dir: tempdir.path().join("project"),
+        loaded_config: test_loaded_config(tempdir.path()),
+        dry_run: false,
+        terminal_effects: false,
+        process_components: true,
+    })
+    .expect("compose")
+}
+
+#[test]
+fn a_trusted_plugin_reaches_the_host_filesystem() {
+    // A/B baseline for the sandbox test: without a `[sandbox]` the plugin is an
+    // explicitly trusted process and can write where the host user can.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let log_path = tempdir.path().join("plugin.log");
+    let target = tempdir.path().join("written-by-plugin.txt");
+    let compose = compose_for(&tempdir);
+    compose
+        .install_definition(plugin_manifest_with_probe(&log_path))
+        .expect("install plugin");
+    compose.activate(PLUGIN_ID).expect("activate");
+
+    let probe = invoke_until_ready(
+        &compose,
+        "navi.plugin.fs_probe@1",
+        &json!({"path": target.to_string_lossy()}),
+    );
+    assert_eq!(probe["write"], "ok", "trusted plugin: {probe}");
+    assert!(target.exists(), "the plugin really wrote the file");
+    let info = invoke_until_ready(&compose, "navi.plugin.info@1", &json!({}));
+    assert_ne!(
+        info["cwd"], "/workspace",
+        "a trusted plugin runs in the host's working directory: {info}"
+    );
+}
+
+#[test]
+fn a_sandboxed_plugin_cannot_see_the_host_filesystem() {
+    // Same plugin, same probe — but declared with a finite sandbox: only its
+    // private workspace is writable and the host filesystem is invisible.
+    //
+    // The host policy is fixed when the process host attaches, so the manifest
+    // is installed *before* the session starts (the `navi components install`
+    // flow): the test writes the same files the CLI writes.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let log_path = tempdir.path().join("plugin.log");
+    let host_secret = tempdir.path().join("host-secret.txt");
+    std::fs::write(&host_secret, "secret").expect("host file");
+    let escape = tempdir.path().join("escape.txt");
+    let workspace = tempdir.path().join("workspace");
+
+    let mut manifest = plugin_manifest_with_probe(&log_path);
+    manifest.sandbox = Some(navi_compose::SandboxSpec {
+        workspace: Some(workspace.clone()),
+        ..Default::default()
+    });
+    let home = tempdir.path().join("compose");
+    std::fs::create_dir_all(home.join("manifests")).expect("manifests dir");
+    // Both files an install writes: the kernel manifest and the NAVI manifest.
+    std::fs::write(
+        home.join("manifests").join(format!("{PLUGIN_ID}.json")),
+        manifest.to_kernel_json().to_string(),
+    )
+    .expect("write kernel manifest");
+    std::fs::write(
+        home.join("manifests").join(format!("{PLUGIN_ID}.toml")),
+        manifest.to_toml(),
+    )
+    .expect("write navi manifest");
+    std::fs::create_dir_all(&workspace).expect("workspace");
+
+    let compose = compose_for(&tempdir);
+    compose.activate(PLUGIN_ID).expect("activate");
+
+    let info = invoke_until_ready(&compose, "navi.plugin.info@1", &json!({}));
+    assert_eq!(
+        info["cwd"], "/workspace",
+        "a sandboxed plugin starts in its private workspace: {info}"
+    );
+
+    // Writing inside the workspace works; the host's tree is out of reach.
+    let probe = invoke_until_ready(
+        &compose,
+        "navi.plugin.fs_probe@1",
+        &json!({
+            "path": "/workspace/probe.txt",
+            "read": host_secret.to_string_lossy(),
+        }),
+    );
+    assert_eq!(probe["write"], "ok", "workspace is writable: {probe}");
+    assert_ne!(
+        probe["read"], "ok",
+        "the host file must be invisible inside the sandbox: {probe}"
+    );
+    assert!(
+        workspace.join("probe.txt").exists(),
+        "the write landed in the workspace"
+    );
+
+    // A write aimed at a host path is harmless: whatever the sandbox reports,
+    // nothing appears on the host (the sandbox has its own root tmpfs).
+    let escape_probe = invoke_until_ready(
+        &compose,
+        "navi.plugin.fs_probe@1",
+        &json!({"path": escape.to_string_lossy()}),
+    );
+    assert!(
+        !escape.exists(),
+        "nothing may escape the sandbox (probe said {:?})",
+        escape_probe["write"]
+    );
+    // Same for a path that does exist on the host: the sandbox sees its own
+    // filesystem, so the host copy is untouched.
+    let host_dir_probe = invoke_until_ready(
+        &compose,
+        "navi.plugin.fs_probe@1",
+        &json!({"path": tempdir.path().join("escape-2.txt").to_string_lossy()}),
+    );
+    assert!(
+        !tempdir.path().join("escape-2.txt").exists(),
+        "a sandboxed write never lands on the host (probe said {:?})",
+        host_dir_probe["write"]
+    );
+
+    // The capability still works: the sandbox is isolation, not a broken plugin.
+    let info_after = invoke_until_ready(&compose, "navi.plugin.info@1", &json!({}));
+    assert_eq!(info_after["id"], PLUGIN_ID);
 }
 
 #[test]

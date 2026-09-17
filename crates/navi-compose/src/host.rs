@@ -289,10 +289,17 @@ impl LifecycleHook for CompositeHook {
 }
 
 /// Attaches the process host and re-installs NAVI's chained forwarder + hook.
+///
+/// The host policy is derived from the components installed in this compose
+/// home: a component that declares a `[sandbox]` runs inside `bwrap` + seccomp,
+/// everything else is an explicitly trusted process. Once any component asks for
+/// a sandbox the policy is **secure**: a component that is not in the policy is
+/// denied (so install sandboxed plugins before the session starts, or restart).
 #[cfg(target_os = "linux")]
 fn attach_process_host(inner: &Arc<ComposeInner>) -> Result<Option<Arc<ProcessHost>>> {
     let sock_dir = inner.home.join("host");
-    let host = matrix_host::Host::attach(inner.kernel.clone(), &sock_dir)
+    let policy = host_policy(inner);
+    let host = matrix_host::Host::attach_with_policy(inner.kernel.clone(), &sock_dir, policy)
         .map_err(|err| anyhow!("matrix-host attach failed: {err}"))?;
     // `attach` installed the host as forwarder/hook/event-sink. Re-install the
     // chain so native capabilities stay in-process and everything else is
@@ -313,6 +320,81 @@ fn attach_process_host(inner: &Arc<ComposeInner>) -> Result<Option<Arc<ProcessHo
 #[cfg(not(target_os = "linux"))]
 fn attach_process_host(_inner: &Arc<ComposeInner>) -> Result<Option<Arc<ProcessHost>>> {
     Ok(None)
+}
+
+/// Builds the `matrix-host` policy from the manifests installed on disk.
+///
+/// Reads `{home}/manifests/*.toml` directly: the policy is fixed when the host
+/// attaches, which happens while the compose host is being built.
+#[cfg(target_os = "linux")]
+fn host_policy(inner: &Arc<ComposeInner>) -> matrix_host::HostPolicy {
+    let mut components: HashMap<String, Option<matrix_guard::Sandbox>> = HashMap::new();
+    let mut secure = false;
+    let dir = inner.home.join("manifests");
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let Ok(manifest) = ComponentManifest::from_toml(&text) else {
+                continue;
+            };
+            match manifest.sandbox.as_ref() {
+                Some(spec) => {
+                    secure = true;
+                    let workspace = spec
+                        .workspace
+                        .clone()
+                        .unwrap_or_else(|| inner.home.join("workspaces").join(&manifest.id));
+                    if let Err(err) = std::fs::create_dir_all(&workspace) {
+                        tracing::error!(
+                            component = %manifest.id,
+                            workspace = %workspace.display(),
+                            error = %err,
+                            "cannot prepare the sandbox workspace"
+                        );
+                        continue;
+                    }
+                    let sandbox = matrix_guard::Sandbox {
+                        workspace,
+                        read_only: spec.read_only.clone(),
+                        memory_bytes: spec.memory_bytes,
+                        cpu_seconds: spec.cpu_seconds,
+                        file_bytes: spec.file_bytes,
+                        open_files: spec.open_files,
+                    };
+                    if let Err(err) = sandbox.validate() {
+                        tracing::error!(
+                            component = %manifest.id,
+                            error = %err,
+                            "invalid sandbox declaration; the component will be denied"
+                        );
+                        continue;
+                    }
+                    components.insert(manifest.id.clone(), Some(sandbox));
+                }
+                None => {
+                    components.insert(manifest.id.clone(), None);
+                }
+            }
+        }
+    }
+    if secure {
+        tracing::info!(
+            sandboxed = components.values().filter(|entry| entry.is_some()).count(),
+            trusted = components.values().filter(|entry| entry.is_none()).count(),
+            "process host policy is secure: unlisted components are denied"
+        );
+    }
+    matrix_host::HostPolicy {
+        components,
+        secure,
+        ..Default::default()
+    }
 }
 
 /// Capability handler for a frontend's command interface.
@@ -679,6 +761,26 @@ impl Compose {
     /// kernel loads) and `<id>.toml` (the NAVI manifest, so a later process can
     /// list/activate the component with its full metadata, including `kind`).
     pub fn install_definition(&self, manifest: ComponentManifest) -> Result<PathBuf> {
+        // A sandboxed component needs its private workspace to exist before the
+        // host policy is built (`matrix-guard` validates it at spawn time).
+        if let Some(spec) = manifest.sandbox.as_ref() {
+            let workspace = spec
+                .workspace
+                .clone()
+                .unwrap_or_else(|| self.inner.home.join("workspaces").join(&manifest.id));
+            std::fs::create_dir_all(&workspace)
+                .map_err(|err| anyhow!("failed to create {}: {err}", workspace.display()))?;
+            // The host policy is fixed when the process host attaches; a
+            // sandbox installed mid-session takes effect on the next start.
+            #[cfg(target_os = "linux")]
+            if self.inner.process_host.read().is_some() {
+                tracing::warn!(
+                    component = %manifest.id,
+                    "sandbox declared after the process host attached: \
+                     it runs trusted until the session restarts"
+                );
+            }
+        }
         self.inner
             .manifests
             .write()

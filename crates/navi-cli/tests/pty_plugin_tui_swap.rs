@@ -165,6 +165,7 @@ fn install_plugin(xdg_data: &Path, project: &Path, plugin_binary: &str) {
             restart: "on-failure".to_string(),
             calls: Default::default(),
             kind: ComponentKind::Ui,
+            sandbox: None,
         })
         .expect("install plugin manifest");
 }

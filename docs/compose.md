@@ -190,9 +190,33 @@ exit, with both directions recorded in the kernel journal.
 In-process components are **trusted first-party code**: Rust provides no plugin
 isolation (Matrix CHARTER #6). Third-party components belong to the **process
 tier**: their own process, a launch token, an empty environment, no terminal.
-Operators who want stronger isolation can use Matrix's sandbox profile (`bwrap` +
-seccomp via `matrix-guard`) by declaring the component in `HostPolicy` with a
-`Sandbox` instead of `None` (explicitly trusted process).
+
+A process component can go further and ask for a **finite sandbox** (`bwrap` +
+seccomp + rlimits, via `matrix-guard`):
+
+```toml
+[sandbox]
+# workspace = "/srv/navi/workspaces/roll-dice"   # default: {compose_home}/workspaces/<id>
+memory_bytes = 268435456
+cpu_seconds = 30
+file_bytes = 10485760
+open_files = 64
+read_only = []                                    # extra host paths, read-only
+```
+
+Inside the sandbox the plugin sees `/usr` (read-only), `/proc`, `/dev`, a private
+`/tmp`, the control socket, and **only its own workspace as `/workspace`** — the
+rest of the host filesystem does not exist for it. The policy is derived from the
+installed manifests when the process host attaches; declaring a sandbox makes the
+policy **secure** (a component that is not listed is denied), so install
+sandboxed plugins before starting a session — a sandbox declared mid-session logs
+a warning and takes effect on the next start.
+
+Proven by `a_trusted_plugin_reaches_the_host_filesystem` (A/B baseline: without a
+sandbox the same probe writes a host file) and
+`a_sandboxed_plugin_cannot_see_the_host_filesystem` (starts in `/workspace`, the
+workspace is writable, a host file is unreadable, and a write aimed at a host
+path never lands on the host).
 
 ## Supervision (restart per policy)
 

@@ -33,7 +33,9 @@ pub use host::{
     ActivationOutcome, ComponentStatus, Compose, ComposeOptions, QueuedCommand, RestartOutcome,
     RestartPolicy, default_home, describe_restart,
 };
-pub use manifest::{CallPolicySpec, ComponentKind, ComponentManifest, Execution, RequirementSpec};
+pub use manifest::{
+    CallPolicySpec, ComponentKind, ComponentManifest, Execution, RequirementSpec, SandboxSpec,
+};
 pub use native::{
     Handler, HandlerError, HandlerResult, HandlerTable, Invocation, NativeForwarder,
 };

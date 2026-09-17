@@ -17,6 +17,7 @@ restart = "on-failure"
 
 capabilities = [
     "navi.plugin.info@1",
+    "navi.plugin.fs_probe@1",
     "navi.tool.roll_dice.definition@1",
     "navi.tool.roll_dice@1",
 ]
@@ -25,3 +26,13 @@ execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
     "--matrix-sock", "{sock}",
     "--id", "{id}",
 ], timeout_ms = 15000 }
+
+# Optional finite sandbox (`bwrap` + seccomp + rlimits). Uncomment to run this
+# plugin with only its private workspace visible:
+#
+# [sandbox]
+# memory_bytes = 268435456
+# cpu_seconds = 30
+# file_bytes = 10485760
+# open_files = 64
+# read_only = []
