@@ -6,7 +6,11 @@ Thank you for your interest in contributing to NAVI! This document provides guid
 
 ### Prerequisites
 
-- Rust 1.85+ (edition 2024)
+- Nightly Rust, pinned by `rust-toolchain.toml` (edition 2024). `rustup` installs the
+  pinned channel — with the required components — on the first `cargo` call.
+  Nightly is required for the whole repo, not just dev builds: `.cargo/config.toml`
+  opts into Cranelift codegen for the `dev` profile, and cargo validates that
+  opt-in on every invocation (including `cargo build --release`).
 - Git
 
 ### Building

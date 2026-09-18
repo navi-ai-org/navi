@@ -22,6 +22,8 @@ mutants.out.old/
 # local musl experiment caches
 .cargo-musl-cache/
 target/musl-portable/
+# CARGO_HOME redirected into the workspace by the arm64 musl CI job
+.cargo-home/
 
 # npm platform binaries staged for publish (not committed)
 npm/navi/npm/*/navi

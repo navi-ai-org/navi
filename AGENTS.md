@@ -153,6 +153,18 @@ cargo test -p <crate> -- --test-threads=4
 - Humans/broad gates: `just verify`, `just ci`, `just test-crate <crate>` (see `justfile`).
 - Headless: `cargo run -p navi-cli -- --no-tui TASK` (task required).
 
+### Toolchain
+
+`rust-toolchain.toml` pins the project nightly and is the only source of truth: CI and release workflows install that exact channel (`rustup install`), so never add a toolchain pin to a workflow.
+
+Nightly is required repo-wide, not just for dev builds: `.cargo/config.toml` opts into Cranelift codegen for the `dev` profile, and cargo validates that opt-in on **every** invocation — `cargo build --release`, `cargo clippy`, `cargo fmt` all refuse to run on stable. Cranelift is only set on `[profile.dev]`, so release/release-fast stay LLVM and shipping binaries are unchanged. To build on stable, move `.cargo/config.toml` aside first (there is no per-profile switch). Machine-local tuning (linker flags, `mold`, `[build] jobs`) belongs in `~/.cargo/config.toml`, not the repo config.
+
+Cranelift cannot emit coverage instrumentation (`-Cinstrument-coverage` is LLVM-only), so `cargo llvm-cov` fails on the dev profile. The coverage recipes in `justfile` and the CI `coverage` job set `CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm` for exactly that reason — copy that when adding a new coverage entry point.
+
+### Release caching
+
+`.github/workflows/release.yml` only runs on tags, and a cache saved on a tag is not visible to other tags — so its build jobs restore from the default branch, kept warm by `.github/workflows/warm-cache.yml`. When you add or rename a `Swatinem/rust-cache` key in `release.yml`, mirror it there or that job silently goes back to a cold ~500-crate rebuild.
+
 ### Windows
 
 The workspace compiles and tests on Windows (CI runs `windows-latest` for fmt/test/clippy). Notes:

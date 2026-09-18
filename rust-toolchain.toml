@@ -1,0 +1,28 @@
+# Project toolchain — pinned for reproducibility.
+#
+# Nightly is required project-wide, not just for dev builds: `.cargo/config.toml`
+# opts into `[unstable] codegen-backend` for the `dev` profile (Cranelift), and
+# cargo validates that opt-in on *every* invocation — including
+# `cargo build --release` and `cargo fmt`. Shipping binaries are unaffected:
+# Cranelift is only set on `[profile.dev]`, so release / release-fast keep LLVM.
+#
+# Bump deliberately: change `channel`, then run
+#   cargo test -p navi-core --lib -- --test-threads=4
+#   cargo build -p navi-lite --locked --release
+# before committing.
+#
+# To build with stable instead, move `.cargo/config.toml` aside first (there is
+# no per-profile switch), e.g.
+#   mv .cargo/config.toml /tmp/ && RUSTUP_TOOLCHAIN=stable cargo check --release
+#
+# CI installs this exact channel from this file (see .github/workflows/*.yml):
+# no workflow pins a toolchain independently, so this file is the source of truth.
+#
+# One exception: `rustc-codegen-cranelift` is not published for
+# aarch64-unknown-linux-musl, so the arm64 musl release job drops this file's
+# `components` line before installing (it only builds the release profile).
+
+[toolchain]
+channel = "nightly-2026-09-16"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rustc-codegen-cranelift", "llvm-tools-preview"]

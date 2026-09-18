@@ -1,0 +1,21 @@
+# Project cargo config (versioned).
+#
+# Cranelift codegen for the `dev` profile only: much faster codegen while
+# iterating, which matters more than code quality for local builds. Release and
+# release-fast keep LLVM (Cranelift does not optimize) — shipping binaries are
+# unaffected.
+#
+# This requires the pinned nightly in `rust-toolchain.toml`. The `[unstable]`
+# opt-in below is validated on *every* cargo invocation, so cargo refuses to run
+# on stable regardless of the profile — including `cargo build --release`,
+# `cargo clippy` and `cargo fmt`. To use stable, move this file aside first.
+#
+# Machine-local tuning (linker flags, `mold`, `sccache`, `[build] jobs`) belongs
+# in `~/.cargo/config.toml` — CI runners and contributors may not have those
+# tools installed.
+
+[unstable]
+codegen-backend = true
+
+[profile.dev]
+codegen-backend = "cranelift"

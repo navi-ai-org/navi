@@ -186,10 +186,17 @@ snapshot-update:
     @echo "Updated TUI goldens in crates/navi-tui/tests/snapshots/."
 
 # ─── Coverage (cargo-llvm-cov) ───────────────────────────────────────────────
+#
+# `-Cinstrument-coverage` (what cargo-llvm-cov sets) is LLVM-specific and is
+# rejected by the Cranelift backend used for the `dev` profile, so every recipe
+# below forces LLVM codegen for its build. The toolchain is still the pinned
+# nightly — only the backend changes.
 
 coverage_core_lcov := "coverage/lcov-core.info"
 # Test threads for coverage jobs (CI uses 4; keep local default modest too).
 coverage_test_threads := env_var_or_default("CARGO_TEST_THREADS", "4")
+# Force LLVM for the dev profile: Cranelift cannot emit coverage instrumentation.
+coverage_env := "CARGO_PROFILE_DEV_CODEGEN_BACKEND=llvm"
 
 _require-llvm-cov:
     #!/usr/bin/env bash
@@ -204,25 +211,26 @@ coverage: _require-llvm-cov
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p coverage
-    cargo llvm-cov --workspace --lcov --output-path {{coverage_lcov}} -- --test-threads={{test_threads}}
+    {{coverage_env}} cargo llvm-cov --workspace --lcov --output-path {{coverage_lcov}} -- --test-threads={{test_threads}}
     echo "Wrote {{coverage_lcov}}"
 
 coverage-summary: _require-llvm-cov
-    cargo llvm-cov --workspace --summary-only -- --test-threads={{test_threads}}
+    {{coverage_env}} cargo llvm-cov --workspace --summary-only -- --test-threads={{test_threads}}
 
 coverage-html: _require-llvm-cov
-    cargo llvm-cov --workspace --html -- --test-threads={{test_threads}}
+    {{coverage_env}} cargo llvm-cov --workspace --html -- --test-threads={{test_threads}}
     @echo "Open target/llvm-cov/html/index.html"
 
 # Package-scoped coverage + critical-path gate (mirrors CI `coverage` job).
-# Requires: cargo install cargo-llvm-cov --locked && rustup component add llvm-tools-preview
+# Requires: cargo install cargo-llvm-cov --locked (llvm-tools-preview ships with
+# the pinned nightly — see rust-toolchain.toml).
 # --ignore-run-fail: still emit lcov when unrelated/flaky tests fail; the Test job
 # is the pass/fail source of truth for the suite. This job gates critical paths only.
 coverage-core: _require-llvm-cov
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p coverage
-    cargo llvm-cov -p navi-core --lib --lcov --output-path {{coverage_core_lcov}} \
+    {{coverage_env}} cargo llvm-cov -p navi-core --lib --lcov --output-path {{coverage_core_lcov}} \
       --ignore-run-fail \
       -- --test-threads={{coverage_test_threads}}
     echo "Wrote {{coverage_core_lcov}}"
@@ -241,7 +249,7 @@ coverage-tools: _require-llvm-cov
     #!/usr/bin/env bash
     set -euo pipefail
     mkdir -p coverage
-    cargo llvm-cov -p navi-core -p navi-os-windows --lib --lcov \
+    {{coverage_env}} cargo llvm-cov -p navi-core -p navi-os-windows --lib --lcov \
       --output-path {{coverage_tools_lcov}} \
       --ignore-run-fail \
       -- --test-threads={{coverage_test_threads}}

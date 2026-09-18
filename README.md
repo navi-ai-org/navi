@@ -65,7 +65,7 @@ brew install navi-ai-org/tap/navi
 npm install -g @navi-agent/navi
 ```
 
-**From source** (Rust 1.85+ / edition 2024)
+**From source** (nightly Rust — pinned by `rust-toolchain.toml`; `rustup` installs it on the first `cargo` call)
 
 ```bash
 git clone https://github.com/navi-ai-org/navi.git && cd navi

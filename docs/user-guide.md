@@ -47,7 +47,7 @@ cargo build -p navi-cli --release
 ### Requirements
 
 - For the curl installer: nothing beyond a normal OS (no Rust needed)
-- For building from source: Rust 1.85+ (edition 2024)
+- For building from source: nightly Rust, pinned by `rust-toolchain.toml` (edition 2024)
 - A provider API key (OpenAI, Anthropic, Gemini, xAI, OpenRouter, etc.)
 ## Quick Start
 

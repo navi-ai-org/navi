@@ -8,6 +8,16 @@
 # Gates: `test` must pass before any platform build or publish step.
 # After the GitHub Release job succeeds, `publish-npm` runs (skips prereleases).
 #
+# Toolchain: every job installs the pinned nightly from rust-toolchain.toml
+# (`rustup install`); no workflow pins a channel of its own. Nightly is required
+# because .cargo/config.toml opts into `[unstable] codegen-backend`. Cranelift is
+# only set on `[profile.dev]`, so these `--release` artifacts are LLVM-built.
+#
+# Cache: a cache saved on a tag ref is not visible to other tags, so these jobs
+# restore from the *default branch*. `.github/workflows/warm-cache.yml` keeps
+# those caches warm with the same keys; without it every release is a cold
+# ~500-crate rebuild on five targets.
+#
 # Linux builds use Alpine (musl) containers so the binary runs on:
 #   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
 #
@@ -66,9 +76,8 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup install --no-self-update
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -95,12 +104,14 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup install --no-self-update
 
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-test-${{ matrix.package }}
           shared-key: release-test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Unit tests
         run: cargo test --locked --lib --bins -p "${{ matrix.package }}" -- --test-threads=2
@@ -149,10 +160,10 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: |
+          rustup install --no-self-update
+          rustup target add ${{ matrix.target }}
 
       - name: Setup Node
         uses: actions/setup-node@v5
@@ -164,6 +175,7 @@ jobs:
         with:
           key: napi-${{ matrix.target }}
           shared-key: napi-build
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build NAPI native addon (unix)
         if: runner.os != 'Windows'
@@ -218,7 +230,7 @@ jobs:
     name: Build navi-linux-x64
     needs: [test]
     runs-on: ubuntu-latest
-    container: rust:1-alpine
+    container: rust:nightly-alpine
     steps:
       - name: Install Alpine build deps
         run: |
@@ -232,13 +244,17 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup install --no-self-update
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           key: release-linux-musl-x64
           shared-key: release-musl
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # Host triple on rust:1-alpine is musl → target/release/navi
+      # Host triple on rust:nightly-alpine is musl → target/release/navi
       - name: Build release binaries (musl)
         run: cargo build -p navi-cli -p navi-lite --locked --release
 
@@ -307,34 +323,57 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Build inside rust:1-alpine (native arm64 musl)
+      - name: Cache cargo (registry + musl target dir, both inside the workspace)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-musl-arm64
+          shared-key: release-musl
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # CARGO_HOME is redirected into the workspace so the registry survives
+          # the ephemeral build container; the target dir lives under ./target.
+          cache-directories: .cargo-home
+
+      - name: Build inside rust:nightly-alpine (native arm64 musl)
         run: |
           set -euo pipefail
           docker run --rm \
             -v "$PWD":/src:rw \
             -w /src \
-            -e CARGO_HOME=/tmp/cargo-home \
-            -e CARGO_TARGET_DIR=/tmp/target-musl \
+            -e CARGO_HOME=/src/.cargo-home \
+            -e CARGO_TARGET_DIR=/src/target/arm64-musl \
             -e NAVI_REGISTRY_REF \
-            rust:1-alpine \
+            rust:nightly-alpine \
             sh -c '
               set -eu
               apk add --no-cache \
                 build-base clang lld make protoc pkgconfig \
                 git curl ca-certificates file tar
+              # `rustc-codegen-cranelift` is not published for this host
+              # (aarch64-unknown-linux-musl), so drop the pinned component list
+              # before installing — this job only builds the release profile,
+              # which uses LLVM.
+              grep -v ^components rust-toolchain.toml > rust-toolchain.toml.tmp
+              mv rust-toolchain.toml.tmp rust-toolchain.toml
+              rustup install --no-self-update
               cargo build -p navi-cli -p navi-lite --locked --release
-              strip /tmp/target-musl/release/navi || true
-              strip /tmp/target-musl/release/navi-lite || true
-              file /tmp/target-musl/release/navi
-              file /tmp/target-musl/release/navi-lite
-              ldd /tmp/target-musl/release/navi 2>&1 || true
-              ldd /tmp/target-musl/release/navi-lite 2>&1 || true
-              /tmp/target-musl/release/navi --help >/dev/null
-              /tmp/target-musl/release/navi-lite --help >/dev/null
+              BIN=/src/target/arm64-musl/release/navi
+              LITE_BIN=/src/target/arm64-musl/release/navi-lite
+              strip "$BIN" || true
+              strip "$LITE_BIN" || true
+              file "$BIN"
+              file "$LITE_BIN"
+              ldd "$BIN" 2>&1 || true
+              ldd "$LITE_BIN" 2>&1 || true
+              "$BIN" --help >/dev/null
+              "$LITE_BIN" --help >/dev/null
               mkdir -p /src/target/release
-              cp /tmp/target-musl/release/navi /src/target/release/navi
-              cp /tmp/target-musl/release/navi-lite /src/target/release/navi-lite
+              cp "$BIN" /src/target/release/navi
+              cp "$LITE_BIN" /src/target/release/navi-lite
             '
+          # rust-cache runs as the runner user on the host; hand back ownership
+          # of the directories it has to archive (the container ran as root).
+          docker run --rm -v "$PWD":/src:rw rust:nightly-alpine \
+            chown -R "$(id -u):$(id -g)" /src/target /src/.cargo-home
 
       - name: Package
         run: |
@@ -404,16 +443,17 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: |
+          rustup install --no-self-update
+          rustup target add ${{ matrix.target }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
           shared-key: release-desktop
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build release binaries
         run: cargo build -p navi-cli -p navi-lite --locked --release --target ${{ matrix.target }}

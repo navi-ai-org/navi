@@ -1,0 +1,222 @@
+name: Warm release cache
+
+# Why this exists
+# ---------------
+# release.yml only runs on tag refs. A cache saved on a tag is *not* visible to
+# other tags, and `restore` only falls back to the default branch — so without a
+# main-branch warm run, every release rebuilds the whole dependency graph
+# (~500 crates) from scratch on all five targets.
+#
+# This workflow runs the exact same `cargo build --release` invocations as
+# release.yml, with the exact same rust-cache keys, on main. Tag runs then
+# restore them. Keys must stay in sync with release.yml — if you change a key
+# there, change it here too.
+#
+# Triggers:
+# - schedule: keeps the caches alive (GitHub evicts a cache after 7 idle days).
+# - push to main: only when a Rust *input* changes. Source-only changes do not
+#   invalidate the dependency cache (only workspace crates recompile).
+# - workflow_dispatch: warm on demand right before cutting a release.
+#
+# Deliberately not warmed: release.yml's `test-pkg` gate (`release-test-*` keys).
+# It runs four small packages and finishes in parallel with the builds above, so
+# its cold cost does not extend the critical path by much — add it here if the
+# release gate ever becomes the bottleneck.
+#
+# Cost: one release build per target (2 musl + 3 desktop + 5 NAPI). Two budgets to
+# keep in mind:
+# - Actions minutes: if that is too much, drop the `build-napi` job first — it
+#   runs in parallel with the CLI builds and is usually not the critical path.
+# - Cache storage: GitHub keeps 10 GB per repo and evicts the least recently used.
+#   A nightly warm run re-downloads every cache, which refreshes their LRU clock,
+#   and an exact key hit (unchanged Cargo.lock) skips the re-upload entirely — so
+#   the steady state is "download, verify, done".
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - "crates/**/Cargo.toml"
+      - rust-toolchain.toml
+      - ".cargo/**"
+      - ".github/workflows/warm-cache.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Must match release.yml: the registry snapshot is embedded at build time, so a
+  # different value would produce different fingerprints.
+  NAVI_REGISTRY_REF: refs/heads/main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Linux x64 musl (Alpine container) ──────────────────────────────────────
+
+  build-linux-x64:
+    name: Warm navi-linux-x64
+    runs-on: ubuntu-latest
+    container: rust:nightly-alpine
+    steps:
+      - name: Install Alpine build deps
+        run: |
+          set -eu
+          apk add --no-cache \
+            build-base clang lld make protoc pkgconfig \
+            git curl ca-certificates file tar
+
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: rustup install --no-self-update
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-musl-x64
+          shared-key: release-musl
+
+      - name: Build release binaries (musl)
+        run: cargo build -p navi-cli -p navi-lite --locked --release
+
+  # ── Linux arm64 musl (Docker Alpine, same layout as release.yml) ───────────
+
+  build-linux-arm64:
+    name: Warm navi-linux-arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-linux-musl-arm64
+          shared-key: release-musl
+          cache-directories: .cargo-home
+
+      - name: Build inside rust:nightly-alpine (native arm64 musl)
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD":/src:rw \
+            -w /src \
+            -e CARGO_HOME=/src/.cargo-home \
+            -e CARGO_TARGET_DIR=/src/target/arm64-musl \
+            -e NAVI_REGISTRY_REF \
+            rust:nightly-alpine \
+            sh -c '
+              set -eu
+              apk add --no-cache \
+                build-base clang lld make protoc pkgconfig \
+                git curl ca-certificates file tar
+              # `rustc-codegen-cranelift` is not published for this host
+              # (aarch64-unknown-linux-musl); drop the pinned component list so
+              # the install succeeds — this job only builds the release profile.
+              grep -v ^components rust-toolchain.toml > rust-toolchain.toml.tmp
+              mv rust-toolchain.toml.tmp rust-toolchain.toml
+              rustup install --no-self-update
+              cargo build -p navi-cli -p navi-lite --locked --release
+            '
+          # rust-cache runs as the runner user on the host; hand back ownership of
+          # the directories it has to archive (the container ran as root).
+          docker run --rm -v "$PWD":/src:rw rust:nightly-alpine \
+            chown -R "$(id -u):$(id -g)" /src/target /src/.cargo-home
+
+  # ── macOS + Windows ────────────────────────────────────────────────────────
+
+  build-desktop:
+    name: Warm ${{ matrix.archive }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: navi-darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: navi-darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: navi-win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: |
+          rustup install --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+          shared-key: release-desktop
+
+      - name: Build release binaries
+        run: cargo build -p navi-cli -p navi-lite --locked --release --target ${{ matrix.target }}
+
+  # ── NAPI native addons ─────────────────────────────────────────────────────
+
+  build-napi:
+    name: Warm NAPI ${{ matrix.npm_platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            npm_platform: linux-x64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            npm_platform: linux-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-x64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            npm_platform: darwin-arm64
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            npm_platform: win32-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain (pinned by rust-toolchain.toml)
+        run: |
+          rustup install --no-self-update
+          rustup target add ${{ matrix.target }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: napi-${{ matrix.target }}
+          shared-key: napi-build
+
+      - name: Build NAPI native addon (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd crates/navi-napi
+          node scripts/build-native.mjs --release --target ${{ matrix.target }}
+
+      - name: Build NAPI native addon (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location crates/navi-napi
+          node scripts/build-native.mjs --release --target ${{ matrix.target }}
