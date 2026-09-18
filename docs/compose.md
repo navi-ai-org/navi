@@ -359,6 +359,12 @@ Proven by:
 
 ## Known limits
 
+- **Prompt is the one seam without a process contract.** `PromptBuilder::build`
+  receives a `SystemPromptInput` that carries the prompt cache and live config
+  objects (not just data), and returns a `RenderedPrompt` that is not
+  serializable today. A process-tier prompt provider needs serde on those core
+  types first; the in-process component path works today
+  (`navi.prompt.branded`).
 - The TUI reads terminal input on a dedicated thread and delivers events over a
   channel. `crossterm::event::poll` was observed to block indefinitely in a bare
   PTY (see `crates/navi-tui/examples/poll_probe.rs`), and a frontend that polls
