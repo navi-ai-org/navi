@@ -112,9 +112,14 @@ impl HarnessDriver for DefaultHarnessDriver {
         let Some(whitelist) = allowed_tool_names else {
             return tools;
         };
+        // Session-core tools (title, tool_search, question, plan, memory, goal)
+        // are callable regardless of the allowlist — keep them in the schema too,
+        // otherwise the model cannot see tools it is still allowed to call.
         tools
             .into_iter()
-            .filter(|tool| whitelist.contains(&tool.name))
+            .filter(|tool| {
+                whitelist.contains(&tool.name) || crate::turn::is_session_core_tool(&tool.name)
+            })
             .collect()
     }
 
@@ -232,3 +237,84 @@ pub trait SessionHooks: Send + Sync {
 pub struct NoopSessionHooks;
 
 impl SessionHooks for NoopSessionHooks {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::ToolKind;
+
+    fn def(name: &str) -> ToolDefinition {
+        ToolDefinition::new(
+            name,
+            "",
+            ToolKind::Read,
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        )
+    }
+
+    fn names(tools: &[ToolDefinition]) -> Vec<String> {
+        let mut names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn no_allowlist_returns_every_tool() {
+        let tools = vec![def("run"), def("plan"), def("update_goal")];
+        let kept = DefaultHarnessDriver.filter_tools(tools, None);
+        assert_eq!(names(&kept), vec!["plan", "run", "update_goal"]);
+    }
+
+    #[test]
+    fn allowlist_keeps_session_core_tools_in_schema() {
+        // A harness pack entry allowlist that omits goal tools must not hide
+        // `update_goal`: auto-continuation runs regardless of the allowlist, so
+        // hiding it leaves the model unable to ever close the goal.
+        let tools = vec![
+            def("run"),
+            def("edit"),
+            def("plan"),
+            def("tool_search"),
+            def("set_session_title"),
+            def("get_goal"),
+            def("create_goal"),
+            def("update_goal"),
+        ];
+        let whitelist = vec!["run".to_string()];
+        let kept = DefaultHarnessDriver.filter_tools(tools, Some(&whitelist));
+        assert_eq!(
+            names(&kept),
+            vec![
+                "create_goal",
+                "get_goal",
+                "plan",
+                "run",
+                "set_session_title",
+                "tool_search",
+                "update_goal",
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_allowlist_keeps_only_session_core_tools() {
+        let tools = vec![def("run"), def("plan"), def("update_goal")];
+        let whitelist: Vec<String> = Vec::new();
+        let kept = DefaultHarnessDriver.filter_tools(tools, Some(&whitelist));
+        assert_eq!(names(&kept), vec!["plan", "update_goal"]);
+    }
+
+    #[test]
+    fn allowlist_never_invents_unregistered_tools() {
+        // Session-core names are only *retained*, never added — the filter can
+        // narrow the given definitions but never widen the registry.
+        let tools = vec![def("run")];
+        let whitelist = vec!["update_goal".to_string()];
+        let kept = DefaultHarnessDriver.filter_tools(tools, Some(&whitelist));
+        assert!(kept.is_empty(), "{:?}", names(&kept));
+    }
+}

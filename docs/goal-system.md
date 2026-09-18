@@ -48,6 +48,11 @@ Terminal: `Complete`, `BudgetLimited`. Auto-continue only while `Active`.
 | `create_goal` | Create a goal **only** when the user/system explicitly asks. Fails if an unfinished goal exists |
 | `update_goal` | `status`: `complete` \| `blocked` only. Pause/resume/budget/usage-limit are host/system |
 
+Goal tools are **session-core**: they stay in the model schema and stay callable
+even when a harness pack allowlist (soft graph `entry_allow_tools`) or a skill
+`allow_tools` list omits them. Auto-continuation does not consult that allowlist,
+so locking the goal tools out would trap the model in a goal it can never close.
+
 Do not use goals for ordinary one-pass work. Prefer `plan` for multi-step visibility.
 
 ## Host / SDK API
@@ -62,8 +67,11 @@ After each successful `AgentRuntime::send_turn_with_parts`:
 
 1. If `goals.enabled` and the goal is `Active` and auto-continue is on
 2. And the agent is not in plan mode and there is no pending user input
-3. And under `max_auto_continue_turns` (default 50; 0 = unlimited)
-4. Inject the **continuation steering** prompt and start another turn
+3. And `update_goal` is registered on the session tool surface — a host profile
+   that skips tool bootstrap (`host_tools_only` / `chat_only`) can hold a goal
+   the model cannot close, so auto-continuation is suppressed instead of looping
+4. And under `max_auto_continue_turns` (default 50; 0 = unlimited)
+5. Inject the **continuation steering** prompt and start another turn
 
 Continuation content is the internal steering template (objective, budget,
 completion/blocked audit). It is not a host user chat message from the human.

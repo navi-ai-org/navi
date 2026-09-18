@@ -623,3 +623,73 @@ fn runtime_event_kind_from_agent_event_returns_none_for_unmapped() {
     let _ = super::runtime_event_kind_from_agent_event(&event);
     // No panic = pass. The result may be Some or None depending on the variant.
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn goal_auto_continue_is_suppressed_when_update_goal_is_unregistered() {
+    // Host profiles that skip tool bootstrap (`host_tools_only` / `chat_only`)
+    // can hold an active goal while `update_goal` is absent from the tool
+    // surface. Auto-continuing then spins forever on a goal the model has no
+    // way to mark complete or blocked.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let loaded_config = crate::LoadedConfig {
+        config: NaviConfig {
+            harness: HarnessConfig::default(),
+            approvals: ApprovalConfig::default(),
+            security: SecurityConfig::default(),
+            goals: crate::config::GoalsConfig {
+                enabled: true,
+                max_auto_continue_turns: 1,
+            },
+            ..NaviConfig::default()
+        },
+        global_config_path: None,
+        project_config_path: None,
+        data_dir: tempdir.path().join("data"),
+    };
+    let security_policy = crate::SecurityPolicy::new(
+        tempdir.path().to_path_buf(),
+        tempdir.path().join("data"),
+        SecurityConfig::default(),
+    )
+    .expect("security policy");
+    let executor = Arc::new(crate::ToolExecutor::with_security_policy(
+        security_policy,
+        Arc::new(crate::DefaultToolSecurityPolicy),
+    ));
+    let mut runtime = AgentRuntime::new(AgentRuntimeOptions {
+        loaded_config,
+        model_provider: Arc::new(SimpleProvider),
+        project_dir: tempdir.path().to_path_buf(),
+        tool_executor: Some(executor),
+        context_packets: Vec::new(),
+        active_skills: Vec::new(),
+        initial_messages: Vec::new(),
+        initial_events: Vec::new(),
+        initial_created_at: None,
+        initial_updated_at: None,
+        initial_goal: None,
+        session_id: None,
+        event_tx: None,
+        runtime_components: None,
+        session_title_handle: None,
+        skip_auto_tool_bootstrap: true,
+        system_prompt: None,
+    });
+
+    runtime.start_session().expect("start session");
+    let goal = runtime.set_goal("finish the goal".to_string(), None);
+    assert!(goal.status.should_auto_continue());
+
+    let names = runtime.tool_executor().expect("executor").tool_names();
+    assert!(
+        !names.iter().any(|name| name == "update_goal"),
+        "bootstrap was skipped, so update_goal must be absent: {names:?}"
+    );
+
+    assert!(
+        runtime.goal_idle_prompt().is_none(),
+        "auto-continuation must not start when the model cannot close the goal"
+    );
+    // The goal stays active for the host/user to resolve explicitly.
+    assert!(runtime.get_goal().is_some());
+}

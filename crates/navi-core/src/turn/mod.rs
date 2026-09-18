@@ -1332,7 +1332,12 @@ async fn execute_tool_call_with_parallelism(
 
 /// Tools that are always available regardless of harness allowlist.
 /// These are session-infrastructure tools that the model needs to function
-/// (name the session, discover tools, ask questions, plan, manage memory).
+/// (name the session, discover tools, ask questions, plan, manage memory, and
+/// read/close the thread goal it is being auto-continued on).
+///
+/// Goal tools belong here: auto-continuation runs independently of the harness
+/// allowlist, so a pack that omits `update_goal` would otherwise leave the model
+/// unable to mark the goal complete or blocked — an endless continuation loop.
 pub fn is_session_core_tool(name: &str) -> bool {
     matches!(
         name,
@@ -1343,6 +1348,9 @@ pub fn is_session_core_tool(name: &str) -> bool {
             | "memory"
             | "append_note"
             | "load_skill"
+            | "get_goal"
+            | "create_goal"
+            | "update_goal"
     )
 }
 

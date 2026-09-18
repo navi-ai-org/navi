@@ -587,7 +587,32 @@ impl AgentRuntime {
         if !self.loaded_config.config.goals.enabled {
             return None;
         }
+        // A goal may only auto-continue when the model can actually close it.
+        // Restricted host surfaces (host_tools_only / chat_only) can leave
+        // `update_goal` unregistered; continuing would spin forever on a goal
+        // the model has no way to mark complete or blocked.
+        if !self.model_can_close_goal() {
+            tracing::warn!(
+                session_id = %self.session.id().as_str(),
+                "goal auto-continuation suppressed: `update_goal` is not registered for this session"
+            );
+            return None;
+        }
         self.goal_extension.on_idle()
+    }
+
+    /// Whether the session's tool surface includes `update_goal` — i.e. whether
+    /// the model can close an auto-continuing goal. Before the executor exists,
+    /// goal tools are bootstrapped on the first turn, so treat the goal as
+    /// closeable.
+    fn model_can_close_goal(&self) -> bool {
+        match self.tool_executor.as_ref() {
+            Some(executor) => executor
+                .tool_names()
+                .iter()
+                .any(|name| name == "update_goal"),
+            None => true,
+        }
     }
 
     /// Returns the goals configuration.
