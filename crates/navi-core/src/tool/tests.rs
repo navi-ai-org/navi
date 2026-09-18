@@ -552,6 +552,41 @@ async fn code_exec_rejects_untyped_operation_shape() {
 }
 
 #[tokio::test]
+async fn code_exec_empty_plan_is_rejected_with_a_usable_example() {
+    // The model-facing failure must never look like success, and it must show a
+    // correct plan shape: an empty `ops` array used to return
+    // `status: "passed", ops_executed: 0`.
+    let tempdir = tempfile::tempdir().expect("tempdir");
+    let executor = executor(tempdir.path());
+
+    let result = executor
+        .invoke(ToolInvocation {
+            id: "code-exec-empty".to_string(),
+            tool_name: "code_exec".to_string(),
+            input: json!({ "ops": [] }),
+        })
+        .await;
+
+    assert!(
+        !result.ok,
+        "an empty plan must not report success: {result:?}"
+    );
+    let rendered = result.output.to_string();
+    // Either the schema validator rejects it first ("less than 1 item") or the
+    // tool's own guard does ("at least one op").
+    assert!(
+        rendered.contains("less than 1 item") || rendered.contains("at least one op"),
+        "error must explain the empty plan: {rendered}"
+    );
+    assert_eq!(result.output["error_code"], "invalid_arguments");
+    assert_eq!(result.output["recoverable"], true);
+    assert!(
+        rendered.contains("repo-read") || rendered.contains("repo-search"),
+        "the recovery example must use real op names: {rendered}"
+    );
+}
+
+#[tokio::test]
 async fn relative_tool_paths_are_resolved_under_project_root() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let executor = executor(tempdir.path());
@@ -2292,6 +2327,13 @@ fn is_session_core_tool_recognizes_infrastructure_tools() {
     assert!(crate::turn::is_session_core_tool("memory"));
     assert!(crate::turn::is_session_core_tool("append_note"));
     assert!(crate::turn::is_session_core_tool("load_skill"));
+    // Goal tools stay reachable even under a harness allowlist: auto-continuation
+    // runs regardless of the allowlist, so locking `update_goal` out traps the
+    // model in a goal it can never mark complete or blocked.
+    assert!(crate::turn::is_session_core_tool("get_goal"));
+    assert!(crate::turn::is_session_core_tool("create_goal"));
+    assert!(crate::turn::is_session_core_tool("update_goal"));
+    assert!(!crate::turn::is_session_core_tool("update_goal_checklist"));
     // Non-core tools are not exempt
     assert!(!crate::turn::is_session_core_tool("run"));
     assert!(!crate::turn::is_session_core_tool("edit"));

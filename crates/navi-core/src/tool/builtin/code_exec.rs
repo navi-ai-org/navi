@@ -77,35 +77,44 @@ impl Tool for CodeExecTool {
     fn definition(&self) -> ToolDefinition {
         helpers::definition(
             "code_exec",
-            "Execute a typed code-mode plan with controlled nested tools. Supported ops: repo-read, repo-search, repo-patch, ast-search, verify-run (via run), trace-note. The `verifier` field on verify-run only supports `command` (the dedicated verifier tool was removed).",
+            "Run several repo steps in ONE call instead of emitting one tool call per step. \
+Ops run in order and stop at the first failure, so use this when the steps are already \
+known — e.g. read two regions, patch, then run the test. Supported ops: repo-read, \
+repo-search, repo-patch, ast-search, verify-run (runs a shell command), trace-note.",
             ToolKind::Write,
             json!({
                 "type": "object",
                 "properties": {
-                    "cell_id": { "type": "string" },
-                    "max_ops": { "type": "integer" },
-                    "max_output_bytes": { "type": "integer" },
+                    "cell_id": { "type": "string", "description": "Optional label for this plan." },
+                    "max_ops": { "type": "integer", "description": "Cap on executed ops (default 100, max 1000)." },
+                    "max_output_bytes": { "type": "integer", "description": "Per-op output cap in bytes (default 131072)." },
                     "ops": {
                         "type": "array",
+                        "description": "Ordered steps to run. Each op maps to a real tool: repo-read→read_file, repo-search→search, repo-patch→apply_patch, ast-search→ast_search, verify-run→run.",
+                        "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
                                 "op": {
                                     "type": "string",
-                                    "enum": ["repo-read", "repo-search", "repo-patch", "ast-search", "verify-run", "trace-note"]
+                                    "enum": ["repo-read", "repo-search", "repo-patch", "ast-search", "verify-run", "trace-note"],
+                                    "description": "Which step to run."
                                 },
-                                "path": { "type": "string" },
-                                "start_line": { "type": "integer" },
-                                "end_line": { "type": "integer" },
-                                "pattern": { "type": "string" },
-                                "patch": { "type": "string" },
-                                "query": { "type": "string" },
-                                "kind": { "type": "string" },
-                                "command": { "type": "string" },
-                                "verifier": { "type": "string" },
-                                "timeout_ms": { "type": "integer" },
-                                "max_results": { "type": "integer" },
-                                "note": { "type": "string" }
+                                "path": {
+                                    "type": "string",
+                                    "description": "repo-read: file to read (project-relative). repo-search: file or directory to search (default `.`)."
+                                },
+                                "start_line": { "type": "integer", "description": "repo-read: first line to read (1-based, inclusive)." },
+                                "end_line": { "type": "integer", "description": "repo-read: last line to read (1-based, inclusive)." },
+                                "pattern": { "type": "string", "description": "repo-search: text or regex to find." },
+                                "max_results": { "type": "integer", "description": "repo-search / ast-search: cap on returned matches." },
+                                "patch": { "type": "string", "description": "repo-patch: one complete patch string (`*** Begin Patch` … `*** End Patch`)." },
+                                "query": { "type": "string", "description": "ast-search: symbol name or pattern." },
+                                "kind": { "type": "string", "description": "ast-search: symbol kind filter (function, struct, enum, …)." },
+                                "command": { "type": "string", "description": "verify-run: shell command to execute (e.g. `cargo test -p navi-core --lib`)." },
+                                "verifier": { "type": "string", "description": "verify-run: only `command` is supported." },
+                                "timeout_ms": { "type": "integer", "description": "verify-run: command timeout in milliseconds." },
+                                "note": { "type": "string", "description": "trace-note: free-form note recorded in the plan artifact." }
                             },
                             "required": ["op"],
                             "additionalProperties": false
@@ -113,7 +122,18 @@ impl Tool for CodeExecTool {
                     }
                 },
                 "required": ["ops"],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "examples": [
+                    {
+                        "ops": [
+                            { "op": "repo-search", "pattern": "fn update_goal", "path": "crates/navi-core/src" },
+                            { "op": "repo-read", "path": "crates/navi-core/src/goal/tools.rs", "start_line": 270, "end_line": 410 },
+                            { "op": "repo-patch", "patch": "*** Begin Patch\n*** Update File: crates/navi-core/src/goal/tools.rs\n@@\n-old\n+new\n*** End Patch" },
+                            { "op": "verify-run", "command": "cargo test -p navi-core --lib goal", "timeout_ms": 120000 },
+                            { "op": "trace-note", "note": "goal tools stay callable under a harness allowlist" }
+                        ]
+                    }
+                ]
             }),
         )
     }
@@ -121,6 +141,17 @@ impl Tool for CodeExecTool {
     async fn invoke(&self, invocation: ToolInvocation) -> Result<ToolResult> {
         let request: CodeExecRequest = serde_json::from_value(invocation.input.clone())
             .context("invalid code_exec request")?;
+
+        // An empty plan used to return `status: "passed"` with 0 ops executed —
+        // a silent no-op that teaches the model code_exec does nothing. Reject it
+        // with the shape of a real plan so the next attempt is correct.
+        if request.ops.is_empty() {
+            bail!(
+                "code_exec needs at least one op in `ops`, but `ops` was empty. \
+                 Example: {{\"ops\": [{{\"op\": \"repo-search\", \"pattern\": \"fn main\", \"path\": \"src\"}}, \
+                 {{\"op\": \"repo-read\", \"path\": \"src/main.rs\", \"start_line\": 1, \"end_line\": 40}}]}}"
+            );
+        }
 
         // Validate `verifier` on VerifyRun ops — only "command" is supported
         // since the dedicated verifier tool was removed. Reject silently
@@ -388,6 +419,84 @@ mod tests {
         assert!(names.contains(&"ast-search"));
         assert!(names.contains(&"verify-run"));
         assert!(names.contains(&"trace-note"));
+    }
+
+    #[test]
+    fn definition_description_teaches_chaining() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let description = tool.definition().description;
+
+        // The model must learn that this is tool chaining in one call, not an
+        // exotic "code mode" — the old wording read like a separate subsystem
+        // and models skipped it in favour of one call per step.
+        assert!(
+            description.contains("ONE call"),
+            "description must frame code_exec as one call: {description}"
+        );
+        assert!(
+            description.contains("stop at the first failure"),
+            "description must state the stop-on-failure semantics: {description}"
+        );
+        assert!(
+            description.contains("repo-read") && description.contains("verify-run"),
+            "description must list the ops: {description}"
+        );
+    }
+
+    #[test]
+    fn definition_has_usable_example_and_documented_op_fields() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let schema = tool.definition().input_schema;
+
+        // A root-level example is what the model copies from, and it is also the
+        // recovery hint shown on invalid arguments (`example_from_schema`).
+        let example_ops = schema["examples"][0]["ops"]
+            .as_array()
+            .expect("example ops");
+        assert!(
+            !example_ops.is_empty(),
+            "the documented example must contain at least one op"
+        );
+        for op in example_ops {
+            assert!(
+                op.get("op").and_then(serde_json::Value::as_str).is_some(),
+                "every example op needs an `op` field: {op}"
+            );
+        }
+        // An empty `ops` array must be invalid at the schema level too.
+        assert_eq!(schema["properties"]["ops"]["minItems"], json!(1));
+
+        // Each op field must say which op uses it — the flat item schema mixes
+        // fields from six ops, so undocumented names are unguessable.
+        let fields = schema["properties"]["ops"]["items"]["properties"]
+            .as_object()
+            .expect("op properties");
+        for (name, field) in fields {
+            let described = field
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|d| !d.trim().is_empty());
+            assert!(described, "op field `{name}` needs a description");
+        }
+    }
+
+    #[test]
+    fn example_from_schema_yields_a_runnable_plan() {
+        let temp = tempfile::tempdir().unwrap();
+        let tool = make_tool(temp.path());
+        let schema = tool.definition().input_schema;
+
+        // `example_from_schema` feeds both the text-only tool manifest and the
+        // invalid-arguments recovery hint. Without `examples` it derived
+        // `{"ops": []}` — an empty plan, which is exactly the no-op shape.
+        let derived = crate::tool::example_from_schema(&schema);
+        let ops = derived["ops"].as_array().expect("derived ops array");
+        assert!(
+            !ops.is_empty(),
+            "derived example must not be an empty plan: {derived}"
+        );
     }
 
     // ── CodeExecRequest deserialization ───────────────────────────────────
@@ -835,14 +944,30 @@ mod tests {
     // ── invoke integration ────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn invoke_with_empty_ops_returns_passed() {
+    async fn invoke_with_empty_ops_is_rejected_with_a_recovery_hint() {
+        // An empty plan used to succeed with `status: "passed"` and zero ops,
+        // which read to the model as "code_exec does nothing".
         let temp = tempfile::tempdir().unwrap();
         let tool = make_tool(temp.path());
         let inv = make_invocation("e1", json!({"ops": []}));
-        let result = tool.invoke(inv).await.unwrap();
-        assert!(result.ok);
-        assert_eq!(result.output["status"], "passed");
-        assert_eq!(result.output["ops_executed"], 0);
+        let error = tool
+            .invoke(inv)
+            .await
+            .expect_err("empty ops must be rejected")
+            .to_string();
+
+        assert!(
+            error.contains("at least one op"),
+            "error must explain the problem: {error}"
+        );
+        assert!(
+            error.contains("Example:"),
+            "error must show a correct plan shape: {error}"
+        );
+        assert!(
+            error.contains("repo-search") || error.contains("repo-read"),
+            "error example must use real op names: {error}"
+        );
     }
 
     #[tokio::test]

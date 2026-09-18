@@ -298,7 +298,10 @@ fn build_system_prompt_inner(
             "4. Avoid broad sweeps and re-reading the same region.\n",
             "\n",
             "Power tools (always in the schema; use them purposefully):\n",
-            "- code / code_edit / code_exec: symbols, AST, overview, rename, execution\n",
+            "- code / code_edit: symbols, AST, overview, rename\n",
+            "- code_exec: chain several read/search/patch/verify steps in ONE call. Prefer it over\n",
+            "  three or more separate single-purpose calls when you already know the steps — it runs\n",
+            "  them in order and stops at the first failure.\n",
             "- browser: headless UI testing\n",
             "- subagent: nested agent\n",
             "- apply_patch / sandbox / history_ops / create_goal: advanced workflows\n",
@@ -307,6 +310,8 @@ fn build_system_prompt_inner(
             "\n",
             "Tool rules:\n",
             "- Batch independent read-only calls in the same assistant response when native tools allow it.\n",
+            "- When the steps depend on each other, or you already know the whole sequence, send one\n",
+            "  `code_exec` plan instead of a chain of single-purpose calls.\n",
             "- Edits: prefer `edit` (old_string→new_string; use `edits`[] for multiple replaces in one\n",
             "  file). Use `write_file` for whole-file create/overwrite. Prefer `search` for repo nav.\n",
             "  Do not use run/python to edit files. Do not dump files with sed/cat/head/rg via run —\n",
@@ -1147,6 +1152,28 @@ mod tests {
         assert!(prompt.contains("old_string") || prompt.contains("edits"));
         assert!(prompt.contains("run/python"));
         assert!(prompt.contains("tool_search"));
+    }
+
+    #[test]
+    fn system_prompt_prefers_code_exec_for_known_sequences() {
+        let config = NaviConfig::default();
+        let prompt = build_system_prompt(&config, std::path::Path::new("/tmp"));
+
+        // The prompt used to list code_exec under "symbols, AST, overview,
+        // rename, execution" and only told the model to batch separate calls,
+        // so models kept emitting one call per step.
+        assert!(
+            prompt.contains("code_exec"),
+            "prompt must mention code_exec:\n{prompt}"
+        );
+        assert!(
+            prompt.contains("ONE call"),
+            "prompt must frame code_exec as chaining in one call"
+        );
+        assert!(
+            prompt.contains("plan instead of a chain of single-purpose calls"),
+            "prompt must state the preference over one call per step"
+        );
     }
 
     #[test]
