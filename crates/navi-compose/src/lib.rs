@@ -50,7 +50,7 @@ pub use parts::{
 pub use process_frontend::ProcessFrontend;
 pub use slots::{
     ComposeCompaction, ComposeHarness, ComposeHooks, ComposePrompt, ComposeSecurity,
-    ProcessCompaction, Slots,
+    ProcessCompaction, ProcessHarness, ProcessHooks, ProcessSecurity, Slots,
 };
 
 /// Frontend host vocabulary (re-exported from `navi-tui`).

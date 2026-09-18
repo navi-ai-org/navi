@@ -23,6 +23,7 @@ use navi_core::{
     SystemPromptInput, ToolDefinition, ToolInvocation, ToolResult,
     config::HarnessConfig, harness::ToolLoopDecision, harness::{AgentRunState, HarnessPolicy},
     runtime_components::HarnessDriver, runtime_components::ToolSecurityPolicy,
+    security::SecurityRisk,
 };
 use parking_lot::RwLock;
 
@@ -341,6 +342,312 @@ fn indices(value: &serde_json::Value, field: &str) -> Vec<usize> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// One capability call to a component in another process, with the instance
+/// grant from activation (a stale generation is never reached by name).
+fn call_component(
+    component: &str,
+    capability: &str,
+    reference: &matrix_core::InstanceRef,
+    kernel: &Arc<matrix_core::Kernel>,
+    input: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let (value, ok) = kernel.invoke_for_ref(reference, capability, input);
+    if ok {
+        return Some(value);
+    }
+    tracing::warn!(
+        component = %component,
+        capability = %capability,
+        response = %value,
+        "process component did not answer; the engine keeps its default behaviour"
+    );
+    None
+}
+
+/// Tool security policy served by a **component in another process**.
+///
+/// Contract (`navi.security@1`):
+///
+/// ```json
+/// // host → plugin
+/// {"op":"validate_tool","tool":{"name":"web_fetch",…},"input":{"url":"…"}}
+/// // plugin → host
+/// {"decision":"allow"} | {"decision":"deny","reason":"…"}
+///                      | {"decision":"approval","risk":"tool"}
+/// ```
+///
+/// A missing or unreadable answer falls back to the engine's default policy:
+/// a broken security plugin never silently allows everything.
+pub struct ProcessSecurity {
+    component: String,
+    capability: String,
+    reference: matrix_core::InstanceRef,
+    kernel: Arc<matrix_core::Kernel>,
+    fallback: Arc<dyn ToolSecurityPolicy>,
+}
+
+impl ProcessSecurity {
+    /// Binds the slot value to a running component.
+    pub fn new(
+        component: impl Into<String>,
+        capability: impl Into<String>,
+        reference: matrix_core::InstanceRef,
+        kernel: Arc<matrix_core::Kernel>,
+        fallback: Arc<dyn ToolSecurityPolicy>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            capability: capability.into(),
+            reference,
+            kernel,
+            fallback,
+        }
+    }
+}
+
+impl ToolSecurityPolicy for ProcessSecurity {
+    fn validate_tool(
+        &self,
+        base_policy: &SecurityPolicy,
+        definition: &ToolDefinition,
+        invocation: &ToolInvocation,
+    ) -> SecurityDecision {
+        let input = serde_json::json!({
+            "op": "validate_tool",
+            "tool": definition,
+            "input": invocation.input,
+        });
+        let Some(answer) = call_component(
+            &self.component,
+            &self.capability,
+            &self.reference,
+            &self.kernel,
+            &input,
+        ) else {
+            return self.fallback.validate_tool(base_policy, definition, invocation);
+        };
+        match answer.get("decision").and_then(|value| value.as_str()) {
+            Some("allow") => SecurityDecision::Allow,
+            Some("deny") => SecurityDecision::Deny(
+                answer
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("denied by a security component")
+                    .to_string(),
+            ),
+            Some("approval") => SecurityDecision::NeedsApproval(risk_from(&answer)),
+            // No opinion: the base policy decides. A security plugin adds
+            // restrictions without having to re-implement the host's rules.
+            Some("abstain") => self.fallback.validate_tool(base_policy, definition, invocation),
+            other => {
+                tracing::warn!(
+                    component = %self.component,
+                    decision = ?other,
+                    "unreadable security decision; falling back"
+                );
+                self.fallback.validate_tool(base_policy, definition, invocation)
+            }
+        }
+    }
+}
+
+/// Maps the plugin's risk label onto the engine's enum.
+fn risk_from(answer: &serde_json::Value) -> SecurityRisk {
+    match answer.get("risk").and_then(|value| value.as_str()) {
+        Some("write") => SecurityRisk::Write,
+        Some("command") => SecurityRisk::Command,
+        Some("guarded_command") => SecurityRisk::GuardedCommand,
+        Some("external_plugin") => SecurityRisk::ExternalPlugin,
+        Some("ui_automation") => SecurityRisk::UiAutomation,
+        _ => SecurityRisk::Tool,
+    }
+}
+
+/// Harness driver served by a **component in another process** for the part
+/// that shapes the context.
+///
+/// Contract (`navi.harness@1`):
+///
+/// ```json
+/// // host → plugin
+/// {"op":"compact_observation","tool":"read_file","result":{…},"ok":true}
+/// // plugin → host
+/// {"observation":"…"}
+/// ```
+///
+/// The stateful loop methods (`filter_tools`, `record_*`) stay with the
+/// fallback driver: a process component owns the observation policy it declares.
+pub struct ProcessHarness {
+    component: String,
+    capability: String,
+    reference: matrix_core::InstanceRef,
+    kernel: Arc<matrix_core::Kernel>,
+    fallback: Arc<dyn HarnessDriver>,
+}
+
+impl ProcessHarness {
+    /// Binds the slot value to a running component.
+    pub fn new(
+        component: impl Into<String>,
+        capability: impl Into<String>,
+        reference: matrix_core::InstanceRef,
+        kernel: Arc<matrix_core::Kernel>,
+        fallback: Arc<dyn HarnessDriver>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            capability: capability.into(),
+            reference,
+            kernel,
+            fallback,
+        }
+    }
+}
+
+impl HarnessDriver for ProcessHarness {
+    fn filter_tools(
+        &self,
+        tools: Vec<ToolDefinition>,
+        allowed_tool_names: Option<&[String]>,
+    ) -> Vec<ToolDefinition> {
+        self.fallback.filter_tools(tools, allowed_tool_names)
+    }
+
+    fn record_tool_call(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+    ) -> ToolLoopDecision {
+        self.fallback.record_tool_call(state, policy, invocation)
+    }
+
+    fn record_tool_result(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+    ) -> ToolLoopDecision {
+        self.fallback
+            .record_tool_result(state, policy, invocation, result)
+    }
+
+    fn compact_tool_observation(
+        &self,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+        policy: HarnessPolicy,
+    ) -> String {
+        let input = serde_json::json!({
+            "op": "compact_observation",
+            "tool": invocation.tool_name,
+            "ok": result.ok,
+            "result": result.output,
+        });
+        let Some(answer) = call_component(
+            &self.component,
+            &self.capability,
+            &self.reference,
+            &self.kernel,
+            &input,
+        ) else {
+            return self
+                .fallback
+                .compact_tool_observation(invocation, result, policy);
+        };
+        match answer.get("observation").and_then(|value| value.as_str()) {
+            Some(observation) => observation.to_string(),
+            None => self
+                .fallback
+                .compact_tool_observation(invocation, result, policy),
+        }
+    }
+}
+
+/// Session hooks served by a **component in another process** (fire and forget).
+///
+/// Contract (`navi.hooks@1`): `{"op":"event","event":"session_start",
+/// "session_id":"…"}` (plus `tool`, `output_chars` where they apply). The engine
+/// never blocks on the answer; a dead component only costs its own logging.
+pub struct ProcessHooks {
+    component: String,
+    capability: String,
+    reference: matrix_core::InstanceRef,
+    kernel: Arc<matrix_core::Kernel>,
+}
+
+impl ProcessHooks {
+    /// Binds the slot value to a running component.
+    pub fn new(
+        component: impl Into<String>,
+        capability: impl Into<String>,
+        reference: matrix_core::InstanceRef,
+        kernel: Arc<matrix_core::Kernel>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            capability: capability.into(),
+            reference,
+            kernel,
+        }
+    }
+
+    fn event(&self, event: &str, extra: serde_json::Value) {
+        let mut input = serde_json::json!({"op": "event", "event": event});
+        if let (Some(map), Some(extra)) = (input.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra {
+                map.insert(key.clone(), value.clone());
+            }
+        }
+        let _ = call_component(
+            &self.component,
+            &self.capability,
+            &self.reference,
+            &self.kernel,
+            &input,
+        );
+    }
+}
+
+impl SessionHooks for ProcessHooks {
+    fn on_session_start(&self, session_id: &str) {
+        self.event("session_start", serde_json::json!({"session_id": session_id}));
+    }
+
+    fn on_turn_start(&self, session_id: &str, task: &str) {
+        self.event(
+            "turn_start",
+            serde_json::json!({"session_id": session_id, "task": task}),
+        );
+    }
+
+    fn on_tool_call(&self, invocation: &ToolInvocation) {
+        self.event(
+            "tool_call",
+            serde_json::json!({"tool": invocation.tool_name}),
+        );
+    }
+
+    fn on_tool_result(&self, result: &ToolResult) {
+        self.event("tool_result", serde_json::json!({"ok": result.ok}));
+    }
+
+    fn on_turn_end(&self, session_id: &str, output: &str) {
+        self.event(
+            "turn_end",
+            serde_json::json!({
+                "session_id": session_id,
+                "output_chars": output.chars().count(),
+            }),
+        );
+    }
+
+    fn on_session_end(&self, session_id: &str) {
+        self.event("session_end", serde_json::json!({"session_id": session_id}));
+    }
 }
 
 /// `PromptBuilder` proxy: resolves the active provider per call.

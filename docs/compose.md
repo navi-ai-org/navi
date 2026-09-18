@@ -234,13 +234,35 @@ receives a proxy per seam that resolves the typed slot on every call, so
 activating a provider changes behaviour immediately and withdrawing it falls back
 to the previous provider (or to the engine's default).
 
-| Seam | Capability | First-party providers | What a swap changes |
+| Seam | Capability | Providers | What a swap changes |
 |---|---|---|---|
-| security | `navi.security@1` | `navi.security.no_network` | denies `web_fetch`/`web_search`/`browser` on top of the base policy |
+| security | `navi.security@1` | `navi.security.no_network`, **`navi.plugin.security`** | denies tools on top of the base policy (`abstain` = base decides) |
 | harness | `navi.harness@1` | `navi.harness.terse` | truncates tool observations to 400 chars |
 | prompt | `navi.prompt@1` | `navi.prompt.branded` | stamps a marker into the base instructions |
-| compaction | `navi.compaction@1` | `navi.compaction.default`, `navi.compaction.terse`, `navi.plugin.compaction` | which old context is dropped/cleared |
-| hooks | `navi.hooks@1` | `navi.hooks.audit` | appends an audit line per session event |
+| compaction | `navi.compaction@1` | `navi.compaction.default`, `navi.compaction.terse`, **`navi.plugin.compaction`** | which old context is dropped/cleared |
+| hooks | `navi.hooks@1` | `navi.hooks.audit`, **`navi.plugin.security`** | audit lines per session event |
+
+### Seams served by a process component
+
+Dispatch is by declared capability, so a plugin can own a seam from its own
+process (any language, `matrix.component` v0.1):
+
+| Capability | Host → plugin | Plugin → host |
+|---|---|---|
+| `navi.compaction@1` | `{"messages":[…],"timestamps":[…],"gap_threshold_minutes":n}` | `{"drop":[…],"cleared":[…]}`, full compaction stays with the built-in strategy |
+| `navi.security@1` | `{"op":"validate_tool","tool":{…},"input":{…}}` | `{"decision":"allow"\|"deny"\|"approval"\|"abstain"}` |
+| `navi.harness@1` | `{"op":"compact_observation","tool":…,"result":…}` | `{"observation":"…"}` (the loop methods stay with the engine) |
+| `navi.hooks@1` | `{"op":"event","event":…}` | fire and forget |
+
+Two safety properties: a plugin that stops answering is **ignored** (the engine
+keeps its default behaviour — a broken security component never silently allows
+everything), and `abstain` lets a policy add restrictions without re-implementing
+the host's rules.
+
+Proven by `crates/navi-plugin-security/tests/engine_seam.rs`: the plugin owns the
+`security` and `hooks` slots, denies `web_fetch` with a reason naming itself,
+abstains for `read_file` (the base policy decides), records session events in its
+own process, and both slots fall back to the engine defaults on withdraw.
 
 ```bash
 navi components reload navi.security.no_network   # the tool policy changes now

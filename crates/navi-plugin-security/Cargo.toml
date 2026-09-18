@@ -1,0 +1,22 @@
+[package]
+name = "navi-plugin-security"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Example third-party NAVI security policy + hooks, running out of process."
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "navi-plugin-security"
+path = "src/main.rs"
+
+[dependencies]
+matrix-component = { path = "/home/lain/projects/matrix/crates/matrix-component" }
+serde_json.workspace = true
+
+[dev-dependencies]
+navi-compose.workspace = true
+navi-core.workspace = true
+tempfile.workspace = true

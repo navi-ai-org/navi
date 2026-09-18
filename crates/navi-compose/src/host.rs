@@ -717,48 +717,100 @@ impl Compose {
         }
     }
 
-    /// Installs a typed engine part provided by a **process** component.
+    /// Installs the typed engine parts provided by a **process** component.
     ///
-    /// A `kind = compaction` plugin owns `navi.compaction@1`: the slot receives
-    /// a proxy that calls the plugin through the kernel, so the strategy (and
-    /// its process) can be swapped while the session runs.
+    /// Dispatch is by declared capability: a component that provides
+    /// `navi.compaction@1`, `navi.security@1`, `navi.harness@1` or
+    /// `navi.hooks@1` gets the matching proxy in that slot, and the engine then
+    /// asks the plugin through the kernel.
     fn install_process_component_values(&self, component: &str, generation: u64) {
         let manifest = self.inner.manifests.read().get(component).cloned();
         let Some(manifest) = manifest else { return };
         if manifest.execution.is_inproc() {
             return; // in-process components install from `component_values`
         }
-        if manifest.kind == ComponentKind::Compaction
-            && let Some(capability) = manifest
-                .capabilities
-                .iter()
-                .find(|capability| capability.starts_with("navi.compaction"))
-                .cloned()
-        {
-            let Some(reference) = self.inner.kernel.instance_ref_of(component) else {
-                tracing::warn!(
-                    component,
-                    "no live instance reference; the compaction slot stays as it is"
-                );
-                return;
-            };
-            tracing::info!(
+        let Some(reference) = self.inner.kernel.instance_ref_of(component) else {
+            tracing::warn!(
                 component,
-                generation,
-                capability = %capability,
-                "installing process component into the compaction slot"
+                "no live instance reference; the typed slots stay as they are"
             );
-            let value: Arc<dyn navi_core::CompactionStrategy> = Arc::new(
-                crate::slots::ProcessCompaction::new(
-                    component,
-                    generation,
-                    capability,
-                    reference,
-                    self.inner.kernel.clone(),
-                    Arc::new(navi_core::DefaultCompactionStrategy),
-                ),
-            );
-            self.inner.slots.compaction.install(component, generation, value);
+            return;
+        };
+        for capability in &manifest.capabilities {
+            let interface = capability.split('@').next().unwrap_or(capability);
+            match interface {
+                "navi.compaction" => {
+                    tracing::info!(
+                        component,
+                        generation,
+                        capability = %capability,
+                        "installing process component into the compaction slot"
+                    );
+                    let value: Arc<dyn navi_core::CompactionStrategy> = Arc::new(
+                        crate::slots::ProcessCompaction::new(
+                            component,
+                            generation,
+                            capability.clone(),
+                            reference.clone(),
+                            self.inner.kernel.clone(),
+                            Arc::new(navi_core::DefaultCompactionStrategy),
+                        ),
+                    );
+                    self.inner.slots.compaction.install(component, generation, value);
+                }
+                "navi.security" => {
+                    tracing::info!(
+                        component,
+                        generation,
+                        capability = %capability,
+                        "installing process component into the security slot"
+                    );
+                    let value: Arc<dyn navi_core::ToolSecurityPolicy> = Arc::new(
+                        crate::slots::ProcessSecurity::new(
+                            component,
+                            capability.clone(),
+                            reference.clone(),
+                            self.inner.kernel.clone(),
+                            Arc::new(navi_core::DefaultToolSecurityPolicy),
+                        ),
+                    );
+                    self.inner.slots.security.install(component, generation, value);
+                }
+                "navi.harness" => {
+                    tracing::info!(
+                        component,
+                        generation,
+                        capability = %capability,
+                        "installing process component into the harness slot"
+                    );
+                    let value: Arc<dyn navi_core::HarnessDriver> =
+                        Arc::new(crate::slots::ProcessHarness::new(
+                            component,
+                            capability.clone(),
+                            reference.clone(),
+                            self.inner.kernel.clone(),
+                            Arc::new(navi_core::DefaultHarnessDriver),
+                        ));
+                    self.inner.slots.harness.install(component, generation, value);
+                }
+                "navi.hooks" => {
+                    tracing::info!(
+                        component,
+                        generation,
+                        capability = %capability,
+                        "installing process component into the hooks slot"
+                    );
+                    let value: Arc<dyn navi_core::SessionHooks> =
+                        Arc::new(crate::slots::ProcessHooks::new(
+                            component,
+                            capability.clone(),
+                            reference.clone(),
+                            self.inner.kernel.clone(),
+                        ));
+                    self.inner.slots.hooks.install(component, generation, value);
+                }
+                _ => {}
+            }
         }
     }
 

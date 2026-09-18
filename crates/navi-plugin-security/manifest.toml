@@ -1,0 +1,27 @@
+# Third-party NAVI security policy + hooks (process tier)
+#
+# Install with:
+#   sed "s|@PLUGIN_BINARY@|$PWD/target/debug/navi-plugin-security|" \
+#       crates/navi-plugin-security/manifest.toml > /tmp/plugin-security.toml
+#   navi components install /tmp/plugin-security.toml
+#
+# Then, while a session runs:
+#   navi components reload navi.plugin.security   # the plugin decides on tools
+#   navi components reload navi.hooks.audit       # back to the built-in hooks
+#
+# `--deny` takes exact tool names or prefixes (default `run,web_,browser`).
+
+id = "navi.plugin.security"
+version = "0.1.0"
+description = "Third-party security policy and session hooks (out of process)"
+kind = "security"
+tier = "local"
+trust = "trusted"
+restart = "on-failure"
+
+capabilities = ["navi.security@1", "navi.hooks@1", "navi.plugin.info@1"]
+
+execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
+    "--matrix-sock", "{sock}",
+    "--id", "{id}",
+], timeout_ms = 15000 }
