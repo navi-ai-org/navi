@@ -5,8 +5,9 @@
 //! manifests when no composed session is running.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use navi_compose::{Compose, ComposeOptions, default_home, default_manifests};
 use navi_core::LoadedConfig;
 
@@ -43,6 +44,16 @@ pub enum ComponentsAction {
     },
     /// Show the kernel inventory of a fresh host (dependencies + resources)
     Inventory,
+    /// Invoke a capability of a live component (diagnostics for plugin authors)
+    Invoke {
+        /// Component id, e.g. `navi.plugin.compaction`
+        id: String,
+        /// Capability, e.g. `navi.compaction@1`
+        capability: String,
+        /// JSON input (default: `{}`)
+        #[arg(long, default_value = "{}")]
+        input: String,
+    },
 }
 
 /// Handles `navi components <action>`.
@@ -214,6 +225,65 @@ pub fn handle_components_command(
             }
             println!("{}", serde_json::to_string_pretty(&compose.inventory())?);
             Ok(())
+        }
+        ComponentsAction::Invoke {
+            id,
+            capability,
+            input,
+        } => {
+            // The kernel lives in the supervisor process: the call travels
+            // through the same request/answer files the reloads use.
+            if !home.join("status.json").exists() {
+                bail!("no composed session is running (start `navi` first)");
+            }
+            let input: serde_json::Value = serde_json::from_str(&input)
+                .map_err(|err| anyhow::anyhow!("--input must be JSON: {err}"))?;
+            let request_id = format!(
+                "{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis())
+                    .unwrap_or(0)
+            );
+            let request = navi_compose::InvokeRequest {
+                request_id: request_id.clone(),
+                component: id.clone(),
+                capability: capability.clone(),
+                input,
+            };
+            {
+                use std::io::Write;
+                let mut file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(home.join("invoke.requests"))?;
+                writeln!(file, "{}", serde_json::to_string(&request)?)?;
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Ok(text) = std::fs::read_to_string(home.join("invoke.results")) {
+                    for line in text.lines() {
+                        let Ok(response) =
+                            serde_json::from_str::<navi_compose::InvokeResponse>(line)
+                        else {
+                            continue;
+                        };
+                        if response.request_id != request_id {
+                            continue;
+                        }
+                        println!("{}", serde_json::to_string_pretty(&response.value)?);
+                        if !response.ok {
+                            bail!("{id}: {capability} was rejected");
+                        }
+                        return Ok(());
+                    }
+                }
+                if Instant::now() >= deadline {
+                    bail!("no answer from the running session for `{id} {capability}`");
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
     }
 }

@@ -421,17 +421,28 @@ fn default_manifests_install_without_activating() {
 
     let compaction = compose.activate("navi.compaction.default").expect("compaction");
     assert_eq!(compaction.state, "Active");
-    let (value, ok) = compose.kernel().invoke("navi.compaction@1", &json!({}));
-    assert!(ok, "compaction handler reachable: {value}");
-    assert_eq!(value["strategy"], "navi.compaction.default");
+    // The strategy is observable through the typed slot the engine reads: the
+    // active provider is the activated component (the capability itself belongs
+    // to whoever provides it, so it is not served by a native handler).
+    let (provider, generation, _strategy) = compose
+        .slots()
+        .compaction
+        .current()
+        .expect("compaction slot");
+    assert_eq!(provider, "navi.compaction.default");
 
     // A non-UI component swap is observable through its generation.
     let first = compaction.generation.expect("generation");
     let swapped = compose.reload("navi.compaction.default").expect("reload");
     assert_eq!(swapped.generation, Some(first + 1));
-    let (value, ok) = compose.kernel().invoke("navi.compaction@1", &json!({}));
-    assert!(ok);
-    assert_eq!(value["generation"], first + 1);
+    let (provider, slot_generation, _strategy) = compose
+        .slots()
+        .compaction
+        .current()
+        .expect("compaction slot after reload");
+    assert_eq!(provider, "navi.compaction.default");
+    assert_eq!(slot_generation, first + 1, "the slot follows the generation");
+    assert_eq!(generation, first);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

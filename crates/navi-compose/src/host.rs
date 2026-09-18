@@ -128,6 +128,30 @@ pub struct QueuedCommand {
     pub text: String,
 }
 
+/// A capability invocation requested by a CLI client (`navi components invoke`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InvokeRequest {
+    /// Correlation id (the client polls for the matching answer).
+    pub request_id: String,
+    /// Target component.
+    pub component: String,
+    /// Capability to call.
+    pub capability: String,
+    /// JSON input.
+    pub input: Value,
+}
+
+/// The supervisor's answer to an [`InvokeRequest`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InvokeResponse {
+    /// Correlation id.
+    pub request_id: String,
+    /// Whether the kernel admitted and the component answered.
+    pub ok: bool,
+    /// Response payload (or the kernel's error object).
+    pub value: Value,
+}
+
 struct RunningUi {
     generation: u64,
     control: ControlHandle,
@@ -458,20 +482,6 @@ impl Handler for EngineInfoHandler {
     }
 }
 
-/// Handler for the swappable compaction component: reports the *providing*
-/// component and its generation, so a swap is observable without a full turn.
-struct CompactionHandler;
-
-impl Handler for CompactionHandler {
-    fn invoke(&self, invocation: &Invocation, _input: &Value) -> HandlerResult {
-        Ok(json!({
-            "strategy": invocation.component,
-            "generation": invocation.generation,
-            "instance": invocation.instance,
-        }))
-    }
-}
-
 /// Sink handed to frontends: admits commands through the kernel.
 struct KernelCommandSink {
     inner: Weak<ComposeInner>,
@@ -627,6 +637,7 @@ impl Compose {
     }
 
     fn install_component_values(&self, component: &str, generation: u64) {
+        self.install_process_component_values(component, generation);
         let values = self.inner.component_values.read().get(component).cloned();
         let Some(values) = values else { return };
         if values.is_empty() {
@@ -649,6 +660,51 @@ impl Compose {
                 "installing component into the prompt slot"
             );
             self.inner.slots.prompt.install(component, generation, prompt);
+        }
+    }
+
+    /// Installs a typed engine part provided by a **process** component.
+    ///
+    /// A `kind = compaction` plugin owns `navi.compaction@1`: the slot receives
+    /// a proxy that calls the plugin through the kernel, so the strategy (and
+    /// its process) can be swapped while the session runs.
+    fn install_process_component_values(&self, component: &str, generation: u64) {
+        let manifest = self.inner.manifests.read().get(component).cloned();
+        let Some(manifest) = manifest else { return };
+        if manifest.execution.is_inproc() {
+            return; // in-process components install from `component_values`
+        }
+        if manifest.kind == ComponentKind::Compaction
+            && let Some(capability) = manifest
+                .capabilities
+                .iter()
+                .find(|capability| capability.starts_with("navi.compaction"))
+                .cloned()
+        {
+            let Some(reference) = self.inner.kernel.instance_ref_of(component) else {
+                tracing::warn!(
+                    component,
+                    "no live instance reference; the compaction slot stays as it is"
+                );
+                return;
+            };
+            tracing::info!(
+                component,
+                generation,
+                capability = %capability,
+                "installing process component into the compaction slot"
+            );
+            let value: Arc<dyn navi_core::CompactionStrategy> = Arc::new(
+                crate::slots::ProcessCompaction::new(
+                    component,
+                    generation,
+                    capability,
+                    reference,
+                    self.inner.kernel.clone(),
+                    Arc::new(navi_core::DefaultCompactionStrategy),
+                ),
+            );
+            self.inner.slots.compaction.install(component, generation, value);
         }
     }
 
@@ -693,6 +749,10 @@ impl Compose {
     }
 
     /// Binds the engine facade and registers the engine capability handlers.
+    ///
+    /// `navi.compaction@1` is **not** registered natively: the capability
+    /// belongs to whichever component provides the strategy (in-process or a
+    /// plugin), and a native handler here would shadow a plugin that owns it.
     pub fn set_engine(&self, driver: Arc<dyn EngineDriver>) {
         *self.inner.driver.write() = Some(driver);
         self.inner
@@ -700,9 +760,6 @@ impl Compose {
             .register("navi.engine.driver@1", Arc::new(EngineInfoHandler {
                 inner: Arc::downgrade(&self.inner),
             }));
-        self.inner
-            .handlers
-            .register("navi.compaction@1", Arc::new(CompactionHandler));
     }
 
     /// Context handed to every frontend generation (CLI task + active skills).
@@ -914,6 +971,10 @@ impl Compose {
         if !path.exists() {
             bail!("component `{id}` has no manifest on disk ({})", path.display());
         }
+        // A component installed before this session (files on disk, never loaded
+        // through this handle) must be known to the host too: its NAVI manifest
+        // carries the `kind` and the execution marker the host needs.
+        self.ensure_manifest_loaded(id);
         // The frontend role is exclusive: activating a frontend withdraws any
         // other live frontend first (one terminal, one owner). The kernel
         // records the withdrawal; the host reconciles it in `tick`.
@@ -946,6 +1007,31 @@ impl Compose {
             waiting_reason: self.inner.kernel.waiting_reason_of(id),
             notes,
         })
+    }
+
+    /// Loads a component's NAVI manifest from disk if this handle never saw it.
+    fn ensure_manifest_loaded(&self, id: &str) {
+        if self.inner.manifests.read().contains_key(id) {
+            return;
+        }
+        let path = self.navi_manifest_path(id);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        match ComponentManifest::from_toml(&text) {
+            Ok(manifest) => {
+                self.inner
+                    .manifests
+                    .write()
+                    .insert(id.to_string(), manifest);
+            }
+            Err(err) => tracing::warn!(
+                component = id,
+                path = %path.display(),
+                error = %err,
+                "ignoring unreadable installed manifest"
+            ),
+        }
     }
 
     /// Withdraws every live frontend except `keep`.
@@ -1030,14 +1116,17 @@ impl Compose {
                     // Everything else with a real entrypoint is a capability
                     // component the process host spawns.
                     let is_frontend = self.inner.uis.read().contains_key(&logical);
-                    if is_frontend || entrypoint.starts_with(INPROC_PREFIX) {
-                        self.install_component_values(&logical, generation);
-                    }
+                    let is_inproc = entrypoint.starts_with(INPROC_PREFIX);
+                    // Typed engine parts (compaction, prompt) are installed for
+                    // every tier: in-process components from their registered
+                    // values, process components as a proxy that calls the
+                    // plugin through the kernel.
+                    self.install_component_values(&logical, generation);
                     if is_frontend {
                         if let Err(err) = self.start_frontend(&logical, instance, generation) {
                             notes.push(format!("frontend start failed for {logical}: {err}"));
                         }
-                    } else if !entrypoint.starts_with(INPROC_PREFIX) {
+                    } else if !is_inproc {
                         // A capability component with a real binary: the process
                         // host spawns it. From here on the child is supervised.
                         self.inner
@@ -1408,6 +1497,52 @@ impl Compose {
         !self.inner.supervision.lock().pending.is_empty()
     }
 
+    /// Reads and consumes invocation requests written by CLI clients.
+    pub fn take_invoke_requests(&self) -> Vec<InvokeRequest> {
+        let path = self.inner.home.join("invoke.requests");
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Vec::new();
+        };
+        let _ = std::fs::write(&path, "");
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .filter_map(|line| serde_json::from_str::<InvokeRequest>(line).ok())
+            .collect()
+    }
+
+    /// Answers an invocation request (the client polls `invoke.results`).
+    pub fn answer_invoke(&self, request: &InvokeRequest, value: &Value, ok: bool) {
+        let response = InvokeResponse {
+            request_id: request.request_id.clone(),
+            ok,
+            value: value.clone(),
+        };
+        let path = self.inner.home.join("invoke.results");
+        if let Ok(line) = serde_json::to_string(&response)
+            && let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{line}");
+        }
+    }
+
+    /// Invokes a capability **on a specific live component** (diagnostics).
+    ///
+    /// Uses the instance grant, so a stale or unlisted component cannot be
+    /// reached by name alone (I03).
+    pub fn invoke_component(&self, component: &str, capability: &str, input: &Value) -> (Value, bool) {
+        let Some(reference) = self.inner.kernel.instance_ref_of(component) else {
+            return (
+                json!({"code": "no-such-component", "error": format!("{component} is not active")}),
+                false,
+            );
+        };
+        self.inner.kernel.invoke_for_ref(&reference, capability, input)
+    }
+
     /// Last restart decision for a component (tests, `components status`).
     pub fn restart_outcome(&self, logical: &str) -> Option<RestartOutcome> {
         self.inner
@@ -1657,6 +1792,17 @@ impl Compose {
             self.reap_exited_frontends();
             self.supervise_process_components();
             self.process_pending_restarts();
+            for request in self.take_invoke_requests() {
+                let (value, ok) =
+                    self.invoke_component(&request.component, &request.capability, &request.input);
+                tracing::info!(
+                    component = %request.component,
+                    capability = %request.capability,
+                    ok,
+                    "answered a client capability invocation"
+                );
+                self.answer_invoke(&request, &value, ok);
+            }
             self.drain_commands().await?;
             for id in self.take_reload_requests() {
                 match self.reload(&id) {
@@ -1720,7 +1866,13 @@ impl Compose {
                 .map(|host| host.child_running(&id))
                 .unwrap_or(true);
             if !running {
-                tracing::warn!(component = %id, "process component child is gone");
+                // One warning per failure: while a restart is pending the child
+                // is expected to be gone (the supervisor polls every tick).
+                if self.inner.supervision.lock().pending.contains_key(&id) {
+                    tracing::debug!(component = %id, "process component child still down; restart pending");
+                } else {
+                    tracing::warn!(component = %id, "process component child is gone");
+                }
                 self.schedule_restart(&id, "child process exited");
                 dead.push(id);
             }

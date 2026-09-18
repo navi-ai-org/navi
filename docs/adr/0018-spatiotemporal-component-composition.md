@@ -59,6 +59,13 @@ composition authority, with NAVI as its **host**:
   back, both proven in a real PTY. The TUI's own input is read on a thread and
   delivered over a channel, so a blocking terminal poll can never stall the
   control channel.
+- **Engine parts can come from another process.** A `kind = compaction` component
+  installs a proxy into the engine's compaction slot; the engine asks the plugin
+  through the kernel with the instance grant from activation (`invoke_for_ref`),
+  so a stale generation can never be reached by capability name. The plugin
+  decides (indices to drop/clear), the host applies, and full compaction stays
+  with the built-in strategy. `navi components invoke` lets an operator call any
+  live component's capability through the same path.
 - **Isolation is opt-in and finite.** A process component can declare a
   `[sandbox]`: `matrix-guard` then runs it under `bwrap` + seccomp with rlimits,
   a private `/tmp` and only its own workspace writable. Declaring one makes the

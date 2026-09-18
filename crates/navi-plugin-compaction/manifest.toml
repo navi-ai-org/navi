@@ -1,0 +1,25 @@
+# Third-party NAVI engine part (process tier): a compaction strategy.
+#
+# Install with:
+#   sed "s|@PLUGIN_BINARY@|$PWD/target/debug/navi-plugin-compaction|" \
+#       crates/navi-plugin-compaction/manifest.toml > /tmp/plugin-compaction.toml
+#   navi components install /tmp/plugin-compaction.toml
+#
+# Then swap the engine's compaction strategy while a session runs:
+#   navi components reload navi.plugin.compaction   # the plugin decides
+#   navi components reload navi.compaction.default  # back to the built-in one
+
+id = "navi.plugin.compaction"
+version = "0.1.0"
+description = "Third-party compaction strategy (sliding window, out of process)"
+kind = "compaction"
+tier = "local"
+trust = "trusted"
+restart = "on-failure"
+
+capabilities = ["navi.compaction@1", "navi.plugin.info@1"]
+
+execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
+    "--matrix-sock", "{sock}",
+    "--id", "{id}",
+], timeout_ms = 15000 }

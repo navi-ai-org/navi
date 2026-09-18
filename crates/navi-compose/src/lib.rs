@@ -30,8 +30,8 @@ pub mod tool_proxy;
 pub mod ui;
 
 pub use host::{
-    ActivationOutcome, ComponentStatus, Compose, ComposeOptions, QueuedCommand, RestartOutcome,
-    RestartPolicy, default_home, describe_restart,
+    ActivationOutcome, ComponentStatus, Compose, ComposeOptions, InvokeRequest, InvokeResponse,
+    QueuedCommand, RestartOutcome, RestartPolicy, default_home, describe_restart,
 };
 pub use manifest::{
     CallPolicySpec, ComponentKind, ComponentManifest, Execution, RequirementSpec, SandboxSpec,
@@ -46,7 +46,7 @@ pub use ui::{
 pub use tool_proxy::{PluginToolProxy, PluginToolSpec};
 pub use parts::{BrandedPrompt, ComponentValues, TerseCompaction};
 pub use process_frontend::ProcessFrontend;
-pub use slots::{ComposeCompaction, ComposePrompt, Slots};
+pub use slots::{ComposeCompaction, ComposePrompt, ProcessCompaction, Slots};
 
 /// Frontend host vocabulary (re-exported from `navi-tui`).
 pub use navi_tui::host::{

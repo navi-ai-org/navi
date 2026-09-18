@@ -185,6 +185,48 @@ exit, with both directions recorded in the kernel journal.
 - the plugin inherits an empty environment and no terminal: it talks to NAVI only
   through the socket.
 
+## Engine parts from another process
+
+A process component can provide a part the engine calls as a Rust trait object.
+`kind = compaction` is the worked example: activating such a component installs a
+[`ProcessCompaction`] proxy into the compaction slot, and the engine asks the
+plugin through the kernel on every call.
+
+```toml
+id = "navi.plugin.compaction"
+kind = "compaction"
+capabilities = ["navi.compaction@1", "navi.plugin.info@1"]
+execution = { kind = "process", entrypoint = "/path/to/navi-plugin-compaction", args = ["--matrix-sock", "{sock}", "--id", "{id}"] }
+```
+
+The call is **targeted**: the proxy holds the instance grant from activation and
+uses `invoke_for_ref`, so a stale generation cannot be reached by capability name
+(I03). `navi.compaction@1` is deliberately *not* registered as a native handler —
+the capability belongs to whoever provides the strategy.
+
+The plugin decides, the host applies: it answers with indices to drop or to clear,
+so the host keeps the fields it owns (timestamps, thinking blocks, multimodal
+parts). `auto_compact`/`force_compact` stay with the built-in strategy, so the
+engine always has a working full-compaction path.
+
+```bash
+navi components reload navi.plugin.compaction   # the plugin owns the slot
+navi components invoke navi.plugin.compaction navi.compaction@1 --input '{…}'
+navi components reload navi.compaction.default  # new generation, slot handed back
+```
+
+`crates/navi-plugin-compaction` is a working example (sliding-window policy);
+`crates/navi-plugin-compaction/tests/engine_part.rs` proves the plugin owns the
+slot, that its policy is applied, and that withdrawing it falls back to the
+built-in strategy.
+
+### Slot semantics
+
+The slot is a stack keyed by capability: activating a provider pushes it, a
+**reload moves it back to the top** (the most recent activation wins), withdrawing
+pops it back to the previous provider, and a stale generation never clears its
+successor. There is exactly one entry per component.
+
 ## Trust model
 
 In-process components are **trusted first-party code**: Rust provides no plugin
