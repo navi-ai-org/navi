@@ -142,7 +142,10 @@ fn collect_usage(loaded_config: &LoadedConfig, only: Option<&str>) -> Result<Vec
 
         out.push(SessionUsage {
             id: snapshot.id.as_str().to_string(),
-            title: snapshot.title.clone().unwrap_or_else(|| "(untitled)".into()),
+            title: snapshot
+                .title
+                .clone()
+                .unwrap_or_else(|| "(untitled)".into()),
             project: snapshot.project.display().to_string(),
             provider,
             model,
