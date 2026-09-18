@@ -248,8 +248,9 @@ impl RegistryStore {
         conn.query_row_optional(
             "SELECT value FROM registry_meta WHERE key = ?1",
             params![key],
-            |row| row.get(0),
+            |row| row.get::<Option<String>>(0),
         )
+        .map(Option::flatten)
     }
 
     /// Sets a metadata key-value pair (upsert).
@@ -286,13 +287,20 @@ impl RegistryStore {
     }
 
     /// Returns the stored SHA-256 hash for a provider, or `None`.
+    ///
+    /// Reads the column as nullable: `sha256` is added by an `ALTER TABLE`
+    /// migration and the embedded seed writes rows without a hash, so cached
+    /// rows legitimately hold NULL. Treating NULL as "no cached hash" makes the
+    /// sync refetch those providers instead of failing the whole run with a
+    /// conversion error.
     pub fn provider_sha256(&self, provider_id: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         conn.query_row_optional(
             "SELECT sha256 FROM providers WHERE id = ?1",
             params![provider_id],
-            |row| row.get(0),
+            |row| row.get::<Option<String>>(0),
         )
+        .map(Option::flatten)
     }
 
     /// Returns the set of provider ids currently in the cache.
@@ -408,8 +416,9 @@ impl RegistryStore {
         conn.query_row_optional(
             "SELECT sha256 FROM transcription_providers WHERE id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| row.get::<Option<String>>(0),
         )
+        .map(Option::flatten)
     }
 
     /// Loads all cached transcription providers.
@@ -480,8 +489,9 @@ impl RegistryStore {
         conn.query_row_optional(
             "SELECT sha256 FROM canonical_models WHERE id = ?1",
             params![id],
-            |row| row.get(0),
+            |row| row.get::<Option<String>>(0),
         )
+        .map(Option::flatten)
     }
 
     /// Loads the full canonical model catalog from the cache.

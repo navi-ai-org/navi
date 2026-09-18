@@ -330,15 +330,34 @@ pub fn available_model_options(config: &NaviConfig) -> Vec<ModelOption> {
         .collect()
 }
 
-/// Returns the context window size for the selected model, or a default if unknown.
+/// Returns the context window size for the selected model, or a default if
+/// unknown, clamped by the optional `harness.context_cap_tokens` cap.
+///
+/// This is the single source of truth for the window used by auto-compact and
+/// the context meter, so a cap set here bounds the prompt size (and therefore
+/// the per-step prompt-cache spend) for every entry point: TUI, SDK, server,
+/// subagents and the CLI.
 pub fn effective_context_window(config: &NaviConfig) -> u64 {
     let selected_provider = &config.model.provider;
     let selected_model = &config.model.name;
-    available_model_options(config)
+    let model_window = available_model_options(config)
         .into_iter()
         .find(|m| m.provider_id == *selected_provider && m.name == *selected_model)
         .and_then(|m| m.context_window_tokens)
-        .unwrap_or(crate::config::defaults::DEFAULT_CONTEXT_WINDOW)
+        .unwrap_or(crate::config::defaults::DEFAULT_CONTEXT_WINDOW);
+    apply_context_cap(model_window, config.harness.context_cap_tokens)
+}
+
+/// Clamps a model context window to the configured cap.
+///
+/// A `None` or `0` cap means "use the model window". The cap only ever lowers
+/// the window: a cap larger than the model window is ignored, so it can never
+/// make NAVI send prompts the model cannot accept.
+pub fn apply_context_cap(model_window: u64, cap: Option<u64>) -> u64 {
+    match cap {
+        Some(cap) if cap > 0 => model_window.min(cap),
+        _ => model_window,
+    }
 }
 
 /// List pricing (USD per 1M tokens) for a provider/model.
@@ -474,6 +493,7 @@ pub fn provider_uses_credits(provider_id: &str) -> bool {
 pub fn provider_credit_unit(provider_id: &str) -> Option<&'static str> {
     match canonical_provider_id(provider_id) {
         "charm-hyper" => Some("hypercredits"),
+        "b-ai" => Some("credits"),
         _ => None,
     }
 }
@@ -481,9 +501,11 @@ pub fn provider_credit_unit(provider_id: &str) -> Option<&'static str> {
 /// Convert USD list-rate spend into the provider's prepaid credit unit.
 ///
 /// Charm Hyper FAQ: **1 Hypercredit = $0.05**.
+/// B.AI docs (pricing-and-usage): **1 USD = 1,000,000 Credits**.
 pub fn usd_to_provider_credits(provider_id: &str, usd: f64) -> Option<f64> {
     match canonical_provider_id(provider_id) {
         "charm-hyper" => Some(usd / 0.05),
+        "b-ai" => Some(usd * 1_000_000.0),
         _ => None,
     }
 }

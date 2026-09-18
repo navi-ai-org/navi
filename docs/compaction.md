@@ -177,6 +177,29 @@ navi memory dream --apply
 | `autocompact_error_buffer_tokens` | 20,000 | Error threshold for remaining tokens |
 | `autocompact_max_output_tokens` | 20,000 | Max output tokens for summary generation |
 | `autocompact_max_consecutive_failures` | 3 | Consecutive failures before circuit breaker opens |
+| `context_cap_tokens` | *(none)* | Caps the effective context window used by auto-compact and the context meter. `None` uses the model's registry window; the cap only ever lowers it. |
+
+### Capping the context window (`context_cap_tokens`)
+
+Auto-compact fires at `auto_compact_threshold_percent` (80%) of the *effective*
+window, so capping the window moves every threshold down with it:
+
+```toml
+[harness]
+context_cap_tokens = 260000
+```
+
+With a 1M model window and no cap, sessions routinely sit at 600–900k tokens.
+Prompt tokens are billed per token even when served from the provider prompt
+cache, so the spend per agent step scales with that context: capping at 260k
+cuts the billed prompt volume to roughly a quarter. The same cap also keeps
+requests below the long-context surcharge thresholds some providers apply
+(e.g. 272K for GPT-5.5/5.6/6 on aggregators, where the *whole* request is
+re-priced above the threshold).
+
+Measure the effect with `navi usage report` — it aggregates the recorded
+`UsageReported` events per session (tokens, cache hit rate, list-rate cost, and
+what the same traffic would have cost without a prompt cache).
 
 ### MemoryConfig
 

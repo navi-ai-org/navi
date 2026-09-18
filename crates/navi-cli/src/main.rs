@@ -17,6 +17,7 @@ mod registry_cmd;
 mod server_cmd;
 mod session_cmd;
 mod skill_cmd;
+mod usage_cmd;
 mod voice_cmd;
 
 #[derive(Debug, Parser)]
@@ -140,6 +141,11 @@ enum Commands {
         #[command(subcommand)]
         action: SessionAction,
     },
+    /// Token, prompt-cache and credit accounting for saved sessions
+    Usage {
+        #[command(subcommand)]
+        action: UsageAction,
+    },
     /// OS automation (computer use) tools — ADR 0016
     ComputerUse {
         #[command(subcommand)]
@@ -161,6 +167,22 @@ pub enum SessionAction {
         /// Disable secret redaction (redaction is on by default)
         #[arg(long)]
         no_redact: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum UsageAction {
+    /// Aggregate recorded model-call usage per session (tokens, cache hit rate, cost)
+    Report {
+        /// Emit machine-readable JSON instead of a table
+        #[arg(long)]
+        json: bool,
+        /// Maximum number of sessions to list individually
+        #[arg(long, default_value_t = 15, value_name = "N")]
+        limit: usize,
+        /// Restrict the report to a single session id
+        #[arg(long, value_name = "ID")]
+        session: Option<String>,
     },
 }
 
@@ -594,6 +616,14 @@ async fn main() -> Result<()> {
     // Handle session list/export subcommand early (offline, no provider needed)
     if let Some(Commands::Session { action }) = cli.command {
         return session_cmd::handle_session_command(action, &loaded_config, &cwd);
+    }
+
+    // Handle usage reporting early (offline, reads saved sessions only)
+    if let Some(Commands::Usage { action }) = cli.command {
+        // Pricing comes from the registry catalog; CLI paths that skip the
+        // engine still need the store wired up for cost estimates.
+        init_registry_store(&loaded_config);
+        return usage_cmd::handle_usage_command(action, &loaded_config);
     }
 
     // Handle computer-use subcommand early (offline diagnostics, no provider needed)
