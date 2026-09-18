@@ -238,7 +238,7 @@ to the previous provider (or to the engine's default).
 |---|---|---|---|
 | security | `navi.security@1` | `navi.security.no_network`, **`navi.plugin.security`** | denies tools on top of the base policy (`abstain` = base decides) |
 | harness | `navi.harness@1` | `navi.harness.terse` | truncates tool observations to 400 chars |
-| prompt | `navi.prompt@1` | `navi.prompt.branded` | stamps a marker into the base instructions |
+| prompt | `navi.prompt@1` | `navi.prompt.branded`, **`navi.plugin.prompt`** | the base identity and the developer blocks |
 | compaction | `navi.compaction@1` | `navi.compaction.default`, `navi.compaction.terse`, **`navi.plugin.compaction`** | which old context is dropped/cleared |
 | hooks | `navi.hooks@1` | `navi.hooks.audit`, **`navi.plugin.security`** | audit lines per session event |
 
@@ -253,6 +253,7 @@ process (any language, `matrix.component` v0.1):
 | `navi.security@1` | `{"op":"validate_tool","tool":{…},"input":{…}}` | `{"decision":"allow"\|"deny"\|"approval"\|"abstain"}` |
 | `navi.harness@1` | `{"op":"compact_observation","tool":…,"result":…}` | `{"observation":"…"}` (the loop methods stay with the engine) |
 | `navi.hooks@1` | `{"op":"event","event":…}` | fire and forget |
+| `navi.prompt@1` | `{"op":"build","project_dir":…,"tools":[…],"memory":…,"active_skills":[…],…}` (a *projection* of `SystemPromptInput`, which carries live objects) | `{"instructions":"…","developer_messages":[…]}`, an empty answer falls back to the engine's builder |
 
 Two safety properties: a plugin that stops answering is **ignored** (the engine
 keeps its default behaviour — a broken security component never silently allows
@@ -359,12 +360,6 @@ Proven by:
 
 ## Known limits
 
-- **Prompt is the one seam without a process contract.** `PromptBuilder::build`
-  receives a `SystemPromptInput` that carries the prompt cache and live config
-  objects (not just data), and returns a `RenderedPrompt` that is not
-  serializable today. A process-tier prompt provider needs serde on those core
-  types first; the in-process component path works today
-  (`navi.prompt.branded`).
 - The TUI reads terminal input on a dedicated thread and delivers events over a
   channel. `crossterm::event::poll` was observed to block indefinitely in a bare
   PTY (see `crates/navi-tui/examples/poll_probe.rs`), and a frontend that polls

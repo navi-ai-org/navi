@@ -1,0 +1,25 @@
+# Third-party NAVI prompt builder (process tier)
+#
+# Install with:
+#   sed "s|@PLUGIN_BINARY@|$PWD/target/debug/navi-plugin-prompt|" \
+#       crates/navi-plugin-prompt/manifest.toml > /tmp/plugin-prompt.toml
+#   navi components install /tmp/plugin-prompt.toml
+#
+# Then, while a session runs:
+#   navi components reload navi.plugin.prompt   # the plugin renders the prompt
+#   navi components reload navi.prompt.branded  # back to a built-in builder
+
+id = "navi.plugin.prompt"
+version = "0.1.0"
+description = "Third-party system-prompt builder (out of process)"
+kind = "prompt"
+tier = "local"
+trust = "trusted"
+restart = "on-failure"
+
+capabilities = ["navi.prompt@1", "navi.plugin.info@1"]
+
+execution = { kind = "process", entrypoint = "@PLUGIN_BINARY@", args = [
+    "--matrix-sock", "{sock}",
+    "--id", "{id}",
+], timeout_ms = 15000 }

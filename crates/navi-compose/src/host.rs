@@ -793,6 +793,23 @@ impl Compose {
                         ));
                     self.inner.slots.harness.install(component, generation, value);
                 }
+                "navi.prompt" => {
+                    tracing::info!(
+                        component,
+                        generation,
+                        capability = %capability,
+                        "installing process component into the prompt slot"
+                    );
+                    let value: Arc<dyn navi_core::PromptBuilder> =
+                        Arc::new(crate::slots::ProcessPrompt::new(
+                            component,
+                            capability.clone(),
+                            reference.clone(),
+                            self.inner.kernel.clone(),
+                            Arc::new(navi_core::DefaultPromptBuilder),
+                        ));
+                    self.inner.slots.prompt.install(component, generation, value);
+                }
                 "navi.hooks" => {
                     tracing::info!(
                         component,

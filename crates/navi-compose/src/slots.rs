@@ -774,6 +774,98 @@ impl HarnessDriver for ComposeHarness {
     }
 }
 
+/// `PromptBuilder` served by a **component in another process**.
+///
+/// `SystemPromptInput` carries live objects (the prompt cache, the whole
+/// config), so the host sends a **projection** of it — the data a prompt builder
+/// needs — and the plugin answers with the base instructions plus optional
+/// developer blocks:
+///
+/// ```json
+/// // host → plugin
+/// {"op":"build","project_dir":"/p","tools":["read_file"],"memory":null,
+///  "active_skills":[…],"context_packets":[…]}
+/// // plugin → host
+/// {"instructions":"…","developer_messages":[{"role":"developer","content":"…"}]}
+/// ```
+///
+/// An empty or unreadable answer falls back to the engine's builder.
+pub struct ProcessPrompt {
+    component: String,
+    capability: String,
+    reference: matrix_core::InstanceRef,
+    kernel: Arc<matrix_core::Kernel>,
+    fallback: Arc<dyn PromptBuilder>,
+}
+
+impl ProcessPrompt {
+    /// Binds the slot value to a running component.
+    pub fn new(
+        component: impl Into<String>,
+        capability: impl Into<String>,
+        reference: matrix_core::InstanceRef,
+        kernel: Arc<matrix_core::Kernel>,
+        fallback: Arc<dyn PromptBuilder>,
+    ) -> Self {
+        Self {
+            component: component.into(),
+            capability: capability.into(),
+            reference,
+            kernel,
+            fallback,
+        }
+    }
+}
+
+impl PromptBuilder for ProcessPrompt {
+    fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt {
+        let payload = serde_json::json!({
+            "op": "build",
+            "project_dir": input.project_dir.display().to_string(),
+            "memory": input.memory_injection.clone(),
+            "harness_card": input.harness_card.clone(),
+            "system_prompt": input.system_prompt.clone(),
+            "tools": input
+                .tools
+                .iter()
+                .map(|tool| tool.name.clone())
+                .collect::<Vec<_>>(),
+            "context_packets": input.context_packets.clone(),
+            "available_skills": input.available_skills.clone(),
+            "active_skills": input.active_skills.clone(),
+        });
+        let Some(answer) = call_component(
+            &self.component,
+            &self.capability,
+            &self.reference,
+            &self.kernel,
+            &payload,
+        ) else {
+            return self.fallback.build(input, cache);
+        };
+        let instructions = answer
+            .get("instructions")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        if instructions.trim().is_empty() {
+            tracing::warn!(
+                component = %self.component,
+                "prompt component returned no instructions; falling back"
+            );
+            return self.fallback.build(input, cache);
+        }
+        let developer_messages = answer
+            .get("developer_messages")
+            .and_then(|value| serde_json::from_value::<Vec<ModelMessage>>(value.clone()).ok())
+            .unwrap_or_default();
+        RenderedPrompt {
+            instructions,
+            developer_messages,
+        }
+    }
+}
+
 /// `SessionHooks` proxy: forwards every callback to the active provider.
 pub struct ComposeHooks {
     slots: Slots,

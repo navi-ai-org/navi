@@ -66,15 +66,16 @@ composition authority, with NAVI as its **host**:
   `navi.hooks.audit`) are ordinary components, and a plugin can own a seam
   (`navi.plugin.compaction` for compaction, `navi.plugin.security` for the
   security policy and hooks).
-- **Engine parts can come from another process.** A process component that
-  declares `navi.compaction@1`, `navi.security@1`, `navi.harness@1` or
-  `navi.hooks@1` gets a proxy in that slot; the engine asks the plugin through
-  the kernel with the instance grant from activation (`invoke_for_ref`), so a
-  stale generation can never be reached by capability name. The plugin decides,
-  the host applies, and the engine keeps a working default for the parts the
-  plugin does not own (full compaction, the tool loop, the host's security
-  rules — a plugin may `abstain`). A plugin that stops answering is ignored
-  rather than trusted.
+- **Every engine part can be served by a plugin process.** A component that
+  declares `navi.compaction@1`, `navi.security@1`, `navi.harness@1`,
+  `navi.hooks@1` or `navi.prompt@1` gets a proxy in that slot; the engine asks
+  the plugin through the kernel with the instance grant from activation
+  (`invoke_for_ref`), so a stale generation can never be reached by capability
+  name. The plugin decides, the host applies, and the engine keeps a working
+  default for the parts the plugin does not own (full compaction, the tool loop,
+  the host's security rules — a plugin may `abstain`). A plugin that stops
+  answering is ignored rather than trusted, and `SystemPromptInput` is sent as a
+  *projection* (the live prompt cache and config stay on the host).
 - **Isolation is opt-in and finite.** A process component can declare a
   `[sandbox]`: `matrix-guard` then runs it under `bwrap` + seccomp with rlimits,
   a private `/tmp` and only its own workspace writable. Declaring one makes the
