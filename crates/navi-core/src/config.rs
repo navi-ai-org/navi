@@ -345,6 +345,37 @@ deny_tool_regex = ["^danger_"]
     }
 
     #[test]
+    fn context_cap_lowers_the_effective_window() {
+        let mut config = NaviConfig::default();
+        let window = effective_context_window(&config);
+        assert!(window > 260_000, "expected a large default window");
+
+        config.harness.context_cap_tokens = Some(260_000);
+        assert_eq!(effective_context_window(&config), 260_000);
+    }
+
+    #[test]
+    fn context_cap_never_raises_the_window() {
+        let mut config = NaviConfig::default();
+        let window = effective_context_window(&config);
+
+        config.harness.context_cap_tokens = Some(window + 500_000);
+        assert_eq!(
+            effective_context_window(&config),
+            window,
+            "a cap above the model window must be ignored"
+        );
+    }
+
+    #[test]
+    fn context_cap_zero_or_none_means_uncapped() {
+        assert_eq!(apply_context_cap(1_000_000, None), 1_000_000);
+        assert_eq!(apply_context_cap(1_000_000, Some(0)), 1_000_000);
+        assert_eq!(apply_context_cap(1_000_000, Some(260_000)), 260_000);
+        assert_eq!(apply_context_cap(200_000, Some(260_000)), 200_000);
+    }
+
+    #[test]
     fn tool_prompt_manifest_defaults_to_disabled_for_native_models() {
         let config = NaviConfig::default();
         assert!(!effective_tool_prompt_manifest(&config));
