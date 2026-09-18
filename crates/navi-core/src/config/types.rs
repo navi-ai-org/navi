@@ -378,6 +378,17 @@ pub struct HarnessConfig {
     /// Fraction of recent turns to keep intact during autocompact (0.0–1.0).
     /// Default 0.25 keeps the most recent 25% of turns unsummarized.
     pub autocompact_keep_ratio: f64,
+    /// Cap for the effective context window used by compaction and the context
+    /// meter. `None` (default) uses the model's registry context window.
+    ///
+    /// Prompt tokens are billed per token even when served from the provider
+    /// prompt cache, so the spend per agent step grows with the context size.
+    /// Lowering this makes auto-compact fire earlier: a 260000 cap keeps the
+    /// session around a quarter of a 1M window, and it stays below the
+    /// long-context surcharge thresholds some providers apply (e.g. 272K for
+    /// GPT-5.5/5.6/6 on aggregators).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_cap_tokens: Option<u64>,
     /// Whether the runtime may automatically recover from empty/degenerate
     /// model responses by retrying with adjusted settings.
     pub self_repair: bool,
