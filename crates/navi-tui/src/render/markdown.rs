@@ -781,7 +781,31 @@ fn render_compact_tool_result(
         }
     }
 
+    // A card must never open or close with blank rows. The block gap already
+    // separates one card from the next, so a body that starts/ends with blank
+    // lines — e.g. an empty `search` result whose body is
+    // `"Found matches:\n\n"` — used to push the following card two rows down
+    // instead of one, which is the uneven spacing seen between tool calls.
+    trim_blank_card_edges(&mut lines);
+
     lines
+}
+
+/// Drop whitespace-only rows at the start (after the header) and end of a tool
+/// card, so every card occupies the same shape: header, body, one block gap.
+fn trim_blank_card_edges(lines: &mut Vec<(Line<'static>, ChatLineSource)>) {
+    let is_blank =
+        |line: &Line<'static>| line.spans.iter().all(|span| span.content.trim().is_empty());
+    while lines.len() > 1 && lines.last().is_some_and(|(line, _)| is_blank(line)) {
+        lines.pop();
+    }
+    let mut body_start = 1usize;
+    while body_start < lines.len() && is_blank(&lines[body_start].0) {
+        body_start += 1;
+    }
+    if body_start > 1 {
+        lines.drain(1..body_start);
+    }
 }
 
 fn tool_result_still_running(result: &ToolResult) -> bool {
@@ -2690,6 +2714,124 @@ mod tests {
             "background running should pulse, got: {text}"
         );
         assert!(text.contains("Run") || text.contains("sleep"), "{text}");
+    }
+
+    fn tool_message(
+        id: &str,
+        name: &str,
+        input: serde_json::Value,
+        output: serde_json::Value,
+    ) -> ChatMessage {
+        ChatMessage {
+            status: Some("tool result".to_string()),
+            tool_invocation: Some(ToolInvocation {
+                id: id.to_string(),
+                tool_name: name.to_string(),
+                input,
+            }),
+            tool_result: Some(ToolResult {
+                invocation_id: id.to_string(),
+                ok: true,
+                output,
+            }),
+            ..ChatMessage::new(ChatRole::Assistant, String::new())
+        }
+    }
+
+    fn render_tool_rows(messages: &[ChatMessage], full_tool_view: bool) -> Vec<String> {
+        let output = build_chat_render_for_messages(
+            messages,
+            100,
+            full_tool_view,
+            false,
+            0,
+            &HashSet::new(),
+            &HashSet::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &mut HashMap::new(),
+            None,
+        );
+        output
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn tool_cards_are_separated_by_exactly_one_blank_line() {
+        // A `search` with no hits renders a body ending in a blank line
+        // (`"Found matches:\n\n"`). That trailing blank used to be kept, so the
+        // following tool line sat two rows down while every other card sat one
+        // row down — the uneven spacing seen between tool calls.
+        let empty_search = tool_message(
+            "call-1",
+            "search",
+            json!({ "action": "grep", "query": "update_goal" }),
+            json!({ "matches": [], "total": 0 }),
+        );
+        let read = tool_message(
+            "call-2",
+            "read_file",
+            json!({ "path": "src/lib.rs" }),
+            json!({ "content": "fn main() {}\n", "total_lines": 1 }),
+        );
+        let lines = render_tool_rows(&[empty_search, read], true);
+
+        let tool_rows: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains('◆') || line.contains('◇'))
+            .map(|(row, _)| row)
+            .collect();
+        assert_eq!(tool_rows.len(), 2, "expected two tool cards: {lines:?}");
+        for row in &tool_rows[1..] {
+            let blanks = lines[..*row]
+                .iter()
+                .rev()
+                .take_while(|line| line.trim().is_empty())
+                .count();
+            assert_eq!(
+                blanks, 1,
+                "tool cards must be exactly one blank line apart: {lines:?}"
+            );
+        }
+        assert!(
+            !lines.last().is_some_and(|line| line.trim().is_empty()),
+            "a tool card must not end with a blank row: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn tool_card_body_does_not_open_or_close_with_blank_rows() {
+        let empty_search = tool_message(
+            "call-1",
+            "search",
+            json!({ "action": "grep", "query": "nope" }),
+            json!({ "matches": [], "total": 0 }),
+        );
+        let lines = render_tool_rows(&[empty_search], true);
+        let header = lines
+            .iter()
+            .position(|line| line.contains('◆'))
+            .expect("tool header");
+        assert!(
+            !lines[header + 1..]
+                .first()
+                .is_some_and(|line| line.trim().is_empty()),
+            "body must start on the row after the header: {lines:?}"
+        );
+        assert!(
+            !lines.last().is_some_and(|line| line.trim().is_empty()),
+            "body must not end with a blank row: {lines:?}"
+        );
     }
 
     #[test]
