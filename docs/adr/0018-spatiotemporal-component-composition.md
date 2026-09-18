@@ -59,6 +59,12 @@ composition authority, with NAVI as its **host**:
   back, both proven in a real PTY. The TUI's own input is read on a thread and
   delivered over a channel, so a blocking terminal poll can never stall the
   control channel.
+- **Every `RuntimeComponents` seam is a component.** security, harness, prompt,
+  compaction and hooks each have a typed slot and a proxy that resolves it per
+  call; the first-party providers (`navi.security.no_network`,
+  `navi.harness.terse`, `navi.prompt.branded`, `navi.compaction.*`,
+  `navi.hooks.audit`) are ordinary components, and a plugin can own a seam
+  (`navi.plugin.compaction` proves it for compaction).
 - **Engine parts can come from another process.** A `kind = compaction` component
   installs a proxy into the engine's compaction slot; the engine asks the plugin
   through the kernel with the instance grant from activation (`invoke_for_ref`),

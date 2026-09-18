@@ -752,12 +752,34 @@ async fn run_composed(
         ),
     );
     let prompt: Arc<dyn navi_core::PromptBuilder> = Arc::new(navi_compose::ComposePrompt::new(
-        slots,
+        slots.clone(),
         Arc::new(navi_sdk::ProfilePromptBuilder::new(
             navi_sdk::NaviPromptProfile::default(),
         )),
     ));
-    let engine = builder.compaction(compaction).prompt(prompt).build()?;
+    // Every `RuntimeComponents` seam is component-backed: the engine holds a
+    // proxy that resolves the typed slot on each call.
+    let security: Arc<dyn navi_core::ToolSecurityPolicy> = Arc::new(
+        navi_compose::ComposeSecurity::new(
+            slots.clone(),
+            Arc::new(navi_core::DefaultToolSecurityPolicy),
+        ),
+    );
+    let harness: Arc<dyn navi_core::HarnessDriver> = Arc::new(navi_compose::ComposeHarness::new(
+        slots.clone(),
+        Arc::new(navi_core::DefaultHarnessDriver),
+    ));
+    let hooks: Arc<dyn navi_core::SessionHooks> = Arc::new(navi_compose::ComposeHooks::new(
+        slots,
+        Arc::new(navi_core::NoopSessionHooks),
+    ));
+    let engine = builder
+        .compaction(compaction)
+        .prompt(prompt)
+        .security(security)
+        .harness(harness)
+        .hooks(hooks)
+        .build()?;
     let driver: Arc<dyn EngineDriver> = Arc::new(engine);
     compose.set_engine(driver);
 

@@ -44,9 +44,14 @@ pub use ui::{
     engine_manifest, ui_manifest,
 };
 pub use tool_proxy::{PluginToolProxy, PluginToolSpec};
-pub use parts::{BrandedPrompt, ComponentValues, TerseCompaction};
+pub use parts::{
+    AuditHooks, BrandedPrompt, ComponentValues, DenyToolsPolicy, TerseCompaction, TruncatingHarness,
+};
 pub use process_frontend::ProcessFrontend;
-pub use slots::{ComposeCompaction, ComposePrompt, ProcessCompaction, Slots};
+pub use slots::{
+    ComposeCompaction, ComposeHarness, ComposeHooks, ComposePrompt, ComposeSecurity,
+    ProcessCompaction, Slots,
+};
 
 /// Frontend host vocabulary (re-exported from `navi-tui`).
 pub use navi_tui::host::{

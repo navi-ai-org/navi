@@ -266,6 +266,9 @@ pub fn default_manifests() -> Vec<ComponentManifest> {
         compaction,
         terse_compaction(),
         branded_prompt(),
+        no_network_security(),
+        terse_harness(),
+        audit_hooks(),
     ]
 }
 
@@ -314,6 +317,64 @@ pub fn branded_prompt() -> ComponentManifest {
         restart: "on-failure".into(),
         calls: Default::default(),
         kind: ComponentKind::Prompt,
+        sandbox: None,
+    }
+}
+
+/// A provider of `navi.security@1` that denies a set of tools on top of the
+/// base policy, so a security swap is observable.
+pub fn no_network_security() -> ComponentManifest {
+    ComponentManifest {
+        id: "navi.security.no_network".to_string(),
+        version: "0.1.0".to_string(),
+        description: "Security policy that denies network-capable tools".to_string(),
+        capabilities: vec!["navi.security@1".to_string()],
+        requires: Vec::new(),
+        subscriptions: Vec::new(),
+        execution: Execution::inproc("navi.security.no_network"),
+        tier: "core".into(),
+        trust: "trusted".into(),
+        restart: "on-failure".into(),
+        calls: Default::default(),
+        kind: ComponentKind::Security,
+        sandbox: None,
+    }
+}
+
+/// A provider of `navi.harness@1` that truncates tool observations.
+pub fn terse_harness() -> ComponentManifest {
+    ComponentManifest {
+        id: "navi.harness.terse".to_string(),
+        version: "0.1.0".to_string(),
+        description: "Harness driver that truncates tool observations".to_string(),
+        capabilities: vec!["navi.harness@1".to_string()],
+        requires: Vec::new(),
+        subscriptions: Vec::new(),
+        execution: Execution::inproc("navi.harness.terse"),
+        tier: "core".into(),
+        trust: "trusted".into(),
+        restart: "on-failure".into(),
+        calls: Default::default(),
+        kind: ComponentKind::Harness,
+        sandbox: None,
+    }
+}
+
+/// A provider of `navi.hooks@1` that writes an audit line per session event.
+pub fn audit_hooks() -> ComponentManifest {
+    ComponentManifest {
+        id: "navi.hooks.audit".to_string(),
+        version: "0.1.0".to_string(),
+        description: "Session hooks that append an audit line per event".to_string(),
+        capabilities: vec!["navi.hooks@1".to_string()],
+        requires: Vec::new(),
+        subscriptions: Vec::new(),
+        execution: Execution::inproc("navi.hooks.audit"),
+        tier: "core".into(),
+        trust: "trusted".into(),
+        restart: "on-failure".into(),
+        calls: Default::default(),
+        kind: ComponentKind::Other,
         sandbox: None,
     }
 }

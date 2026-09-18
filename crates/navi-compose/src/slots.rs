@@ -19,7 +19,10 @@ use std::sync::Arc;
 
 use navi_core::{
     CompactOutcome, CompactState, CompactionStrategy, ModelMessage, ModelProvider, PromptBuilder,
-    PromptCache, RenderedPrompt, SystemPromptInput, config::HarnessConfig,
+    PromptCache, RenderedPrompt, SecurityDecision, SecurityPolicy, SessionHooks,
+    SystemPromptInput, ToolDefinition, ToolInvocation, ToolResult,
+    config::HarnessConfig, harness::ToolLoopDecision, harness::{AgentRunState, HarnessPolicy},
+    runtime_components::HarnessDriver, runtime_components::ToolSecurityPolicy,
 };
 use parking_lot::RwLock;
 
@@ -106,6 +109,15 @@ pub type CompactionSlot = Slot<dyn CompactionStrategy>;
 /// System-prompt builder slot (`navi.prompt@1`).
 pub type PromptSlot = Slot<dyn PromptBuilder>;
 
+/// Tool security policy slot (`navi.security@1`).
+pub type SecuritySlot = Slot<dyn ToolSecurityPolicy>;
+
+/// Harness driver slot (`navi.harness@1`).
+pub type HarnessSlot = Slot<dyn HarnessDriver>;
+
+/// Session hooks slot (`navi.hooks@1`).
+pub type HooksSlot = Slot<dyn SessionHooks>;
+
 /// The typed slots a compose host exposes to the engine.
 #[derive(Clone)]
 pub struct Slots {
@@ -113,6 +125,12 @@ pub struct Slots {
     pub compaction: Arc<CompactionSlot>,
     /// `navi.prompt@1`
     pub prompt: Arc<PromptSlot>,
+    /// `navi.security@1`
+    pub security: Arc<SecuritySlot>,
+    /// `navi.harness@1`
+    pub harness: Arc<HarnessSlot>,
+    /// `navi.hooks@1`
+    pub hooks: Arc<HooksSlot>,
 }
 
 impl Default for Slots {
@@ -120,6 +138,9 @@ impl Default for Slots {
         Self {
             compaction: CompactionSlot::new("navi.compaction@1"),
             prompt: PromptSlot::new("navi.prompt@1"),
+            security: SecuritySlot::new("navi.security@1"),
+            harness: HarnessSlot::new("navi.harness@1"),
+            hooks: HooksSlot::new("navi.hooks@1"),
         }
     }
 }
@@ -347,6 +368,150 @@ impl ComposePrompt {
 impl PromptBuilder for ComposePrompt {
     fn build(&self, input: SystemPromptInput, cache: Arc<PromptCache>) -> RenderedPrompt {
         self.active().build(input, cache)
+    }
+}
+
+/// `ToolSecurityPolicy` proxy: resolves the active provider per call.
+pub struct ComposeSecurity {
+    slots: Slots,
+    fallback: Arc<dyn ToolSecurityPolicy>,
+}
+
+impl ComposeSecurity {
+    /// Builds a proxy over `slots`, falling back when no component provides a
+    /// policy.
+    pub fn new(slots: Slots, fallback: Arc<dyn ToolSecurityPolicy>) -> Self {
+        Self { slots, fallback }
+    }
+
+    fn active(&self) -> Arc<dyn ToolSecurityPolicy> {
+        self.slots
+            .security
+            .current()
+            .map(|(_, _, value)| value)
+            .unwrap_or_else(|| self.fallback.clone())
+    }
+}
+
+impl ToolSecurityPolicy for ComposeSecurity {
+    fn validate_tool(
+        &self,
+        base_policy: &SecurityPolicy,
+        definition: &ToolDefinition,
+        invocation: &ToolInvocation,
+    ) -> SecurityDecision {
+        self.active()
+            .validate_tool(base_policy, definition, invocation)
+    }
+}
+
+/// `HarnessDriver` proxy: resolves the active provider per call.
+pub struct ComposeHarness {
+    slots: Slots,
+    fallback: Arc<dyn HarnessDriver>,
+}
+
+impl ComposeHarness {
+    /// Builds a proxy over `slots`, falling back when no component provides a
+    /// driver.
+    pub fn new(slots: Slots, fallback: Arc<dyn HarnessDriver>) -> Self {
+        Self { slots, fallback }
+    }
+
+    fn active(&self) -> Arc<dyn HarnessDriver> {
+        self.slots
+            .harness
+            .current()
+            .map(|(_, _, value)| value)
+            .unwrap_or_else(|| self.fallback.clone())
+    }
+}
+
+impl HarnessDriver for ComposeHarness {
+    fn filter_tools(
+        &self,
+        tools: Vec<ToolDefinition>,
+        allowed_tool_names: Option<&[String]>,
+    ) -> Vec<ToolDefinition> {
+        self.active().filter_tools(tools, allowed_tool_names)
+    }
+
+    fn record_tool_call(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+    ) -> ToolLoopDecision {
+        self.active().record_tool_call(state, policy, invocation)
+    }
+
+    fn record_tool_result(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+    ) -> ToolLoopDecision {
+        self.active()
+            .record_tool_result(state, policy, invocation, result)
+    }
+
+    fn compact_tool_observation(
+        &self,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+        policy: HarnessPolicy,
+    ) -> String {
+        self.active()
+            .compact_tool_observation(invocation, result, policy)
+    }
+}
+
+/// `SessionHooks` proxy: forwards every callback to the active provider.
+pub struct ComposeHooks {
+    slots: Slots,
+    fallback: Arc<dyn SessionHooks>,
+}
+
+impl ComposeHooks {
+    /// Builds a proxy over `slots`, falling back when no component provides
+    /// hooks.
+    pub fn new(slots: Slots, fallback: Arc<dyn SessionHooks>) -> Self {
+        Self { slots, fallback }
+    }
+
+    fn active(&self) -> Arc<dyn SessionHooks> {
+        self.slots
+            .hooks
+            .current()
+            .map(|(_, _, value)| value)
+            .unwrap_or_else(|| self.fallback.clone())
+    }
+}
+
+impl SessionHooks for ComposeHooks {
+    fn on_session_start(&self, session_id: &str) {
+        self.active().on_session_start(session_id)
+    }
+
+    fn on_turn_start(&self, session_id: &str, task: &str) {
+        self.active().on_turn_start(session_id, task)
+    }
+
+    fn on_tool_call(&self, invocation: &ToolInvocation) {
+        self.active().on_tool_call(invocation)
+    }
+
+    fn on_tool_result(&self, result: &ToolResult) {
+        self.active().on_tool_result(result)
+    }
+
+    fn on_turn_end(&self, session_id: &str, output: &str) {
+        self.active().on_turn_end(session_id, output)
+    }
+
+    fn on_session_end(&self, session_id: &str) {
+        self.active().on_session_end(session_id)
     }
 }
 

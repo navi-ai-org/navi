@@ -10,22 +10,210 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use navi_core::{
     CompactOutcome, CompactState, CompactionStrategy, ModelMessage, ModelProvider, ModelRole,
-    PromptBuilder, PromptCache, RenderedPrompt, SystemPromptInput, config::HarnessConfig,
+    PromptBuilder, PromptCache, RenderedPrompt, SecurityDecision, SecurityPolicy, SessionHooks,
+    SystemPromptInput, ToolDefinition, ToolInvocation, ToolResult, config::HarnessConfig,
+    harness::{AgentRunState, HarnessPolicy, ToolLoopDecision},
+    runtime_components::{HarnessDriver, ToolSecurityPolicy},
 };
 
 /// The values a component provides to the engine when it activates.
+///
+/// Every seam of `RuntimeComponents` is represented: activating a component
+/// installs its value into the matching typed slot, and the engine's proxy
+/// resolves that slot per call.
 #[derive(Default, Clone)]
 pub struct ComponentValues {
     /// `navi.compaction@1`
     pub compaction: Option<Arc<dyn CompactionStrategy>>,
     /// `navi.prompt@1`
     pub prompt: Option<Arc<dyn PromptBuilder>>,
+    /// `navi.security@1`
+    pub security: Option<Arc<dyn ToolSecurityPolicy>>,
+    /// `navi.harness@1`
+    pub harness: Option<Arc<dyn HarnessDriver>>,
+    /// `navi.hooks@1`
+    pub hooks: Option<Arc<dyn SessionHooks>>,
 }
 
 impl ComponentValues {
     /// True when the component provides nothing typed (a pure JSON capability).
     pub fn is_empty(&self) -> bool {
-        self.compaction.is_none() && self.prompt.is_none()
+        self.compaction.is_none()
+            && self.prompt.is_none()
+            && self.security.is_none()
+            && self.harness.is_none()
+            && self.hooks.is_none()
+    }
+}
+
+/// Security policy that **denies a configured set of tools** on top of the base
+/// policy (`navi.security.no_network`): the base decision is kept unless it is
+/// an allow for a denied tool.
+pub struct DenyToolsPolicy {
+    denied: Vec<String>,
+    reason: String,
+}
+
+impl DenyToolsPolicy {
+    /// Builds the policy for `denied` tool names.
+    pub fn new(denied: Vec<String>) -> Self {
+        Self {
+            reason: format!(
+                "denied by the active security component: {}",
+                denied.join(", ")
+            ),
+            denied,
+        }
+    }
+
+    /// Tool names this policy refuses.
+    pub fn denied(&self) -> &[String] {
+        &self.denied
+    }
+}
+
+impl ToolSecurityPolicy for DenyToolsPolicy {
+    fn validate_tool(
+        &self,
+        base_policy: &SecurityPolicy,
+        definition: &ToolDefinition,
+        invocation: &ToolInvocation,
+    ) -> SecurityDecision {
+        if self.denied.contains(&definition.name) {
+            return SecurityDecision::Deny(self.reason.clone());
+        }
+        base_policy.validate_tool_invocation(definition, invocation)
+    }
+}
+
+/// Harness driver that keeps the default loop behaviour but **truncates tool
+/// observations** to a maximum length (`navi.harness.terse`).
+#[derive(Default)]
+pub struct TruncatingHarness {
+    /// Maximum characters kept per observation.
+    pub limit: usize,
+    /// Driver used for everything else.
+    pub fallback: Option<Arc<dyn HarnessDriver>>,
+}
+
+impl TruncatingHarness {
+    /// Builds the driver with a per-observation character limit.
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            fallback: None,
+        }
+    }
+
+    fn driver(&self) -> Arc<dyn HarnessDriver> {
+        self.fallback
+            .clone()
+            .unwrap_or_else(|| Arc::new(navi_core::DefaultHarnessDriver))
+    }
+}
+
+impl HarnessDriver for TruncatingHarness {
+    fn filter_tools(
+        &self,
+        tools: Vec<ToolDefinition>,
+        allowed_tool_names: Option<&[String]>,
+    ) -> Vec<ToolDefinition> {
+        self.driver().filter_tools(tools, allowed_tool_names)
+    }
+
+    fn record_tool_call(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+    ) -> ToolLoopDecision {
+        self.driver().record_tool_call(state, policy, invocation)
+    }
+
+    fn record_tool_result(
+        &self,
+        state: &mut AgentRunState,
+        policy: HarnessPolicy,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+    ) -> ToolLoopDecision {
+        self.driver()
+            .record_tool_result(state, policy, invocation, result)
+    }
+
+    fn compact_tool_observation(
+        &self,
+        invocation: &ToolInvocation,
+        result: &ToolResult,
+        policy: HarnessPolicy,
+    ) -> String {
+        let observation = self
+            .driver()
+            .compact_tool_observation(invocation, result, policy);
+        if self.limit == 0 || observation.chars().count() <= self.limit {
+            return observation;
+        }
+        let head: String = observation.chars().take(self.limit).collect();
+        format!("{head}\n… [observation truncated by navi.harness.terse]")
+    }
+}
+
+/// Session hooks that append an audit line per event (`navi.hooks.audit`).
+#[derive(Debug, Default)]
+pub struct AuditHooks {
+    /// Where the audit lines go (`None` = nowhere, e.g. in tests).
+    pub path: Option<std::path::PathBuf>,
+}
+
+impl AuditHooks {
+    /// Builds the hooks writing to `path`.
+    pub fn new(path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            path: Some(path.into()),
+        }
+    }
+
+    fn record(&self, line: &str) {
+        let Some(path) = self.path.as_ref() else {
+            return;
+        };
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            use std::io::Write;
+            let _ = writeln!(file, "{line}");
+        }
+    }
+}
+
+impl SessionHooks for AuditHooks {
+    fn on_session_start(&self, session_id: &str) {
+        self.record(&format!("session.start {session_id}"));
+    }
+
+    fn on_turn_start(&self, session_id: &str, task: &str) {
+        self.record(&format!("turn.start {session_id} task={task}"));
+    }
+
+    fn on_tool_call(&self, invocation: &ToolInvocation) {
+        self.record(&format!("tool.call {}", invocation.tool_name));
+    }
+
+    fn on_tool_result(&self, result: &ToolResult) {
+        self.record(&format!("tool.result ok={}", result.ok));
+    }
+
+    fn on_turn_end(&self, session_id: &str, output: &str) {
+        self.record(&format!(
+            "turn.end {session_id} chars={}",
+            output.chars().count()
+        ));
+    }
+
+    fn on_session_end(&self, session_id: &str) {
+        self.record(&format!("session.end {session_id}"));
     }
 }
 

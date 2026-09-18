@@ -227,6 +227,34 @@ The slot is a stack keyed by capability: activating a provider pushes it, a
 pops it back to the previous provider, and a stale generation never clears its
 successor. There is exactly one entry per component.
 
+## Every engine seam is a component
+
+`RuntimeComponents` has five seams; all five are component-backed. The engine
+receives a proxy per seam that resolves the typed slot on every call, so
+activating a provider changes behaviour immediately and withdrawing it falls back
+to the previous provider (or to the engine's default).
+
+| Seam | Capability | First-party providers | What a swap changes |
+|---|---|---|---|
+| security | `navi.security@1` | `navi.security.no_network` | denies `web_fetch`/`web_search`/`browser` on top of the base policy |
+| harness | `navi.harness@1` | `navi.harness.terse` | truncates tool observations to 400 chars |
+| prompt | `navi.prompt@1` | `navi.prompt.branded` | stamps a marker into the base instructions |
+| compaction | `navi.compaction@1` | `navi.compaction.default`, `navi.compaction.terse`, `navi.plugin.compaction` | which old context is dropped/cleared |
+| hooks | `navi.hooks@1` | `navi.hooks.audit` | appends an audit line per session event |
+
+```bash
+navi components reload navi.security.no_network   # the tool policy changes now
+navi components reload navi.harness.terse         # observations get truncated
+navi components reload navi.hooks.audit           # events start being audited
+```
+
+Proven by `security_harness_and_hooks_are_component_swappable` in
+`crates/navi-compose/tests/compose.rs`: the same proxy defers to the base policy
+before activation, denies the tool after it, keeps the base decision for other
+tools, truncates the observation through the harness component, writes the audit
+file through the hooks component, and restores the base behaviour after
+withdrawing all three.
+
 ## Trust model
 
 In-process components are **trusted first-party code**: Rust provides no plugin

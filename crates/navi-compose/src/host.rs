@@ -621,6 +621,33 @@ impl Compose {
                 ..Default::default()
             },
         );
+        self.register_component_values(
+            "navi.security.no_network",
+            ComponentValues {
+                security: Some(Arc::new(crate::parts::DenyToolsPolicy::new(vec![
+                    "web_fetch".to_string(),
+                    "web_search".to_string(),
+                    "browser".to_string(),
+                ]))),
+                ..Default::default()
+            },
+        );
+        self.register_component_values(
+            "navi.harness.terse",
+            ComponentValues {
+                harness: Some(Arc::new(crate::parts::TruncatingHarness::new(400))),
+                ..Default::default()
+            },
+        );
+        self.register_component_values(
+            "navi.hooks.audit",
+            ComponentValues {
+                hooks: Some(Arc::new(crate::parts::AuditHooks::new(
+                    self.inner.home.join("hooks-audit.log"),
+                ))),
+                ..Default::default()
+            },
+        );
     }
 
     /// Registers the typed values a component installs on activation.
@@ -660,6 +687,33 @@ impl Compose {
                 "installing component into the prompt slot"
             );
             self.inner.slots.prompt.install(component, generation, prompt);
+        }
+        if let Some(security) = values.security {
+            tracing::info!(
+                component,
+                generation,
+                role = self.inner.slots.security.role(),
+                "installing component into the security slot"
+            );
+            self.inner.slots.security.install(component, generation, security);
+        }
+        if let Some(harness) = values.harness {
+            tracing::info!(
+                component,
+                generation,
+                role = self.inner.slots.harness.role(),
+                "installing component into the harness slot"
+            );
+            self.inner.slots.harness.install(component, generation, harness);
+        }
+        if let Some(hooks) = values.hooks {
+            tracing::info!(
+                component,
+                generation,
+                role = self.inner.slots.hooks.role(),
+                "installing component into the hooks slot"
+            );
+            self.inner.slots.hooks.install(component, generation, hooks);
         }
     }
 
@@ -721,6 +775,27 @@ impl Compose {
                 component,
                 generation,
                 "prompt slot fell back to the previous provider"
+            );
+        }
+        if self.inner.slots.security.clear_if_owner(component, generation) {
+            tracing::info!(
+                component,
+                generation,
+                "security slot fell back to the previous provider"
+            );
+        }
+        if self.inner.slots.harness.clear_if_owner(component, generation) {
+            tracing::info!(
+                component,
+                generation,
+                "harness slot fell back to the previous provider"
+            );
+        }
+        if self.inner.slots.hooks.clear_if_owner(component, generation) {
+            tracing::info!(
+                component,
+                generation,
+                "hooks slot fell back to the previous provider"
             );
         }
     }

@@ -628,6 +628,137 @@ fn a_frontend_that_quits_on_its_own_is_reaped() {
 }
 
 #[test]
+fn security_harness_and_hooks_are_component_swappable() {
+    // The three remaining engine seams: activating a component installs its
+    // value into the typed slot, and the engine's proxy resolves it per call.
+    use navi_compose::{ComposeHarness, ComposeHooks, ComposeSecurity};
+    use navi_core::{
+        DefaultHarnessDriver, DefaultToolSecurityPolicy, HarnessDriver, NoopSessionHooks,
+        SecurityDecision, SecurityPolicy, SessionHooks, ToolDefinition, ToolInvocation,
+        ToolSecurityPolicy,
+    };
+
+    let (compose, dir) = compose_with_frontends(Vec::new());
+    compose
+        .install_definitions(&default_manifests())
+        .expect("install");
+    compose.activate("navi.engine").expect("engine");
+
+    let slots = compose.slots();
+    let security: Arc<dyn ToolSecurityPolicy> = Arc::new(ComposeSecurity::new(
+        slots.clone(),
+        Arc::new(DefaultToolSecurityPolicy),
+    ));
+    let harness: Arc<dyn HarnessDriver> = Arc::new(ComposeHarness::new(
+        slots.clone(),
+        Arc::new(DefaultHarnessDriver),
+    ));
+    let hooks: Arc<dyn SessionHooks> =
+        Arc::new(ComposeHooks::new(slots, Arc::new(NoopSessionHooks)));
+
+    let base = SecurityPolicy::new(
+        dir.path().to_path_buf(),
+        dir.path().join("data"),
+        Default::default(),
+    )
+    .expect("base security policy");
+    let fetch = ToolDefinition {
+        name: "web_fetch".to_string(),
+        ..Default::default()
+    };
+    let read = ToolDefinition {
+        name: "read_file".to_string(),
+        ..Default::default()
+    };
+    let invocation = ToolInvocation {
+        id: "call-1".to_string(),
+        tool_name: "web_fetch".to_string(),
+        input: json!({"url": "https://example.com"}),
+    };
+
+    // The proxy defers to the base policy while no security component is active.
+    let baseline_fetch = security.validate_tool(&base, &fetch, &invocation);
+    let baseline_read = security.validate_tool(&base, &read, &invocation);
+    assert_eq!(
+        baseline_fetch,
+        base.validate_tool_invocation(&fetch, &invocation),
+        "without a component the proxy is the base policy"
+    );
+
+    // Activating the component swaps the policy at runtime.
+    let outcome = compose.activate("navi.security.no_network").expect("activate");
+    assert_eq!(outcome.state, "Active");
+    assert_eq!(
+        compose
+            .slots()
+            .security
+            .current()
+            .map(|(component, _, _)| component)
+            .as_deref(),
+        Some("navi.security.no_network")
+    );
+    match security.validate_tool(&base, &fetch, &invocation) {
+        SecurityDecision::Deny(reason) => {
+            assert!(reason.contains("web_fetch"), "reason names the tool: {reason}")
+        }
+        other => panic!("the component must deny the tool, got {other:?}"),
+    }
+    assert_ne!(
+        baseline_fetch,
+        SecurityDecision::Deny(String::new()),
+        "precondition: the base policy did not already deny it"
+    );
+    // …while other tools keep the base decision.
+    assert_eq!(
+        security.validate_tool(&base, &read, &invocation),
+        baseline_read,
+        "a tool the component does not deny keeps the base decision"
+    );
+
+    // The harness driver is swappable too: the component truncates observations.
+    compose.activate("navi.harness.terse").expect("harness");
+    let policy = navi_core::harness::select_harness_policy(&NaviConfig::default());
+    let observation = harness.compact_tool_observation(
+        &invocation,
+        &navi_core::ToolResult {
+            invocation_id: "call-1".to_string(),
+            ok: true,
+            output: json!({"content": "x".repeat(5_000)}),
+        },
+        policy,
+    );
+    assert!(
+        observation.contains("truncated by navi.harness.terse"),
+        "the component truncated the observation ({} chars)",
+        observation.chars().count()
+    );
+
+    // Hooks: the component writes an audit line per event.
+    compose.activate("navi.hooks.audit").expect("hooks");
+    hooks.on_session_start("sess-test");
+    hooks.on_tool_call(&invocation);
+    let audit_path = dir.path().join("compose").join("hooks-audit.log");
+    let audit = std::fs::read_to_string(&audit_path).expect("audit file");
+    assert!(
+        audit.contains("session.start sess-test") && audit.contains("tool.call web_fetch"),
+        "the hooks component recorded the events:\n{audit}"
+    );
+
+    // Withdrawing every provider falls back to the engine's defaults.
+    compose.withdraw("navi.security.no_network").expect("withdraw");
+    compose.withdraw("navi.harness.terse").expect("withdraw");
+    compose.withdraw("navi.hooks.audit").expect("withdraw");
+    assert!(compose.slots().security.current().is_none());
+    assert!(compose.slots().harness.current().is_none());
+    assert!(compose.slots().hooks.current().is_none());
+    assert_eq!(
+        security.validate_tool(&base, &fetch, &invocation),
+        baseline_fetch,
+        "withdrawing the component restores the base decision"
+    );
+}
+
+#[test]
 fn a_crashed_frontend_is_restarted_with_a_new_generation() {
     // Two crashes, then it stays up. A fast backoff keeps the test quick.
     let frontend = scripted_flaky("navi.ui.test", 2);
