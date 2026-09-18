@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-18
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.1
+
+### Fixed
+
+- **`code_exec` is now discoverable as tool chaining.** The model saw a
+  jargon-y one-liner ("typed code-mode plan with controlled nested tools") with
+  no example and no per-field descriptions, so it kept emitting one call per
+  step. The description now leads with "run several repo steps in ONE call" and
+  states the stop-on-first-failure semantics; every op field documents which op
+  uses it; the schema carries a real example (also used as the invalid-argument
+  recovery hint and in the text-only tool manifest). An empty `ops` array used to
+  return `status: "passed"` with zero ops — a silent no-op — and is now rejected
+  with a correct example. The system prompt states the preference instead of
+  filing `code_exec` under "symbols, AST, overview, rename, execution".
+
+- **Even spacing between tool calls in the transcript.** A tool card whose body
+  ended with blank lines (e.g. an empty `search` result, body
+  `"Found matches:\n\n"`) kept that trailing blank, so the next tool line sat
+  two rows down instead of one. Cards now never open or close with blank rows;
+  every card is separated by exactly one blank line.
+
+- **Goals can no longer loop forever without a way to close them.** Goal tools
+  (`get_goal` / `create_goal` / `update_goal`) are now session-core: a harness
+  pack's `entry_allow_tools` (or a skill `allow_tools` list) can no longer drop
+  them from the model schema or deny them at call time. Previously an active goal
+  kept auto-continuing while the model reported "`update_goal` does not exist",
+  so the goal could never be marked complete or blocked. Auto-continuation is
+  also suppressed when `update_goal` is not registered at all (host
+  `host_tools_only` / `chat_only` profiles that skip tool bootstrap).
+
 ## [0.8.0] - 2026-09-17
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.7.3...v0.8.0

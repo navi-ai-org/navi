@@ -19,7 +19,7 @@ clap.workspace = true
 futures-util.workspace = true
 # Keep navi-core default features (VFS/browser/computer-use) off — cannot use
 # workspace inherit + default-features=false.
-navi-core = { version = "0.8.0", path = "../navi-core", default-features = false }
+navi-core = { version = "0.8.1", path = "../navi-core", default-features = false }
 navi-openai.workspace = true
 serde.workspace = true
 serde_json.workspace = true
