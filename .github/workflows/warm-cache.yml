@@ -12,6 +12,10 @@ name: Warm release cache
 # restore them. Keys must stay in sync with release.yml — if you change a key
 # there, change it here too.
 #
+# Container image must also stay in sync with release.yml: stable `rust:alpine`
+# (Docker Hub publishes no `rust:nightly*` tags any more; the pinned channel is
+# installed by `rustup install` from rust-toolchain.toml).
+#
 # Triggers:
 # - schedule: keeps the caches alive (GitHub evicts a cache after 7 idle days).
 # - push to main: only when a Rust *input* changes. Source-only changes do not
@@ -66,7 +70,7 @@ jobs:
   build-linux-x64:
     name: Warm navi-linux-x64
     runs-on: ubuntu-latest
-    container: rust:nightly-alpine
+    container: rust:alpine
     steps:
       - name: Install Alpine build deps
         run: |
@@ -102,7 +106,7 @@ jobs:
           shared-key: release-musl
           cache-directories: .cargo-home
 
-      - name: Build inside rust:nightly-alpine (native arm64 musl)
+      - name: Build inside rust:alpine (native arm64 musl)
         run: |
           set -euo pipefail
           docker run --rm \
@@ -111,7 +115,7 @@ jobs:
             -e CARGO_HOME=/src/.cargo-home \
             -e CARGO_TARGET_DIR=/src/target/arm64-musl \
             -e NAVI_REGISTRY_REF \
-            rust:nightly-alpine \
+            rust:alpine \
             sh -c '
               set -eu
               apk add --no-cache \
@@ -127,7 +131,7 @@ jobs:
             '
           # rust-cache runs as the runner user on the host; hand back ownership of
           # the directories it has to archive (the container ran as root).
-          docker run --rm -v "$PWD":/src:rw rust:nightly-alpine \
+          docker run --rm -v "$PWD":/src:rw rust:alpine \
             chown -R "$(id -u):$(id -g)" /src/target /src/.cargo-home
 
   # ── macOS + Windows ────────────────────────────────────────────────────────

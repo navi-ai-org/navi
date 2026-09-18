@@ -21,6 +21,13 @@
 # Linux builds use Alpine (musl) containers so the binary runs on:
 #   Alpine, Debian bookworm+, Ubuntu, Amazon Linux, and most enterprise containers.
 #
+# The container is stable `rust:alpine` on purpose: Docker Hub no longer
+# publishes *any* `rust:nightly*` tags (the whole family 404s, which broke the
+# v0.8.1 release), and pinning a dated image would add a second channel pin.
+# Each job installs the real channel with `rustup install`, read from
+# rust-toolchain.toml — the only source of truth for the toolchain. Do not
+# "restore" a nightly image tag.
+#
 # Assets (names must match scripts/install.sh and scripts/install.ps1):
 #   navi-linux-x64.tar.gz
 #   navi-linux-arm64.tar.gz
@@ -230,7 +237,7 @@ jobs:
     name: Build navi-linux-x64
     needs: [test]
     runs-on: ubuntu-latest
-    container: rust:nightly-alpine
+    container: rust:alpine
     steps:
       - name: Install Alpine build deps
         run: |
@@ -254,7 +261,7 @@ jobs:
           shared-key: release-musl
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # Host triple on rust:nightly-alpine is musl → target/release/navi
+      # Host triple on rust:alpine is musl → target/release/navi
       - name: Build release binaries (musl)
         run: cargo build -p navi-cli -p navi-lite --locked --release
 
@@ -333,7 +340,7 @@ jobs:
           # the ephemeral build container; the target dir lives under ./target.
           cache-directories: .cargo-home
 
-      - name: Build inside rust:nightly-alpine (native arm64 musl)
+      - name: Build inside rust:alpine (native arm64 musl)
         run: |
           set -euo pipefail
           docker run --rm \
@@ -342,7 +349,7 @@ jobs:
             -e CARGO_HOME=/src/.cargo-home \
             -e CARGO_TARGET_DIR=/src/target/arm64-musl \
             -e NAVI_REGISTRY_REF \
-            rust:nightly-alpine \
+            rust:alpine \
             sh -c '
               set -eu
               apk add --no-cache \
@@ -372,7 +379,7 @@ jobs:
             '
           # rust-cache runs as the runner user on the host; hand back ownership
           # of the directories it has to archive (the container ran as root).
-          docker run --rm -v "$PWD":/src:rw rust:nightly-alpine \
+          docker run --rm -v "$PWD":/src:rw rust:alpine \
             chown -R "$(id -u):$(id -g)" /src/target /src/.cargo-home
 
       - name: Package
