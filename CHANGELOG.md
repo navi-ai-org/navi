@@ -7,9 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-18
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.2
+
+### Fixed
+
+- **Linux release builds work again.** Docker Hub stopped publishing every
+  `rust:nightly*` image tag (the whole family 404s), so the musl jobs died at
+  container init with `manifest for rust:nightly-alpine not found` and the
+  `GitHub Release` job was skipped. Both musl jobs (and `warm-cache.yml`, which
+  used the same image) now use stable `rust:alpine`; the toolchain still comes
+  only from `rust-toolchain.toml` via `rustup install`.
+
 ## [0.8.1] - 2026-09-18
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.1
+
+> Not published: the tag was created, but the release workflow could not build
+> the Linux targets (Docker Hub image removal above). See 0.8.2.
 
 ### Fixed
 
