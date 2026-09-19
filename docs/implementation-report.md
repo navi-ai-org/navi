@@ -3,10 +3,12 @@
 This is the *report* half of the study `~/lab/navi-matrix/DESIGN.md`: what the
 design proposed, what was built, where it deviates, and what remains.
 
-* **Where:** git worktree `/home/lain/lab/navi-wt/spatiotemporal`, branch
-  `feat/spatiotemporal-compose`, base `2e4c92a`, head `763b2d8` — 12 commits,
-  52 files, +11696/−62. `projects/navi` (main) and `projects/matrix` were left
-  untouched by this work.
+* **Where:** branch `feat/spatiotemporal-compose` in `/home/lain/projects/navi`
+  — 12 code commits plus docs, base `2e4c92a`, last code commit `763b2d8`
+  (53 files, +11863/−62 at `6a39f38`). The worktree
+  `~/lab/navi-wt/spatiotemporal` used during the work was removed on
+  2026-09-18; the branch is intact. `main` was not modified, and
+  `projects/matrix` was left untouched.
 * **Design:** `~/lab/navi-matrix/DESIGN.md` (sections below are referenced as §N).
 * **User docs:** `docs/compose.md`, `docs/adr/0018-spatiotemporal-component-composition.md`,
   and one README per plugin crate.
@@ -24,6 +26,7 @@ bf084e0 compose: every engine seam is a component (security, harness, hooks)
 7533320 compose: seams served by a process component (security, harness, hooks)
 35cca5c docs: prompt is the one seam without a process contract
 763b2d8 compose: a plugin process can render the system prompt
+6a39f38 docs: implementation report — study to shipped state
 ```
 
 ## 1. Phases (§8)
@@ -139,12 +142,67 @@ Phase-3 acceptance (§8) maps to
   mid-session logs a warning and applies on the next start.
 * Phase 4 (remote hosts) was not attempted.
 
-## 8. Reproducing it
+## 8. Workspace-wide check
+
+Measured on 2026-09-18 in the worktree at `763b2d8` — the last commit that
+touches code; everything after it is this report, so the numbers still describe
+the branch:
+
+| Check | Result |
+|---|---|
+| `cargo check --workspace --all-targets --exclude navi-server` | clean |
+| `cargo check -p navi-server` | fails: `RustEmbed` folder `crates/navi-server/web/dist/` does not exist |
+| `cargo test` over the workspace, minus the suites in §2 and `navi-server` | 1727 passed, 12 failed; with `SHELL=/usr/bin/bash`: 1732 passed, 7 failed — all pre-existing |
+
+`navi-server` embeds `web/dist/` at compile time, and that directory is
+gitignored build output: a fresh worktree cannot build the crate until the web
+assets are built. The main checkout has it only because it was built there. The
+branch does not touch `crates/navi-server`.
+
+The remaining failures are in `navi-core`, which this branch does not touch at
+all (`git diff --stat 2e4c92a..HEAD -- crates/navi-core` is empty):
+
+* tests that assume a POSIX shell — this machine runs `fish`; setting
+  `SHELL=/usr/bin/bash` drops the count from 12 to 7;
+* a test that feeds Windows paths to a parser that splits on `/` on Linux;
+* `parity_check`, which asserts a tool budget of ≤ 15 and sees 16.
+
+These are environmental or pre-existing content bugs, not regressions.
+
+## 9. Anti-meta check (§10 item 5: “don't break `navi-lite` or the headless paths”)
+
+The design's §10 anti-goals, checked against the branch:
+
+| Anti-goal | Status |
+|---|---|
+| no in-process third-party plugins | ✅ third-party code runs out of process (`matrix-host` + `matrix-guard`) |
+| no token streaming in the kernel | ✅ the kernel sees lifecycle and capability calls only |
+| the kernel does not know prompts or agent strategies | ✅ contracts are opaque JSON; the kernel knows interfaces and lifecycle |
+| don't move the engine out of process “to look nice” | ✅ the engine stays in-process; phase 4 was skipped |
+| don't break `navi-lite` or the headless path | ⚠️ both are intact, but composition is **not** feature-gated |
+
+`navi-lite` is untouched (`git diff --stat 2e4c92a..HEAD -- crates/navi-lite`
+is empty), and `navi --no-tui` still goes to `run_headless` before any compose
+code runs. What did not happen is the design's “composição é feature-gated”:
+`navi-compose` is an unconditional dependency of `navi-cli`, and the
+interactive `navi` now always goes through `run_composed` — the composed path
+*is* the default session path. That is a deliberate deviation (a composed path
+that is not the default is not exercised), and the PTY tests in §2 are its
+regression net: they drive the composed path in a real terminal, and `--no-tui`
+keeps the headless path free of it.
+
+## 10. Reproducing it
 
 ```bash
 # tests
 cargo test -p navi-compose -p navi-plugin-demo -p navi-plugin-tui \
            -p navi-plugin-compaction -p navi-plugin-security -p navi-plugin-prompt -p navi-cli
+
+# the workspace-wide check of §8 (navi-server needs its web assets built first)
+SHELL=/usr/bin/bash cargo test --workspace --exclude navi-server \
+  --exclude navi-compose --exclude navi-plugin-demo --exclude navi-plugin-tui \
+  --exclude navi-plugin-compaction --exclude navi-plugin-security \
+  --exclude navi-plugin-prompt --exclude navi-cli
 
 # a composed session
 cargo build -p navi-cli -p navi-plugin-tui -p navi-plugin-compaction \
