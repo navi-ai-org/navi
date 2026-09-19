@@ -3,9 +3,10 @@
 **0.8.2 is a patch release** — three product fixes plus the release-pipeline fix
 that blocked 0.8.1. No config or storage changes; drop-in upgrade from 0.8.0.
 
-> **Note:** the `v0.8.1` tag exists but was never published. Docker Hub stopped
-> publishing `rust:nightly*` image tags, so the musl builds could not start and
-> the release job was skipped. 0.8.2 is the first release built with the fix.
+> **Note:** 0.8.1 was never published and its tag has been withdrawn. Docker Hub
+> stopped publishing `rust:nightly*` image tags, so the musl builds could not
+> start and the release job was skipped. 0.8.2 is the first release built with
+> the fix.
 
 - **Linux release builds work again.** Both musl jobs (and `warm-cache.yml`,
   which used the same image) build on stable `rust:alpine`; the pinned toolchain

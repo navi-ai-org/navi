@@ -22,10 +22,9 @@ Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.2
 
 ## [0.8.1] - 2026-09-18
 
-Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.1
-
-> Not published: the tag was created, but the release workflow could not build
-> the Linux targets (Docker Hub image removal above). See 0.8.2.
+> Not published, and its tag was withdrawn: the release workflow could not build
+> the Linux targets (Docker Hub image removal above), so this version never
+> shipped. Its changes are in 0.8.2.
 
 ### Fixed
 
