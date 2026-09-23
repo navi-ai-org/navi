@@ -110,7 +110,11 @@ jobs:
         if: steps.tag.outputs.skip != 'true'
         uses: actions/checkout@v5
         with:
-          ref: ${{ steps.tag.outputs.tag }}
+          # `source_ref` lets a recovery dispatch run the packaging scripts from
+          # a newer ref than the tag. The npm packages wrap the release *assets*
+          # (downloaded below), so the ref only selects the script, not the
+          # artifact — needed when the tag's script is the broken part.
+          ref: ${{ inputs.source_ref || steps.tag.outputs.tag }}
 
       - name: Setup Node
         if: steps.tag.outputs.skip != 'true'
