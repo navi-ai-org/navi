@@ -26,7 +26,6 @@ navi-core.workspace = true
 navi-mcp.workspace = true
 navi-sdk = { workspace = true, default-features = true }
 navi-tui = { workspace = true, default-features = true }
-navi-voice = { workspace = true, default-features = false }
 
 [features]
 # computer-use is on by default (ADR 0016); the runtime gate

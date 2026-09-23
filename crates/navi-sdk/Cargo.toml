@@ -20,7 +20,6 @@ navi-acp.workspace = true
 navi-core.workspace = true
 navi-mcp.workspace = true
 navi-providers.workspace = true
-navi-voice.workspace = true
 copland.workspace = true
 navi-computer-use = { workspace = true, optional = true }
 

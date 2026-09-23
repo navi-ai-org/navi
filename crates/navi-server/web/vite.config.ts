@@ -32,7 +32,6 @@ export default defineConfig({
       "/mcp": "http://127.0.0.1:9800",
       "/routing": "http://127.0.0.1:9800",
       "/registry": "http://127.0.0.1:9800",
-      "/voice": "http://127.0.0.1:9800",
       // Sessions (HTTP + WebSocket) — must handle both protocols.
       "/sessions": {
         target: "http://127.0.0.1:9800",

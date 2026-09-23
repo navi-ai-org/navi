@@ -107,14 +107,6 @@ pub const NAVI_ENGINE_API_METHODS: &[&str] = &[
     "memory_distill",
     "memory_checkpoint",
     "memory_rebuild_preview",
-    // Voice / dictation
-    "voice_status",
-    "voice_transcription_providers",
-    "set_voice_config",
-    "voice_doctor",
-    "voice_transcribe_file",
-    "voice_transcribe_file_async",
-    "subscribe_voice_events",
     // Registry
     "sync_registry",
     "list_registry",
@@ -253,14 +245,6 @@ pub const NAVI_NAPI_BOUND_METHODS: &[&str] = &[
     "memory_distill",
     "memory_checkpoint",
     "memory_rebuild_preview",
-    // Voice / dictation
-    "voice_status",
-    "voice_transcription_providers",
-    "set_voice_config",
-    "voice_doctor",
-    "voice_transcribe_file",
-    "voice_transcribe_file_async",
-    "subscribe_voice_events",
     // Registry
     "sync_registry",
     "list_registry",

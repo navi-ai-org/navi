@@ -261,7 +261,6 @@ impl NaviEngineBuilder {
                 runtime_components,
                 sessions: RwLock::new(HashMap::new()),
                 registry_store,
-                voice: std::sync::Mutex::new(crate::voice::VoiceRuntime::new()),
             }),
         })
     }
@@ -315,8 +314,6 @@ pub(crate) struct NaviEngineInner {
     runtime_components: RuntimeComponents,
     sessions: RwLock<HashMap<String, Arc<NaviSession>>>,
     registry_store: Option<Arc<RegistryStore>>,
-    /// Voice event bus + runtime state. Engine-scoped, not per-session.
-    pub(crate) voice: std::sync::Mutex<crate::voice::VoiceRuntime>,
 }
 
 /// An active NAVI session with its own runtime, event stream, and approval handles.

@@ -745,29 +745,6 @@ Run `navi memory init` to initialize the memory store. See [Auto-Memory](../../.
 
 ---
 
-## Voice / transcription
-
-Engine-scoped remote transcription (not tied to a chat session). Transcription
-runs through a registry provider (OpenAI / Groq Whisper, …) configured in
-`[voice]`; NAVI resolves the API key the same way as LLM providers.
-
-```typescript
-// Registry transcription providers (OpenAI / Groq, …)
-const providers = engine.voiceTranscriptionProviders();
-
-// Point [voice] at a remote provider and persist it
-engine.setVoiceConfig({ provider: "groq", model: "whisper-large-v3" }, "global");
-
-const st = engine.voiceStatus();
-
-// Transcribe a WAV file through the selected provider
-const { text } = await engine.voiceTranscribeFileAsync("/path/to/clip.wav", "pt-BR");
-```
-
-`voiceDoctor()` returns `{ ok, lines }` (same diagnostics as `navi voice doctor`).
-
----
-
 ## Lifecycle Hooks
 
 Hooks let your application observe the session lifecycle without blocking the engine. They fire asynchronously and receive a payload object.

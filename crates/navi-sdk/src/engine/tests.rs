@@ -1009,24 +1009,6 @@ async fn start_multiple_sessions_independent() {
 }
 
 #[test]
-fn voice_status_reports_local_unavailable() {
-    let (engine, _tempdir) = test_engine();
-    let status = engine.voice_status().expect("status");
-    // Default provider is "local"; the local ONNX engine was removed.
-    assert!(!status.installed);
-    assert_eq!(status.provider, "local");
-    assert_eq!(status.sample_rate, 16000);
-}
-
-#[test]
-fn voice_doctor_runs() {
-    let (engine, _tempdir) = test_engine();
-    let report = engine.voice_doctor().expect("doctor");
-    // Recorder checks always return a report, even when no mic is available.
-    assert!(!report.lines.is_empty());
-}
-
-#[test]
 fn memory_status_and_doctor_without_data() {
     let (engine, _tempdir) = test_engine();
     let status = engine.memory_status().expect("memory_status");

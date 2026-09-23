@@ -806,7 +806,7 @@ fn memory_update_and_notify_simple() {
 }
 
 #[test]
-fn voice_subscribe_and_rewind_session_surface() {
+fn rewind_session_surface() {
     disable_registry_update();
     let tmp = tempfile::tempdir().unwrap();
     let dir = c(tmp.path().to_str().unwrap());
@@ -814,12 +814,6 @@ fn voice_subscribe_and_rewind_session_surface() {
     assert!(!engine.is_null());
 
     seed_test_api_key(engine);
-
-    // Voice event subscription should return a handle even with no mic.
-    let sub =
-        unsafe { navi_engine_subscribe_voice_events(engine, test_event_callback, ptr::null_mut()) };
-    assert!(!sub.is_null());
-    unsafe { navi_event_subscription_free(sub) };
 
     // Start session then rewind
     let start = AsyncProbe::new();

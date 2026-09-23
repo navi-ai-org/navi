@@ -21,12 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::types::{ProviderConfig, RegistryConfig};
 
-use super::embedded::{
-    embedded_manifest, embedded_provider_schema, embedded_providers,
-    embedded_transcription_providers,
-};
+use super::embedded::{embedded_manifest, embedded_provider_schema, embedded_providers};
 use super::store::RegistryStore;
-use super::types::{RegistryManifest, RegistryProvider, RegistryTranscriptionProvider};
+use super::types::{RegistryManifest, RegistryProvider};
 
 /// Trait abstracting registry fetching so the update flow can be tested without network.
 #[allow(async_fn_in_trait)]
@@ -37,11 +34,6 @@ pub trait RegistryFetcherTrait {
         provider_id: &str,
         manifest: &RegistryManifest,
     ) -> Result<RegistryProvider>;
-    async fn fetch_transcription_provider(
-        &self,
-        provider_id: &str,
-        manifest: &RegistryManifest,
-    ) -> Result<RegistryTranscriptionProvider>;
 }
 
 impl RegistryFetcherTrait for super::RegistryFetcher {
@@ -55,15 +47,6 @@ impl RegistryFetcherTrait for super::RegistryFetcher {
         manifest: &RegistryManifest,
     ) -> Result<RegistryProvider> {
         self.fetch_provider(provider_id, manifest).await
-    }
-
-    async fn fetch_transcription_provider(
-        &self,
-        provider_id: &str,
-        manifest: &RegistryManifest,
-    ) -> Result<RegistryTranscriptionProvider> {
-        self.fetch_transcription_provider(provider_id, manifest)
-            .await
     }
 }
 
@@ -149,7 +132,6 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
             version: 0,
             updated_at: "1970-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         },
@@ -163,7 +145,7 @@ pub fn load_registry(store: &RegistryStore) -> LoadedRegistry {
 /// the local cache without overwriting providers that are newer in the cache
 /// (e.g. from a remote sync).
 ///
-/// Also **prunes** providers (and transcription providers) that exist only in
+/// Also **prunes** providers that exist only in
 /// the local cache and are no longer in the embedded catalog. Without this,
 /// deleted registry entries (e.g. removed third-party gateways) stick forever
 /// when the cache already has the same manifest version as the snapshot —
@@ -271,54 +253,20 @@ fn merge_embedded_provider_updates(store: &RegistryStore) -> bool {
         .keys()
         .map(|s| s.as_str())
         .collect();
-    if let Err(err) = store.delete_providers_not_in(&keep) {
-        tracing::warn!(error = %err, "failed to prune stale providers against embedded catalog");
-    }
-
-    // Merge embedded transcription / dictation providers by sha256.
-    let mut tx_updated = 0;
-    if let Ok(tx_providers) = embedded_transcription_providers() {
-        for ep in &tx_providers {
-            let embedded_sha = embedded_manifest
-                .transcription_providers
-                .get(&ep.id)
-                .map(|e| e.sha256.as_str());
-            let cached_sha = store.transcription_provider_sha256(&ep.id).ok().flatten();
-            let needs_update = match (&cached_sha, embedded_sha) {
-                (Some(cached), Some(embedded)) => cached != embedded,
-                (None, Some(_)) => true,
-                _ => false,
-            };
-            if needs_update {
-                if let Err(err) = store.upsert_transcription_provider(ep, embedded_sha) {
-                    tracing::warn!(
-                        provider = %ep.id,
-                        error = %err,
-                        "failed to upsert embedded transcription provider"
-                    );
-                } else {
-                    tx_updated += 1;
-                }
-            }
+    let pruned = match store.delete_providers_not_in(&keep) {
+        Ok(pruned) => pruned,
+        Err(err) => {
+            tracing::warn!(error = %err, "failed to prune stale providers against embedded catalog");
+            0
         }
-    }
+    };
 
-    let tx_keep: std::collections::HashSet<&str> = embedded_manifest
-        .transcription_providers
-        .keys()
-        .map(|s| s.as_str())
-        .collect();
-    if let Err(err) = store.delete_transcription_providers_not_in(&tx_keep) {
-        tracing::warn!(
-            error = %err,
-            "failed to prune stale transcription providers against embedded catalog"
-        );
-    }
-
-    if updated > 0 || tx_updated > 0 {
+    // A prune-only pass still changed the store: report it so the caller reloads
+    // instead of serving a snapshot that still lists the deleted providers.
+    if updated > 0 || pruned > 0 {
         tracing::info!(
             updated_providers = updated,
-            updated_transcription = tx_updated,
+            pruned_providers = pruned,
             "merged embedded provider updates into local cache"
         );
         // Update manifest metadata to reflect merged state.
@@ -397,15 +345,6 @@ fn seed_cache_from_embedded(store: &RegistryStore) -> Result<()> {
     let manifest = embedded_manifest().context("failed to parse embedded manifest")?;
     let providers = embedded_providers().context("failed to parse embedded providers")?;
     store.replace_all(&providers)?;
-    if let Ok(tx_providers) = embedded_transcription_providers() {
-        for p in &tx_providers {
-            let sha = manifest
-                .transcription_providers
-                .get(&p.id)
-                .map(|e| e.sha256.as_str());
-            store.upsert_transcription_provider(p, sha)?;
-        }
-    }
     store.save_manifest_meta(&manifest)?;
     save_registry_metadata(
         store,
@@ -497,7 +436,6 @@ pub async fn check_registry_manifest(
                 version: 0,
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             })
@@ -636,16 +574,6 @@ pub fn apply_registry_update_atomically(
     manifest: &RegistryManifest,
     providers: &[RegistryProvider],
 ) -> Result<()> {
-    apply_registry_update_atomically_with_transcription(store, manifest, providers, &[])
-}
-
-/// Like [`apply_registry_update_atomically`], also applying remote transcription providers.
-pub fn apply_registry_update_atomically_with_transcription(
-    store: &RegistryStore,
-    manifest: &RegistryManifest,
-    providers: &[RegistryProvider],
-    transcription: &[RegistryTranscriptionProvider],
-) -> Result<()> {
     let keep: std::collections::HashSet<&str> =
         manifest.providers.keys().map(|s| s.as_str()).collect();
 
@@ -658,20 +586,6 @@ pub fn apply_registry_update_atomically_with_transcription(
     }
 
     store.delete_providers_not_in(&keep)?;
-
-    let tx_keep: std::collections::HashSet<&str> = manifest
-        .transcription_providers
-        .keys()
-        .map(|s| s.as_str())
-        .collect();
-    for provider in transcription {
-        let sha = manifest
-            .transcription_providers
-            .get(&provider.id)
-            .map(|e| e.sha256.as_str());
-        store.upsert_transcription_provider(provider, sha)?;
-    }
-    store.delete_transcription_providers_not_in(&tx_keep)?;
 
     store.save_manifest_meta(manifest)?;
     // Clear rehydrate fingerprint so the next load reapplies catalog metadata.
@@ -743,24 +657,7 @@ pub async fn run_registry_update_check(
         }
     };
 
-    let transcription =
-        match download_transcription_updates(store, fetcher, &manifest, config).await {
-            Ok(p) => p,
-            Err(err) => {
-                tracing::warn!(
-                    error = %err,
-                    "transcription registry update download failed, keeping existing registry"
-                );
-                return false;
-            }
-        };
-
-    if let Err(err) = apply_registry_update_atomically_with_transcription(
-        store,
-        &manifest,
-        &providers,
-        &transcription,
-    ) {
+    if let Err(err) = apply_registry_update_atomically(store, &manifest, &providers) {
         tracing::warn!(error = %err, "failed to apply registry update, keeping previous registry");
         return false;
     }
@@ -772,7 +669,6 @@ pub async fn run_registry_update_check(
     tracing::info!(
         version = manifest.version,
         providers = manifest.providers.len(),
-        transcription_providers = manifest.transcription_providers.len(),
         "registry cache updated from remote"
     );
 
@@ -799,7 +695,6 @@ fn current_stored_manifest_or_embedded(store: &RegistryStore) -> RegistryManifes
                 version: 0,
                 updated_at: "1970-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             })
@@ -810,97 +705,12 @@ fn provider_hashes_equal(a: &RegistryManifest, b: &RegistryManifest) -> bool {
     if a.providers.len() != b.providers.len() {
         return false;
     }
-    if a.transcription_providers.len() != b.transcription_providers.len() {
-        return false;
-    }
-    let llm_ok = a.providers.iter().all(|(id, entry)| {
+    a.providers.iter().all(|(id, entry)| {
         b.providers
             .get(id)
             .map(|other| entry.sha256 == other.sha256)
             .unwrap_or(false)
-    });
-    if !llm_ok {
-        return false;
-    }
-    a.transcription_providers.iter().all(|(id, entry)| {
-        b.transcription_providers
-            .get(id)
-            .map(|other| entry.sha256 == other.sha256)
-            .unwrap_or(false)
     })
-}
-
-/// Downloads only the transcription provider files that changed.
-pub async fn download_transcription_updates(
-    store: &RegistryStore,
-    fetcher: &impl RegistryFetcherTrait,
-    manifest: &RegistryManifest,
-    config: &RegistryConfig,
-) -> Result<Vec<RegistryTranscriptionProvider>> {
-    let mut to_fetch = Vec::new();
-    for (provider_id, entry) in &manifest.transcription_providers {
-        let cached_sha = store.transcription_provider_sha256(provider_id)?;
-        if cached_sha.as_deref() != Some(&entry.sha256) {
-            to_fetch.push(provider_id.as_str());
-        }
-    }
-
-    if to_fetch.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    tracing::info!(
-        changed = to_fetch.len(),
-        total = manifest.transcription_providers.len(),
-        "downloading changed transcription providers"
-    );
-
-    let mut providers = Vec::with_capacity(to_fetch.len());
-    for provider_id in &to_fetch {
-        let provider =
-            fetch_transcription_with_retry(fetcher, provider_id, manifest, config).await?;
-        providers.push(provider);
-    }
-    Ok(providers)
-}
-
-async fn fetch_transcription_with_retry(
-    fetcher: &impl RegistryFetcherTrait,
-    provider_id: &str,
-    manifest: &RegistryManifest,
-    config: &RegistryConfig,
-) -> Result<RegistryTranscriptionProvider> {
-    let mut last_err = None;
-    let attempts = config.max_retries.saturating_add(1).max(1);
-    for attempt in 1..=attempts {
-        match fetcher
-            .fetch_transcription_provider(provider_id, manifest)
-            .await
-        {
-            Ok(p) => return Ok(p),
-            Err(err) => {
-                tracing::debug!(
-                    attempt,
-                    provider = provider_id,
-                    error = %err,
-                    "transcription provider fetch failed"
-                );
-                last_err = Some(err);
-                if attempt < attempts {
-                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64))
-                        .await;
-                }
-            }
-        }
-    }
-    let err = last_err.ok_or_else(|| {
-        anyhow::anyhow!(
-            "failed to fetch transcription provider '{provider_id}' after retries (no error recorded)"
-        )
-    })?;
-    Err(err).context(format!(
-        "failed to fetch transcription provider '{provider_id}' after retries"
-    ))
 }
 
 async fn fetch_manifest_with_retry(
@@ -1036,7 +846,6 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             },
@@ -1054,7 +863,6 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             },
@@ -1163,7 +971,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1185,7 +992,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1208,7 +1014,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1282,16 +1087,6 @@ mod tests {
                     ))
                 })
         }
-
-        async fn fetch_transcription_provider(
-            &self,
-            provider_id: &str,
-            _manifest: &RegistryManifest,
-        ) -> Result<RegistryTranscriptionProvider> {
-            Err(anyhow::anyhow!(
-                "transcription provider {provider_id} not configured in mock"
-            ))
-        }
     }
 
     #[tokio::test]
@@ -1313,7 +1108,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1338,7 +1132,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1366,7 +1159,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1384,7 +1176,6 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1411,7 +1202,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1451,7 +1241,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1476,7 +1265,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1495,7 +1283,6 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1529,7 +1316,6 @@ mod tests {
             version: 1,
             updated_at: "2026-01-01T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1545,7 +1331,6 @@ mod tests {
             version: 2,
             updated_at: "2026-07-03T00:00:00Z".to_string(),
             providers: std::collections::HashMap::new(),
-            transcription_providers: Default::default(),
             coverage: Default::default(),
             models: Default::default(),
         };
@@ -1580,7 +1365,6 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             },
@@ -1598,7 +1382,6 @@ mod tests {
                 version: 1,
                 updated_at: "2026-01-01T00:00:00Z".to_string(),
                 providers: std::collections::HashMap::new(),
-                transcription_providers: Default::default(),
                 coverage: Default::default(),
                 models: Default::default(),
             },

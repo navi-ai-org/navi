@@ -59,8 +59,8 @@ pub fn invalidate_registry_catalog_cache() {
 
 /// Returns the process-global registry store when the engine has initialized it.
 ///
-/// Used by the transcription catalog (and similar) so STT providers can share
-/// the same SQLite cache + remote sync path as LLM providers.
+/// Used by the provider catalog so registry-backed providers share the same
+/// SQLite cache + remote sync path.
 pub fn registry_store_for_catalog() -> Option<Arc<RegistryStore>> {
     match REGISTRY_STORE.read() {
         Ok(guard) => guard.clone(),

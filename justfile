@@ -16,8 +16,7 @@ test_threads := env_var_or_default("CARGO_TEST_THREADS", "8")
 coverage_lcov := "coverage/lcov.info"
 
 # Product crates (shipping binary path). Bindings excluded for fast loops.
-# navi-voice tested with --no-default-features elsewhere; omit here so onnx
-# is not feature-unified into the product graph. navi-cli omitted (bin-only).
+# navi-cli omitted (bin-only).
 product_packages := "-p navi-core -p navi-openai -p navi-providers -p navi-sdk -p navi-tui -p navi-vfs -p navi-lite -p navi-mcp -p copland"
 
 # ─── Build ───────────────────────────────────────────────────────────────────

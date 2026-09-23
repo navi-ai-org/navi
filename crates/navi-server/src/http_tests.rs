@@ -746,28 +746,7 @@ async fn registry_list_and_sync_query_force() {
     assert!(body_json(&res).await.get("updated").is_some());
 }
 
-// ── Voice status ─────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn voice_status_and_providers() {
-    let (state, _tmp) = test_state();
-    let api = domain_filter(state);
-
-    let res = authed(warp::test::request().method("GET").path("/voice/status"))
-        .reply(&api)
-        .await;
-    assert_eq!(res.status(), StatusCode::OK);
-
-    let res = authed(warp::test::request().method("GET").path("/voice/providers"))
-        .reply(&api)
-        .await;
-    assert_eq!(res.status(), StatusCode::OK);
-
-    let res = authed(warp::test::request().method("GET").path("/voice/doctor"))
-        .reply(&api)
-        .await;
-    assert_eq!(res.status(), StatusCode::OK);
-}
+// ── Memory status ────────────────────────────────────────────────────────
 
 // ── Invalid body ─────────────────────────────────────────────────────────
 

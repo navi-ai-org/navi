@@ -28,9 +28,6 @@ pub struct NaviConfig {
     pub providers: Vec<ProviderConfig>,
     /// Session memory settings.
     pub memory: MemoryConfig,
-    /// Voice / dictation settings (optional).
-    #[serde(default)]
-    pub voice: VoiceConfig,
     /// Skill discovery and activation.
     pub skills: SkillsConfig,
     /// MCP server configuration.
@@ -967,51 +964,6 @@ impl Default for HistoryConfig {
             enabled: true,
             sqlite_path: default_history_sqlite_path(),
         }
-    }
-}
-
-/// Voice / dictation settings (`[voice]` in config.toml).
-///
-/// Transcription uses **remote** providers from the registry (OpenAI Whisper,
-/// Groq Whisper). An empty or `"local"` [`Self::provider`] means dictation is
-/// not configured.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct VoiceConfig {
-    /// Master switch — dictation remains opt-in.
-    pub enabled: bool,
-    /// Transcription provider id from the registry (`openai`, `groq`, …).
-    /// Empty or `"local"` → dictation not configured.
-    pub provider: String,
-    /// Remote model id (e.g. `whisper-1`, `whisper-large-v3-turbo`).
-    /// Empty → provider default from registry.
-    pub model: String,
-    /// Language hint (`auto`, `en-US`, `pt-BR`, …).
-    pub language: String,
-    /// `toggle` or `hold`.
-    pub capture: String,
-    /// `auto` or explicit recorder (`pw-record`, `parec`, `arecord`).
-    pub recorder: String,
-}
-
-impl Default for VoiceConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            provider: String::new(),
-            model: String::new(),
-            language: "auto".to_string(),
-            capture: "toggle".to_string(),
-            recorder: "auto".to_string(),
-        }
-    }
-}
-
-impl VoiceConfig {
-    /// True when dictation should call a remote transcription provider.
-    pub fn uses_remote_transcription(&self) -> bool {
-        let p = self.provider.trim();
-        !p.is_empty() && !p.eq_ignore_ascii_case("local")
     }
 }
 

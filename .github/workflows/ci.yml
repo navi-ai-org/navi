@@ -72,8 +72,7 @@ jobs:
       - name: Product unit + bin tests (fast path)
         # No integration harnesses (no CARGO_BIN_EXE_navi, no TUI scenario binaries).
         # Flaky/hanging tests are #[ignore] in source (headless_e2e, compact palette).
-        # Omit navi-cli (bin link tax) and navi-voice (remote transcription only;
-        # test with --no-default-features in a dedicated job if needed).
+        # Omit navi-cli (bin link tax).
         run: >
           cargo test --locked
           --lib --bins

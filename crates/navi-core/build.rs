@@ -53,7 +53,6 @@ fn main() -> Result<()> {
     })?;
 
     let providers_dir = snapshot_dir.join("providers");
-    let transcription_providers_dir = snapshot_dir.join("transcription-providers");
     let models_dir = snapshot_dir.join("models");
     let bases_dir = snapshot_dir.join("bases");
     let schema_src = snapshot_dir.join("schemas");
@@ -70,23 +69,6 @@ fn main() -> Result<()> {
         let dst = embedded_providers_dir.join(format!("{id}.json"));
         fs::copy(path, &dst).with_context(|| format!("failed to copy embedded provider {id}"))?;
         entries.push((id.to_string(), embedded_path(&dst, &embedded_dir)?));
-    }
-
-    // Copy and embed transcription / dictation provider files.
-    let embedded_transcription_dir = embedded_dir.join("transcription-providers");
-    fs::create_dir_all(&embedded_transcription_dir)
-        .context("failed to create embedded transcription-providers dir")?;
-    let mut transcription_entries = Vec::new();
-    if transcription_providers_dir.is_dir() {
-        let files = collect_json_files(&transcription_providers_dir)
-            .context("failed to read transcription-providers directory")?;
-        for path in &files {
-            let id = file_stem(path).context("transcription provider file has invalid name")?;
-            let dst = embedded_transcription_dir.join(format!("{id}.json"));
-            fs::copy(path, &dst)
-                .with_context(|| format!("failed to copy embedded transcription provider {id}"))?;
-            transcription_entries.push((id.to_string(), embedded_path(&dst, &embedded_dir)?));
-        }
     }
 
     // Copy and embed canonical model catalog files.
@@ -157,11 +139,6 @@ fn main() -> Result<()> {
     src.push_str("pub const MANIFEST_JSON: &str = include_str!(\"manifest.json\");\n\n");
     src.push_str("pub const PROVIDER_FILES: &[(&str, &str)] = &[\n");
     for (id, path) in &entries {
-        src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
-    }
-    src.push_str("];\n\n");
-    src.push_str("pub const TRANSCRIPTION_PROVIDER_FILES: &[(&str, &str)] = &[\n");
-    for (id, path) in &transcription_entries {
         src.push_str(&format!("    ({id:?}, include_str!({path:?})),\n"));
     }
     src.push_str("];\n\n");

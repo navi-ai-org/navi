@@ -8,7 +8,6 @@ mod memory;
 mod registry_models;
 mod session_ops;
 mod skills_mcp;
-mod voice;
 
 use crate::state::SharedState;
 use warp::Filter;
@@ -19,7 +18,6 @@ use warp::reply::Reply;
 pub fn all_routes(state: SharedState, secret: &'static str) -> BoxedFilter<(impl Reply,)> {
     auth::routes(state.clone(), secret)
         .or(memory::routes(state.clone(), secret))
-        .or(voice::routes(state.clone(), secret))
         .or(session_ops::routes(state.clone(), secret))
         .or(skills_mcp::routes(state.clone(), secret))
         .or(registry_models::routes(state, secret))

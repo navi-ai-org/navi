@@ -21,7 +21,6 @@ mod update;
 pub use aggregator::sync_aggregator_models;
 pub use embedded::{
     embedded_manifest, embedded_model_catalog, embedded_provider_schema, embedded_providers,
-    embedded_transcription_provider_schema, embedded_transcription_providers,
 };
 pub use extends::{deep_merge, parse_provider_json, resolve_extends_value};
 pub use fetcher::{RegistryFetcher, sync_local_registry, sync_registry};
@@ -32,14 +31,10 @@ pub use inherit::{
 };
 pub use resolve::{ModelCatalog, resolve_provider_refs};
 pub use store::{LOCAL_API_SYNC_SHA, RegistryStore, registry_provider_to_config};
-pub use types::{
-    CanonicalModel, ModelCapability, ModelPricing, RegistryTranscriptionModel,
-    RegistryTranscriptionProvider, TranscriptionModelPricing, TranscriptionProviderKind,
-};
+pub use types::{CanonicalModel, ModelCapability, ModelPricing};
 pub use update::{
     LoadedRegistry, RegistryFetcherTrait, RegistrySource, apply_registry_update_atomically,
-    apply_registry_update_atomically_with_transcription, check_registry_manifest,
-    download_registry_updates, download_transcription_updates, load_cached_registry,
+    check_registry_manifest, download_registry_updates, load_cached_registry,
     load_embedded_registry, load_registry, registry_check_interval_with_jitter,
     run_registry_update_check, save_registry_metadata, should_check_registry_update,
     validate_registry_hashes, validate_registry_schema,

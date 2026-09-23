@@ -1,4 +1,4 @@
-//! Extended C ABI surface: voice, memory ops, skills CRUD, plan mode,
+//! Extended C ABI surface: memory ops, skills CRUD, plan mode,
 //! MCP config, permissions, notify/update, registry list.
 //!
 //! Complements `engine.rs` so Dart/mobile can reach the full SDK.
@@ -11,9 +11,7 @@ use navi_core::{
     GoalStatus, GoalTask, McpConfig, McpServerConfig, PlanReviewResponse, SkillWriteRequest,
     SudoPasswordResponse, TaskStatus,
 };
-use navi_sdk::{
-    MemoryStatus, MemoryType, NotificationUrgency, NotifyRequest, PermissionMode, VoiceConfigUpdate,
-};
+use navi_sdk::{MemoryStatus, MemoryType, NotificationUrgency, NotifyRequest, PermissionMode};
 use serde_json::json;
 
 use crate::engine::NaviDartEngine;
@@ -385,101 +383,6 @@ pub unsafe extern "C" fn navi_engine_update_goal_task_status(
             .await
         {
             Ok(goal) => ctx.success(&goal),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-// ── Voice ──────────────────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_status(engine: *mut NaviDartEngine) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.voice_status() {
-        Ok(s) => to_json_ptr(&s),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_transcription_providers(
-    engine: *mut NaviDartEngine,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    to_json_ptr(&engine.inner.voice_transcription_providers())
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_set_voice_config(
-    engine: *mut NaviDartEngine,
-    update_json: *const c_char,
-    save_target: *const c_char,
-) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    let raw = match unsafe { cstr_to_str(update_json) } {
-        Some(s) => s,
-        None => {
-            set_last_error("update_json is null");
-            return ptr::null_mut();
-        }
-    };
-    let update: VoiceConfigUpdate = match serde_json::from_str(raw) {
-        Ok(u) => u,
-        Err(e) => {
-            set_last_error(&format!("invalid voice update: {e}"));
-            return ptr::null_mut();
-        }
-    };
-    let target = parse_save_target(unsafe { cstr_to_str(save_target) });
-    match engine.inner.set_voice_config(update, target) {
-        Ok(path) => to_json_ptr(&path_json(path)),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_doctor(engine: *mut NaviDartEngine) -> *mut c_char {
-    let engine = unsafe { &*engine };
-    match engine.inner.voice_doctor() {
-        Ok(r) => to_json_ptr(&r),
-        Err(e) => {
-            set_last_error(&e.to_string());
-            ptr::null_mut()
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_transcribe_file(
-    engine: *mut NaviDartEngine,
-    path: *const c_char,
-    language: *const c_char,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let path = match unsafe { cstr_to_str(path) } {
-        Some(s) => s.to_string(),
-        None => {
-            ctx.error("path is null");
-            return;
-        }
-    };
-    let lang = unsafe { cstr_to_str(language) }.map(|s| s.to_string());
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner
-            .voice_transcribe_file_async(&path, lang.as_deref())
-            .await
-        {
-            Ok(r) => ctx.success(&json!({ "text": r.text, "tokenIds": r.token_ids })),
             Err(e) => ctx.error(&e.to_string()),
         }
     });
@@ -1384,39 +1287,6 @@ pub unsafe extern "C" fn navi_engine_check_for_update_with(
             .await
         {
             Ok(info) => ctx.success(&info),
-            Err(e) => ctx.error(&e.to_string()),
-        }
-    });
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn navi_engine_voice_transcribe_file_async(
-    engine: *mut NaviDartEngine,
-    path: *const c_char,
-    language: *const c_char,
-    callback: NaviAsyncCallback,
-    user_data: *mut c_void,
-) {
-    let engine = unsafe { &*engine };
-    let ctx = CallbackCtx::new(callback, user_data);
-    let path = match unsafe { cstr_to_str(path) } {
-        Some(s) => s.to_string(),
-        None => {
-            ctx.error("path is null");
-            return;
-        }
-    };
-    let language = unsafe { cstr_to_str(language) }.map(|s| s.to_string());
-    let inner = engine.inner.clone();
-    engine.runtime.spawn(async move {
-        match inner
-            .voice_transcribe_file_async(&path, language.as_deref())
-            .await
-        {
-            Ok(result) => ctx.success(&json!({
-                "text": result.text,
-                "tokenIds": result.token_ids,
-            })),
             Err(e) => ctx.error(&e.to_string()),
         }
     });

@@ -17,7 +17,6 @@ members = [
     "crates/navi-sdk",
     "crates/navi-server",
     "crates/navi-tui",
-    "crates/navi-voice",
     "crates/navi-vfs",
 ]
 resolver = "3"
@@ -39,7 +38,6 @@ default-members = [
     "crates/navi-sdk",
     "crates/navi-server",
     "crates/navi-tui",
-    "crates/navi-voice",
     "crates/navi-vfs",
 ]
 
@@ -143,7 +141,6 @@ navi-providers = { version = "0.8.2", path = "crates/navi-providers" }
 navi-sdk = { version = "0.8.2", path = "crates/navi-sdk" }
 navi-server = { version = "0.8.2", path = "crates/navi-server" }
 navi-tui = { version = "0.8.2", path = "crates/navi-tui" }
-navi-voice = { version = "0.8.2", path = "crates/navi-voice", default-features = false }
 navi-vfs = { version = "0.8.2", path = "crates/navi-vfs" }
 
 # ── Build profiles ──────────────────────────────────────────────────────────

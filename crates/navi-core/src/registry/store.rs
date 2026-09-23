@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use super::types::{
     ModelCapability, ModelPricing, RegistryAttachments, RegistryManifest, RegistryModel,
-    RegistryProvider, RegistryTranscriptionProvider,
+    RegistryProvider,
 };
 
 /// Marker written to `providers.sha256` when models were populated from a
@@ -105,7 +105,7 @@ impl RegistryStore {
         Ok(store)
     }
 
-    /// Seeds providers/manifest/transcription catalog when the cache is empty.
+    /// Seeds providers/manifest/canonical catalog when the cache is empty.
     fn seed_if_empty(&self) -> Result<()> {
         // Seed from the embedded snapshot if the cache is empty.
         if self.is_empty()? {
@@ -135,9 +135,6 @@ impl RegistryStore {
             }
         }
 
-        // Always ensure transcription providers are seeded (may be empty on
-        // DBs created before STT catalog support).
-        self.seed_transcription_from_embedded_if_empty()?;
         self.seed_canonical_models_from_embedded_if_empty()?;
         Ok(())
     }
@@ -212,14 +209,6 @@ impl RegistryStore {
                 output_price REAL,
                 currency    TEXT NOT NULL DEFAULT 'USD',
                 FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
-            );
-
-            -- Remote speech-to-text / dictation providers (JSON blob + integrity hash).
-            CREATE TABLE IF NOT EXISTS transcription_providers (
-                id          TEXT PRIMARY KEY,
-                json        TEXT NOT NULL,
-                sha256      TEXT,
-                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
             -- Canonical model catalog (models/<id>.json), used for ref resolution.
@@ -367,7 +356,11 @@ impl RegistryStore {
 
     /// Deletes providers that are not in the given set of ids.
     /// Used during sync to remove providers that were deleted from the remote registry.
-    pub fn delete_providers_not_in(&self, keep: &std::collections::HashSet<&str>) -> Result<()> {
+    ///
+    /// Returns the number of provider rows deleted, so callers that keep an
+    /// in-memory snapshot (e.g. the embedded merge) can tell a prune-only pass
+    /// apart from a no-op and reload instead of serving deleted providers.
+    pub fn delete_providers_not_in(&self, keep: &std::collections::HashSet<&str>) -> Result<usize> {
         let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let ids: Vec<String> = conn.query_rows("SELECT id FROM providers", (), |row| row.get(0))?;
         let to_delete: Vec<String> = ids
@@ -383,85 +376,12 @@ impl RegistryStore {
                 "removed stale providers from cache"
             );
         }
-        Ok(())
+        Ok(to_delete.len())
     }
 
     /// Upserts a provider and its models from a [`RegistryProvider`].
     pub fn upsert_provider(&self, provider: &RegistryProvider) -> Result<()> {
         self.upsert_provider_with_sha256(provider, None)
-    }
-
-    // ── Transcription / dictation providers ───────────────────────────────
-
-    /// Upserts a remote transcription provider (stored as JSON for simplicity).
-    pub fn upsert_transcription_provider(
-        &self,
-        provider: &RegistryTranscriptionProvider,
-        sha256: Option<&str>,
-    ) -> Result<()> {
-        let json = serde_json::to_string(provider)
-            .context("serialize transcription provider for cache")?;
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.execute(
-            "INSERT OR REPLACE INTO transcription_providers (id, json, sha256, updated_at)
-             VALUES (?1, ?2, ?3, datetime('now'))",
-            params![provider.id.as_str(), json.as_str(), sha256],
-        )?;
-        Ok(())
-    }
-
-    /// SHA-256 of a cached transcription provider, if known.
-    pub fn transcription_provider_sha256(&self, id: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        conn.query_row_optional(
-            "SELECT sha256 FROM transcription_providers WHERE id = ?1",
-            params![id],
-            |row| row.get::<Option<String>>(0),
-        )
-        .map(Option::flatten)
-    }
-
-    /// Loads all cached transcription providers.
-    pub fn load_transcription_providers(&self) -> Result<Vec<RegistryTranscriptionProvider>> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let rows = conn.query_rows(
-            "SELECT json FROM transcription_providers ORDER BY id",
-            (),
-            |row| row.get::<String>(0),
-        )?;
-        let mut out = Vec::new();
-        for json in rows {
-            match serde_json::from_str::<RegistryTranscriptionProvider>(&json) {
-                Ok(p) => out.push(p),
-                Err(err) => {
-                    tracing::warn!(error = %err, "skip corrupt transcription provider cache row");
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// Deletes transcription providers not in `keep`.
-    pub fn delete_transcription_providers_not_in(
-        &self,
-        keep: &std::collections::HashSet<&str>,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let ids: Vec<String> =
-            conn.query_rows("SELECT id FROM transcription_providers", (), |row| {
-                row.get(0)
-            })?;
-        let to_delete: Vec<String> = ids
-            .into_iter()
-            .filter(|id| !keep.contains(id.as_str()))
-            .collect();
-        for id in &to_delete {
-            conn.execute(
-                "DELETE FROM transcription_providers WHERE id = ?1",
-                params![id.as_str()],
-            )?;
-        }
-        Ok(())
     }
 
     // ── Canonical model catalog ─────────────────────────────────────────
@@ -546,16 +466,6 @@ impl RegistryStore {
         Ok(count as usize)
     }
 
-    /// Number of cached transcription providers.
-    pub fn transcription_provider_count(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM transcription_providers", (), |row| {
-                row.get(0)
-            })?;
-        Ok(count as usize)
-    }
-
     /// Seeds the canonical model catalog from the embedded snapshot when empty.
     fn seed_canonical_models_from_embedded_if_empty(&self) -> Result<()> {
         if self.canonical_model_count().unwrap_or(0) > 0 {
@@ -573,30 +483,6 @@ impl RegistryStore {
                 .map(|e| e.sha256.as_str());
             self.upsert_canonical_model(&id, &model, sha)?;
         }
-        Ok(())
-    }
-
-    /// Seeds the transcription cache from the embedded snapshot when empty.
-    pub fn seed_transcription_from_embedded_if_empty(&self) -> Result<()> {
-        if self.transcription_provider_count()? > 0 {
-            return Ok(());
-        }
-        let providers = match super::embedded::embedded_transcription_providers() {
-            Ok(p) if !p.is_empty() => p,
-            _ => return Ok(()),
-        };
-        let manifest = super::embedded::embedded_manifest().ok();
-        for p in &providers {
-            let sha = manifest
-                .as_ref()
-                .and_then(|m| m.transcription_providers.get(&p.id))
-                .map(|e| e.sha256.as_str());
-            self.upsert_transcription_provider(p, sha)?;
-        }
-        tracing::info!(
-            providers = providers.len(),
-            "seeded transcription providers from embedded snapshot"
-        );
         Ok(())
     }
 
@@ -1613,48 +1499,6 @@ mod tests {
         assert_eq!(loaded[0].models[0].context_window_tokens, Some(500_000));
         assert_eq!(loaded[0].models[0].max_output_tokens, Some(16_384));
         assert_eq!(loaded[0].models[0].recommended_temperature, Some(0.8));
-    }
-
-    #[test]
-    fn transcription_provider_roundtrip() {
-        let store = RegistryStore::open_memory().expect("open");
-        let provider = RegistryTranscriptionProvider {
-            id: "openai".to_string(),
-            label: "OpenAI Whisper".to_string(),
-            description: "test".to_string(),
-            kind: "openai-audio-transcriptions".to_string(),
-            api_key_env: "OPENAI_API_KEY".to_string(),
-            base_url: "https://api.openai.com/v1".to_string(),
-            transcription_path: Some("/audio/transcriptions".to_string()),
-            default_model: Some("whisper-1".to_string()),
-            supports_streaming: false,
-            models: vec![super::super::types::RegistryTranscriptionModel {
-                name: "whisper-1".to_string(),
-                label: Some("Whisper v1".to_string()),
-                description: None,
-                languages: vec![],
-                sample_rate_hz: Some(16_000),
-                max_duration_seconds: None,
-                max_file_bytes: Some(25_000_000),
-                pricing: None,
-            }],
-        };
-        store
-            .upsert_transcription_provider(&provider, Some("abc123"))
-            .expect("upsert");
-        assert_eq!(store.transcription_provider_count().unwrap(), 1);
-        assert_eq!(
-            store
-                .transcription_provider_sha256("openai")
-                .unwrap()
-                .as_deref(),
-            Some("abc123")
-        );
-        let loaded = store.load_transcription_providers().expect("load");
-        assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].id, "openai");
-        assert_eq!(loaded[0].models[0].name, "whisper-1");
-        assert_eq!(loaded[0].resolved_default_model(), Some("whisper-1"));
     }
 
     #[test]

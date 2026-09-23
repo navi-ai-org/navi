@@ -126,15 +126,6 @@ Bodies accept both `snake_case` and `camelCase` field names where aliases are do
 | POST | `/memory/checkpoint` | Manual checkpoint |
 | GET | `/memory/rebuild-preview` | Rebuild context preview |
 
-### Voice (`routes/voice.rs`)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/voice/status` | Voice config / transcription status |
-| GET | `/voice/doctor` | Provider + credential diagnostics |
-| GET | `/voice/providers` | Transcription providers |
-| POST | `/voice/transcribe` | Transcribe WAV file (remote provider) |
-
 ### Credentials / OAuth (`routes/auth.rs`)
 
 | Method | Path | Description |
@@ -198,7 +189,6 @@ src/
   routes/
     auth.rs          # credentials + OAuth
     memory.rs        # auto-memory CRUD + maintenance
-    voice.rs         # remote transcription
     session_ops.rs   # plan, sudo, permission, rewind, goals, bg
     skills_mcp.rs    # skills CRUD, MCP config, model routing
     registry_models.rs

@@ -8,9 +8,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-use super::types::{
-    CanonicalModel, RegistryManifest, RegistryProvider, RegistryTranscriptionProvider,
-};
+use super::types::{CanonicalModel, RegistryManifest, RegistryProvider};
 
 /// Base URL for the NAVI registry database on GitHub. Uses `raw.githubusercontent.com`
 /// for direct file access without the GitHub API rate limits.
@@ -131,35 +129,6 @@ impl RegistryFetcher {
 
         serde_json::from_str::<CanonicalModel>(&text)
             .with_context(|| format!("failed to parse canonical model '{model_id}' JSON"))
-    }
-
-    /// Fetches a single transcription provider JSON by id.
-    pub async fn fetch_transcription_provider(
-        &self,
-        provider_id: &str,
-        manifest: &RegistryManifest,
-    ) -> Result<RegistryTranscriptionProvider> {
-        let entry = manifest
-            .transcription_providers
-            .get(provider_id)
-            .with_context(|| format!("transcription provider '{provider_id}' not in manifest"))?;
-
-        let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let text = self
-            .fetch_text_with_retry(&url, &format!("transcription provider '{provider_id}'"))
-            .await?;
-
-        let hash = hex::encode(Sha256::digest(text.as_bytes()));
-        if hash != entry.sha256 {
-            anyhow::bail!(
-                "transcription provider '{provider_id}' integrity check failed: expected {}, got {}",
-                entry.sha256,
-                hash
-            );
-        }
-
-        serde_json::from_str::<RegistryTranscriptionProvider>(&text)
-            .with_context(|| format!("failed to parse transcription provider '{provider_id}' JSON"))
     }
 
     /// Fetches all providers listed in the manifest.
@@ -382,15 +351,9 @@ pub async fn sync_registry(
         // without pruning. Always drop providers not in the remote set.
         let keep_ids: std::collections::HashSet<&str> =
             manifest.providers.keys().map(|s| s.as_str()).collect();
-        let tx_keep: std::collections::HashSet<&str> = manifest
-            .transcription_providers
-            .keys()
-            .map(|s| s.as_str())
-            .collect();
         let model_keep: std::collections::HashSet<&str> =
             manifest.models.keys().map(|s| s.as_str()).collect();
         store.delete_providers_not_in(&keep_ids)?;
-        store.delete_transcription_providers_not_in(&tx_keep)?;
         store.delete_canonical_models_not_in(&model_keep)?;
         tracing::debug!(
             stored = stored_version,
@@ -416,17 +379,6 @@ pub async fn sync_registry(
         }
     }
 
-    // Diff transcription providers even when LLM providers are unchanged.
-    let mut tx_to_fetch = Vec::new();
-    let mut tx_keep: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for (provider_id, entry) in &manifest.transcription_providers {
-        tx_keep.insert(provider_id.as_str());
-        let cached_sha = store.transcription_provider_sha256(provider_id)?;
-        if force || cached_sha.as_deref() != Some(&entry.sha256) {
-            tx_to_fetch.push(provider_id.clone());
-        }
-    }
-
     // Diff canonical model catalog (models/<id>.json).
     let mut model_to_fetch = Vec::new();
     let mut model_keep: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -438,10 +390,9 @@ pub async fn sync_registry(
         }
     }
 
-    if to_fetch.is_empty() && tx_to_fetch.is_empty() && model_to_fetch.is_empty() {
+    if to_fetch.is_empty() && model_to_fetch.is_empty() {
         // All hashes match — just update manifest meta and clean up stale providers.
         store.delete_providers_not_in(&keep_ids)?;
-        store.delete_transcription_providers_not_in(&tx_keep)?;
         store.delete_canonical_models_not_in(&model_keep)?;
         store.save_manifest_meta(&manifest)?;
         tracing::debug!("all providers up-to-date, no fetch needed");
@@ -523,29 +474,6 @@ pub async fn sync_registry(
     // Remove providers that were deleted from the remote registry.
     store.delete_providers_not_in(&keep_ids)?;
 
-    // Sync remote transcription / dictation providers (parallel fetch).
-    let mut tx_updated = 0;
-    if !tx_to_fetch.is_empty() {
-        let tx_futs: Vec<_> = tx_to_fetch
-            .iter()
-            .map(|provider_id| {
-                let pid = provider_id.clone();
-                let m = std::sync::Arc::clone(&manifest);
-                async move {
-                    let provider = fetcher.fetch_transcription_provider(&pid, &m).await?;
-                    Ok::<_, anyhow::Error>((pid, provider))
-                }
-            })
-            .collect();
-        let fetched = futures_util::future::try_join_all(tx_futs).await?;
-        for (provider_id, provider) in fetched {
-            let entry = &manifest.transcription_providers[&provider_id];
-            store.upsert_transcription_provider(&provider, Some(&entry.sha256))?;
-            tx_updated += 1;
-        }
-    }
-    store.delete_transcription_providers_not_in(&tx_keep)?;
-
     store.save_manifest_meta(&manifest)?;
     // Catalog contents changed — drop in-memory base catalog used by TUI/modals.
     crate::config::providers::invalidate_registry_catalog_cache();
@@ -561,15 +489,12 @@ pub async fn sync_registry(
         version = manifest.version,
         providers_updated = updated,
         models_updated = models_updated,
-        transcription_updated = tx_updated,
         "registry sync complete"
     );
 
     tracing::info!(
         updated = updated,
         total = manifest.providers.len(),
-        transcription_updated = tx_updated,
-        transcription_total = manifest.transcription_providers.len(),
         "registry cache updated"
     );
 

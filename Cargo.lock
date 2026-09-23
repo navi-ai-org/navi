@@ -1644,12 +1644,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hound"
-version = "3.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
-
-[[package]]
 name = "http"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2764,7 +2758,6 @@ dependencies = [
  "navi-mcp",
  "navi-sdk",
  "navi-tui",
- "navi-voice",
  "portable-pty",
  "serde_json",
  "tempfile",
@@ -2958,7 +2951,6 @@ dependencies = [
  "navi-core",
  "navi-mcp",
  "navi-providers",
- "navi-voice",
  "serde",
  "serde_json",
  "tempfile",
@@ -3034,17 +3026,6 @@ dependencies = [
  "tree-sitter-ruby",
  "tree-sitter-rust",
  "tree-sitter-typescript",
-]
-
-[[package]]
-name = "navi-voice"
-version = "0.8.2"
-dependencies = [
- "anyhow",
- "hound",
- "reqwest",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -4037,7 +4018,6 @@ dependencies = [
  "hyper-util",
  "js-sys",
  "log",
- "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "rustls",

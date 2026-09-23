@@ -15,7 +15,6 @@ mod profiles;
 mod routing_ops;
 mod tooling;
 mod types;
-mod voice;
 
 pub use acp_ops::{
     NaviAcpAgentInfo, NaviAcpTurnRequest, NaviAcpTurnResponse, map_acp_update_to_runtime_events,
@@ -125,20 +124,12 @@ pub use navi_core::memory::{
     AutoMemoryStore, MemoryEntry, MemoryStatus, MemorySummary, MemoryType,
 };
 
-// Voice / dictation (navi-voice)
-pub use navi_voice::{
-    DoctorReport, SAMPLE_RATE, TranscribeResult, VoiceEvent, VoiceRecorderInfo, VoiceStatus,
-};
-
 // Extended memory ops DTOs
 pub use memory_ops::{MemoryDoctorReport, MemoryDreamReport, MemoryInitReport, MemoryStatusReport};
 
 // MCP config management
 pub use mcp_ops::McpConfigSnapshot;
 pub use navi_core::{McpConfig, McpServerConfig};
-
-// Voice config updates
-pub use voice::VoiceConfigUpdate;
 
 // OAuth / registry DTOs
 pub use auth_ops::{DeviceOAuthStartedInfo, RegistryProviderSummary};

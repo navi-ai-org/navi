@@ -18,7 +18,6 @@ mod server_cmd;
 mod session_cmd;
 mod skill_cmd;
 mod usage_cmd;
-mod voice_cmd;
 
 #[derive(Debug, Parser)]
 #[command(name = "navi")]
@@ -91,11 +90,6 @@ enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
-    },
-    /// Remote voice transcription and recorder diagnostics
-    Voice {
-        #[command(subcommand)]
-        action: VoiceAction,
     },
     /// Run local harness eval suites
     Eval {
@@ -461,24 +455,6 @@ pub enum MemoryAction {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum VoiceAction {
-    /// Show voice config and recorder status (remote transcription)
-    Status,
-    /// List remote transcription providers from the registry catalog
-    Providers,
-    /// Check recorders and remote transcription credentials
-    Doctor,
-    /// Transcribe a WAV file with the remote provider from [voice]
-    Transcribe {
-        /// Path to a WAV file (any rate; resampled to 16 kHz mono for remote)
-        path: String,
-        /// Language prompt: auto | en-US | pt-BR | …
-        #[arg(long, default_value = "auto")]
-        language: String,
-    },
-}
-
-#[derive(Debug, Subcommand)]
 enum McpAction {
     /// List configured MCP servers, connection status, and tools
     List,
@@ -554,11 +530,6 @@ async fn main() -> Result<()> {
     // Handle memory subcommand early
     if let Some(Commands::Memory { action }) = cli.command {
         return memory_cmd::handle_memory_command(action, &loaded_config, &cwd).await;
-    }
-
-    // Handle voice subcommand early
-    if let Some(Commands::Voice { action }) = cli.command {
-        return voice_cmd::handle_voice_command(action, &loaded_config).await;
     }
 
     // Handle eval subcommand early
