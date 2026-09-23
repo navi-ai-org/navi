@@ -105,7 +105,7 @@ publish_dir() {
   (cd "$dir" && npm publish --access public --registry https://registry.npmjs.org/)
 }
 
-require_cmd gh
+require_cmd curl
 require_cmd npm
 require_cmd node
 require_cmd tar
@@ -119,15 +119,25 @@ else
   echo "auth: npm login as $(npm whoami --registry https://registry.npmjs.org/)"
 fi
 
+github_dl="${NAVI_GITHUB_DL:-https://github.com/$repo/releases/download}"
 echo "downloading release assets for $repo@$tag"
-gh release download "$tag" \
-  --repo "$repo" \
-  --dir "$tmp_dir" \
-  --pattern 'navi-linux-x64.tar.gz' \
-  --pattern 'navi-linux-arm64.tar.gz' \
-  --pattern 'navi-darwin-x64.tar.gz' \
-  --pattern 'navi-darwin-arm64.tar.gz' \
-  --pattern 'navi-win32-x64.zip'
+# Fetch through the public release URLs — the same path scripts/install.sh
+# uses — instead of `gh release download`. The API's by-tag release object can
+# serve a stale `assets` array for a while after a release is created, which
+# made this step fail with "no assets to download" seconds after release.yml
+# finished; the GitHub Release job then never got a matching npm publish
+# (observed on v0.8.0, v0.8.2 and v0.9.0). Public download URLs do not depend
+# on that listing, and they avoid unauthenticated API rate limits too.
+for asset in \
+  navi-linux-x64.tar.gz \
+  navi-linux-arm64.tar.gz \
+  navi-darwin-x64.tar.gz \
+  navi-darwin-arm64.tar.gz \
+  navi-win32-x64.zip
+do
+  echo "  downloading $asset"
+  curl -fsSL --proto '=https' --tlsv1.2 "$github_dl/$tag/$asset" -o "$tmp_dir/$asset"
+done
 
 rm -f "$npm_root"/npm/*/navi "$npm_root"/npm/*/navi.exe
 
