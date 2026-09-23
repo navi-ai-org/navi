@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-23
+
+Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.2...v0.9.0
+
+### Removed
+
+- **Speech-to-text is gone, and it is not coming back.** The `navi-voice`
+  crate, the `[voice]` config table, the `navi voice` subcommand, the
+  `/voice/*` HTTP routes and the `voice*` bindings in `navi-napi` / `navi-dart`
+  were all removed, along with the registry's transcription-provider catalog.
+  Keeping per-vendor dictation APIs current is not something a solo maintainer
+  can carry, so dictation is now the user's own integration. `config.toml`
+  files that still carry a `[voice]` table keep loading — serde ignores the
+  unknown key.
+
+### Added
+
+- **Every provider catalog re-verified against the vendor's current lineup.**
+  All 32 provider files were re-checked against primary sources (vendor docs,
+  pricing pages, live `/models` endpoints): 191 models added (gpt-6 family,
+  claude-opus-5-5, claude-fable-5/-5-1, grok-4.7, glm-5.3 family, kimi-k3,
+  qwen3.8 family, mimo-v2.6 family, gemini 3.5–3.8, step-5-preview,
+  gpt-transcribe, …) and 251 deprecated or retired entries dropped (deepseek
+  v3.x/R1/coder, Claude 3.x, o1/o3/o4, gpt-4o/4.1 legacy, Gemini 1.5/2.0,
+  grok-2/3, moonshot-v1, abab6.5, whisper-1, …). New canonical model files
+  carry `sources` provenance for context window, output limits and pricing.
+- **b.ai gains `mimo-v2.6-pro` and `mimo-v2.6-flash`**, with pricing taken from
+  their model pages.
+
+### Fixed
+
+- **`navi registry sync` no longer dies on a single network hiccup.** The
+  fetcher aborted the whole sync on the first DNS/TLS/timeout ("failed to fetch
+  manifest from …"), because the CLI path used the bare fetcher while the retry
+  helpers only covered the background update path. Registry fetches now retry up
+  to 3 times with backoff, only for transient failures (transport errors,
+  408/425/429/5xx); 4xx fail fast, and the error names the attempt count plus a
+  recovery hint.
+- **Model ids that the registry stores under a Windows-safe filename resolve
+  again.** `embedded_model_catalog()` keyed the catalog by the on-disk label, so
+  ids like `gemma3:12b`, `qwen2.5-coder:32b` and
+  `nemotron-3-ultra-550b-a55b:free` never matched and their canonical metadata
+  (max output, thinking, reasoning levels, attachments) was silently dropped —
+  the model fell back to its `api_name`. The catalog is now keyed by the JSON
+  `id`, matching the SQLite store and the local-directory loader.
+- **Tool calls no longer reach the next request with duplicate empty ids.**
+  OpenAI-compatible gateways stream continuation chunks with `"id": ""`
+  (observed on b.ai + `qwen3.8-flash`); the accumulator overwrote the captured
+  id with that empty string, so a batch of two calls produced
+  `Duplicate value for 'tool_call_id' of  in message[N]`. Empty ids are ignored
+  while streaming, calls that still finish without one get a unique
+  `navi_call_N`, and `repair_tool_call_pairing` renames empty ids in rebuilt
+  history while re-pointing their results.
+- **Aggregator providers are no longer sent a forced `tool_choice`.** Several
+  upstreams behind a gateway reject a forced object `tool_choice` in thinking
+  mode (b.ai + `qwen3.8-flash` answers HTTP 400, surfaced as
+  `openai_error / bad_response_status_code`), which broke the first turn of
+  every new session on those models. The session-title nudge stays in the system
+  prompt and the runtime still derives a fallback title.
+- **A prune-only registry merge now reloads the cache.**
+  `merge_embedded_provider_updates` reported "nothing changed" when it only
+  deleted providers that vanished upstream, so `load_registry` kept serving a
+  snapshot that still listed them.
+
 ## [0.8.2] - 2026-09-18
 
 Full changelog: https://github.com/navi-ai-org/navi/compare/v0.8.0...v0.8.2
@@ -1047,7 +1111,7 @@ Full changelog: https://github.com/navi-ai-org/navi/releases/tag/v0.1.0
 
 - Initial open-source scaffold of the NAVI agent engine and TUI
 
-[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/navi-ai-org/navi/compare/v0.9.0...HEAD
 [0.4.1]: https://github.com/navi-ai-org/navi/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/navi-ai-org/navi/compare/v0.3.9...v0.4.0
 [0.3.6]: https://github.com/navi-ai-org/navi/compare/v0.3.5...v0.3.6
