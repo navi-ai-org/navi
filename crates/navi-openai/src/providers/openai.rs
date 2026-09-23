@@ -12,6 +12,7 @@ use async_stream::try_stream;
 use futures_util::StreamExt;
 use navi_core::{ModelRequest, ModelStream, ModelStreamEvent, ToolInvocation};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 impl crate::provider::OpenAiProvider {
@@ -23,6 +24,7 @@ impl crate::provider::OpenAiProvider {
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
         let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
+        let provider_is_aggregator = self.config.aggregator;
         let reasoning_levels = reasoning_levels_for_model(&self.config, &request.model);
 
         Box::pin(try_stream! {
@@ -58,7 +60,8 @@ impl crate::provider::OpenAiProvider {
                 request.tools.clone()
             };
             body["tools"] = json!(tools.iter().map(responses_tool_to_json).collect::<Vec<_>>());
-            body["tool_choice"] = if requires_initial_session_title(&request) {
+            body["tool_choice"] = if requires_initial_session_title(&request, provider_is_aggregator)
+            {
                 json!({ "type": "function", "name": "set_session_title" })
             } else {
                 json!("auto")
@@ -142,6 +145,7 @@ impl crate::provider::OpenAiProvider {
         let stream_idle_timeout_ms = self.config.stream_idle_timeout_ms();
         let request_options = self.config.request_options.clone().unwrap_or_default();
         let behavior = self.behavior.clone();
+        let provider_is_aggregator = self.config.aggregator;
         let reasoning_levels = reasoning_levels_for_model(&self.config, &request.model);
 
         Box::pin(try_stream! {
@@ -173,7 +177,8 @@ impl crate::provider::OpenAiProvider {
                 request.tools.clone()
             };
             body["tools"] = json!(tools.iter().map(chat_tool_to_json).collect::<Vec<_>>());
-            body["tool_choice"] = if requires_initial_session_title(&request) {
+            body["tool_choice"] = if requires_initial_session_title(&request, provider_is_aggregator)
+            {
                 json!({
                     "type": "function",
                     "function": { "name": "set_session_title" }
@@ -280,7 +285,19 @@ fn reasoning_levels_for_model(config: &navi_core::ProviderConfig, model_name: &s
 /// it has not produced a tool result yet, force it as the first model action.
 /// This avoids a separate title-generation completion while making naming
 /// deterministic on OpenAI-compatible providers such as Charm Hyper.
-fn requires_initial_session_title(request: &ModelRequest) -> bool {
+///
+/// Aggregator gateways are excluded: they fan out to heterogeneous upstreams
+/// and several reject a forced (object) `tool_choice` while the upstream model
+/// runs in thinking mode. `b.ai` + `qwen3.8-flash` answers HTTP 400 ("The
+/// tool_choice parameter does not support being set to required or object in
+/// thinking mode", surfaced while streaming as `openai_error /
+/// bad_response_status_code`), which broke the first turn of every new session
+/// on those models. The title nudge still lives in the system prompt, and the
+/// runtime derives a fallback title from the first user message.
+fn requires_initial_session_title(request: &ModelRequest, provider_is_aggregator: bool) -> bool {
+    if provider_is_aggregator {
+        return false;
+    }
     request
         .tools
         .iter()
@@ -539,6 +556,15 @@ pub(crate) struct ChatToolCallAccumulator {
     tool_call_extractor: TextToolCallExtractor,
 }
 
+/// Process-unique id for a tool call whose stream carried no id (or repeated
+/// one). Never empty: providers key tool results by id and reject duplicates
+/// inside one assistant batch.
+fn synthesized_tool_call_id() -> String {
+    static NEXT_SYNTHETIC_TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
+    let sequence = NEXT_SYNTHETIC_TOOL_CALL_ID.fetch_add(1, Ordering::Relaxed);
+    format!("navi_call_{sequence}")
+}
+
 #[derive(Default)]
 struct PartialChatToolCall {
     id: Option<String>,
@@ -579,7 +605,16 @@ impl ChatToolCallAccumulator {
                 self.calls.push(PartialChatToolCall::default());
             }
             let call = &mut self.calls[index];
-            if let Some(id) = chunk.get("id").and_then(Value::as_str) {
+            // Continuation chunks of an OpenAI-compatible stream repeat the
+            // call with `"id": ""` — `b.ai` + `qwen3.8-flash` does exactly
+            // that, and other gateways/proxies do too. Overwriting the captured
+            // id with that empty string left every call of the batch with an
+            // empty `tool_call_id`, so the next request failed with
+            // "Duplicate value for 'tool_call_id' of  in message[N]" as soon as
+            // a batch had two calls.
+            if let Some(id) = chunk.get("id").and_then(Value::as_str)
+                && !id.is_empty()
+            {
                 call.id = Some(id.to_string());
             }
             if let Some(function) = chunk.get("function") {
@@ -600,11 +635,19 @@ impl ChatToolCallAccumulator {
     }
 
     fn drain_complete(&mut self) -> Vec<Result<ModelStreamEvent>> {
+        // Providers key tool results by id, so ids must be non-empty and unique
+        // inside a batch. Fill in what the stream failed to give us instead of
+        // dropping the call (or letting two calls share the empty id).
+        let mut used_ids: Vec<String> = Vec::new();
         self.calls
             .drain(..)
             .filter_map(|call| {
-                let id = call.id?;
                 let tool_name = call.name?;
+                let mut id = call.id.unwrap_or_default();
+                if id.is_empty() || used_ids.iter().any(|used| used == &id) {
+                    id = synthesized_tool_call_id();
+                }
+                used_ids.push(id.clone());
                 let input = serde_json::from_str::<Value>(&call.arguments).unwrap_or_else(|_| {
                     serde_json::json!({
                         "raw_arguments": call.arguments,
@@ -1829,7 +1872,7 @@ mod tool_helpers_tests {
             tools: vec![set_title],
             session_id: None,
         };
-        assert!(requires_initial_session_title(&request));
+        assert!(requires_initial_session_title(&request, false));
         request.messages.push(ModelMessage {
             role: navi_core::ModelRole::Tool,
             content: "ok".into(),
@@ -1840,6 +1883,95 @@ mod tool_helpers_tests {
             created_at: None,
             thinking_content: None,
         });
-        assert!(!requires_initial_session_title(&request));
+        assert!(!requires_initial_session_title(&request, false));
+    }
+
+    #[test]
+    fn aggregator_providers_never_force_session_title_tool_choice() {
+        use navi_core::{ModelMessage, ThinkingConfig, ToolDefinition};
+        let mut set_title = ToolDefinition::default();
+        set_title.name = "set_session_title".into();
+        set_title.description = "set title".into();
+        // Same shape that forces the title on a direct provider: fresh session,
+        // tool present, no tool result yet.
+        let request = ModelRequest {
+            model: "qwen3.8-flash".into(),
+            instructions: None,
+            messages: vec![ModelMessage::user("ola")],
+            thinking: ThinkingConfig::Max,
+            tools: vec![set_title],
+            session_id: None,
+        };
+
+        assert!(requires_initial_session_title(&request, false));
+        assert!(
+            !requires_initial_session_title(&request, true),
+            "aggregator gateways reject a forced tool_choice in thinking mode"
+        );
+    }
+
+    #[test]
+    fn chat_completions_keeps_real_tool_call_id_over_empty_continuation() {
+        use navi_core::ModelStreamEvent;
+        let mut acc = ChatToolCallAccumulator::default();
+        let mut events = Vec::new();
+        // First chunk carries the id, continuation chunks repeat `"id": ""`.
+        for data in [
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_real_1","type":"function","function":{"name":"read_file","arguments":""}}]},"finish_reason":null}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","type":"function","function":{"arguments":"{\"path\":\"a.rs\"}"}}]},"finish_reason":"tool_calls"}]}"#,
+            "[DONE]",
+        ] {
+            events.extend(
+                parse_chat_completions_sse_with_state(data, &mut acc)
+                    .into_iter()
+                    .map(Result::unwrap),
+            );
+        }
+
+        let calls: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                ModelStreamEvent::ToolCall(invocation) => Some(invocation.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls.len(), 1, "events: {events:?}");
+        assert_eq!(calls[0].id, "call_real_1");
+        assert_eq!(calls[0].tool_name, "read_file");
+        assert_eq!(calls[0].input["path"], "a.rs");
+    }
+
+    #[test]
+    fn chat_completions_synthesizes_missing_and_duplicate_tool_call_ids() {
+        use navi_core::ModelStreamEvent;
+        let mut acc = ChatToolCallAccumulator::default();
+        let mut events = Vec::new();
+        // No ids at all on the first call, and the second call repeats the
+        // first one's id: both must end up non-empty and distinct.
+        for data in [
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"search","arguments":"{}"}}]},"finish_reason":null}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_dup","type":"function","function":{"name":"run","arguments":"{}"}}]},"finish_reason":null}]}"#,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":2,"id":"call_dup","type":"function","function":{"name":"read_file","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}"#,
+            "[DONE]",
+        ] {
+            events.extend(
+                parse_chat_completions_sse_with_state(data, &mut acc)
+                    .into_iter()
+                    .map(Result::unwrap),
+            );
+        }
+
+        let ids: Vec<String> = events
+            .iter()
+            .filter_map(|event| match event {
+                ModelStreamEvent::ToolCall(invocation) => Some(invocation.id.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.len(), 3, "events: {events:?}");
+        assert!(ids.iter().all(|id| !id.is_empty()), "ids: {ids:?}");
+        let unique: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len(), "ids must be unique: {ids:?}");
+        assert_eq!(ids[1], "call_dup");
     }
 }

@@ -1506,6 +1506,140 @@ async fn chat_completions_includes_configured_openai_prompt_cache_fields() {
 }
 
 #[tokio::test]
+async fn chat_completions_aggregator_sends_auto_tool_choice_on_first_turn() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "b-ai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        aggregator: true,
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let mut title_tool = navi_core::ToolDefinition::default();
+    title_tool.name = "set_session_title".to_string();
+    title_tool.description = "set title".to_string();
+
+    // Fresh session: the title tool is offered and has no result yet.
+    let request = navi_core::ModelRequest {
+        model: "qwen3.8-flash".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("ola".to_string())],
+        thinking: navi_core::ThinkingConfig::Max,
+        tools: vec![title_tool],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+
+    let received = mock_server
+        .received_requests()
+        .await
+        .expect("should have received requests");
+    assert_eq!(received.len(), 1, "exactly one request expected");
+    let body: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("body should be valid JSON");
+
+    // Aggregator gateways reject the object form in thinking mode with HTTP 400
+    // ("The tool_choice parameter does not support being set to required or
+    // object in thinking mode"), which broke the first turn of new sessions.
+    assert_eq!(
+        body["tool_choice"],
+        json!("auto"),
+        "aggregators must not force a function tool_choice: {body}"
+    );
+    assert!(
+        body.get("tools").is_some_and(|t| t.is_array()),
+        "tools must still be offered: {body}"
+    );
+    assert_eq!(body["reasoning_effort"], json!("high"));
+}
+
+#[tokio::test]
+async fn chat_completions_direct_provider_forces_session_title_tool_choice() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+                .insert_header("content-type", "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let config = navi_core::ProviderConfig {
+        id: "openai".to_string(),
+        kind: navi_core::ProviderKind::OpenAiChatCompletions,
+        base_url: Some(mock_server.uri()),
+        aggregator: false,
+        ..navi_core::ProviderConfig::default()
+    };
+
+    let provider = OpenAiProvider::from_provider_config_with_key(&config, "test_key".to_string())
+        .expect("provider");
+
+    let mut title_tool = navi_core::ToolDefinition::default();
+    title_tool.name = "set_session_title".to_string();
+    title_tool.description = "set title".to_string();
+
+    let request = navi_core::ModelRequest {
+        model: "gpt-5".to_string(),
+        instructions: None,
+        messages: vec![ModelMessage::user("ola".to_string())],
+        thinking: navi_core::ThinkingConfig::Max,
+        tools: vec![title_tool],
+        session_id: None,
+    };
+
+    let mut stream = provider.stream(request);
+    while let Some(event) = stream.next().await {
+        event.unwrap();
+    }
+
+    let received = mock_server
+        .received_requests()
+        .await
+        .expect("should have received requests");
+    assert_eq!(received.len(), 1, "exactly one request expected");
+    let body: serde_json::Value =
+        serde_json::from_slice(&received[0].body).expect("body should be valid JSON");
+
+    // Direct providers keep the deterministic title call on the first turn.
+    assert_eq!(
+        body["tool_choice"],
+        json!({"type": "function", "function": {"name": "set_session_title"}}),
+        "direct providers force the title tool: {body}"
+    );
+}
+
+#[tokio::test]
 async fn test_opencode_zen_chat_request_uses_bearer_api_key() {
     use wiremock::matchers::{header, header_exists, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
