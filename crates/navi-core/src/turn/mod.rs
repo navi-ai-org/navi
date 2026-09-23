@@ -177,6 +177,7 @@ pub async fn run_turn(
         tracing::warn!(
             synthesized_results = repair.synthesized_results,
             dropped_orphan_results = repair.dropped_orphan_results,
+            renamed_tool_call_ids = repair.renamed_tool_call_ids,
             session_id = %ctx.session_id,
             "repaired interrupted tool-call pairing before model request"
         );

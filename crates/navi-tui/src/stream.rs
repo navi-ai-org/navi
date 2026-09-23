@@ -24,6 +24,7 @@ pub(crate) fn start_streaming_request(app: &mut TuiApp) {
         tracing::warn!(
             synthesized_results = pairing_repair.synthesized_results,
             dropped_orphan_results = pairing_repair.dropped_orphan_results,
+            renamed_tool_call_ids = pairing_repair.renamed_tool_call_ids,
             "TUI: repaired interrupted tool-call pairing before model request"
         );
     }

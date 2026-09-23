@@ -524,13 +524,52 @@ pub struct ToolPairingRepair {
     pub synthesized_results: usize,
     /// Orphan tool results dropped because no pending call requested them.
     pub dropped_orphan_results: usize,
+    /// Tool calls whose empty provider id was replaced with a unique one
+    /// (and the tool results that were re-pointed at it).
+    pub renamed_tool_call_ids: usize,
 }
 
 impl ToolPairingRepair {
     /// Whether the repair changed the message list at all.
     pub fn changed(&self) -> bool {
-        self.synthesized_results > 0 || self.dropped_orphan_results > 0
+        self.synthesized_results > 0
+            || self.dropped_orphan_results > 0
+            || self.renamed_tool_call_ids > 0
     }
+}
+
+/// Replaces empty tool-call ids with unique synthetic ones.
+///
+/// Several OpenAI-compatible gateways stream continuation chunks with
+/// `"id": ""` (`b.ai` + `qwen3.8-flash`), which used to leave the assistant
+/// message with empty `tool_calls[].id`. Strict upstreams then reject the next
+/// request with `Duplicate value for 'tool_call_id' of  in message[N]` as soon
+/// as the batch had two calls.
+///
+/// Renamed calls are recorded in `renamed_ids` in batch order so the matching
+/// tool results (which also carry an empty id) can be re-pointed at them.
+fn normalize_tool_call_ids(
+    calls: &mut [ToolInvocation],
+    renamed_ids: &mut std::collections::VecDeque<String>,
+    repair: &mut ToolPairingRepair,
+) {
+    for call in calls.iter_mut() {
+        if !call.id.is_empty() {
+            continue;
+        }
+        let id = synthetic_tool_call_id();
+        call.id = id.clone();
+        renamed_ids.push_back(id);
+        repair.renamed_tool_call_ids += 1;
+    }
+}
+
+/// Process-unique id for a tool call whose provider stream carried none.
+fn synthetic_tool_call_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_SYNTHETIC_TOOL_CALL_ID: AtomicU64 = AtomicU64::new(1);
+    let sequence = NEXT_SYNTHETIC_TOOL_CALL_ID.fetch_add(1, Ordering::Relaxed);
+    format!("navi_call_{sequence}")
 }
 
 /// Repairs `tool_calls` / tool-result pairing that provider APIs require.
@@ -544,8 +583,10 @@ impl ToolPairingRepair {
 ///
 /// The repair is order-preserving and idempotent:
 /// - every unanswered call gets a synthetic [`INTERRUPTED_TOOL_RESULT`] result
-///   inserted before the next non-tool message (or at the end), and
-/// - tool messages answering no pending call are dropped.
+///   inserted before the next non-tool message (or at the end),
+/// - tool messages answering no pending call are dropped, and
+/// - calls carrying an empty provider id get a unique synthetic id and their
+///   tool results are re-pointed at it.
 ///
 /// Returns what changed so callers can log/diagnose.
 pub fn repair_tool_call_pairing(messages: &mut Vec<ModelMessage>) -> ToolPairingRepair {
@@ -568,6 +609,10 @@ pub fn repair_tool_call_pairing(messages: &mut Vec<ModelMessage>) -> ToolPairing
     let mut out: Vec<ModelMessage> = Vec::with_capacity(messages.len());
     // (call_id, tool_name) of the assistant batch currently awaiting results.
     let mut pending: Vec<(String, String)> = Vec::new();
+    // Ids handed to calls whose streamed id was empty, in batch order. Tool
+    // results that arrived with an empty id answer these calls, so they are
+    // re-pointed at the id in the same order.
+    let mut renamed_ids: std::collections::VecDeque<String> = std::collections::VecDeque::new();
 
     for message in std::mem::take(messages) {
         match message.role {
@@ -575,6 +620,9 @@ pub fn repair_tool_call_pairing(messages: &mut Vec<ModelMessage>) -> ToolPairing
                 // A new tool batch starts; close any unanswered calls from the
                 // previous batch before appending the new assistant message.
                 flush_pending(&mut out, &mut pending, &mut repair);
+                renamed_ids.clear();
+                let mut message = message;
+                normalize_tool_call_ids(&mut message.tool_calls, &mut renamed_ids, &mut repair);
                 pending = message
                     .tool_calls
                     .iter()
@@ -583,6 +631,19 @@ pub fn repair_tool_call_pairing(messages: &mut Vec<ModelMessage>) -> ToolPairing
                 out.push(message);
             }
             ModelRole::Tool => {
+                let mut message = message;
+                // Providers that stream an empty tool-call id also send the
+                // result back with an empty id; restore the pairing id so the
+                // batch is well-formed for the next request.
+                if message
+                    .tool_call_id
+                    .as_deref()
+                    .unwrap_or_default()
+                    .is_empty()
+                    && let Some(id) = renamed_ids.pop_front()
+                {
+                    message.tool_call_id = Some(id);
+                }
                 let answered = message
                     .tool_call_id
                     .as_deref()
@@ -1430,5 +1491,83 @@ mod tests {
 
         assert_eq!(repair.dropped_orphan_results, 1);
         assert_eq!(roles(&messages), vec![ModelRole::Assistant]);
+    }
+
+    #[test]
+    fn repair_renames_empty_tool_call_ids_and_repoints_results() {
+        // Reproduces the b.ai + qwen3.8-flash history: the gateway streamed
+        // `"id": ""` on continuation chunks, so a two-call batch reached the
+        // next request with duplicate empty tool_call_ids and was rejected
+        // ("Duplicate value for 'tool_call_id' of  in message[N]").
+        let mut messages = vec![
+            ModelMessage::user("go"),
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("", "read_file"), call("", "run")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("", "read_file", "a"),
+            ModelMessage::tool_result("", "run", "b"),
+            ModelMessage::assistant("done"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.renamed_tool_call_ids, 2);
+        assert_eq!(repair.dropped_orphan_results, 0);
+        assert_eq!(repair.synthesized_results, 0);
+        let ids: Vec<String> = messages[1]
+            .tool_calls
+            .iter()
+            .map(|call| call.id.clone())
+            .collect();
+        assert!(ids.iter().all(|id| !id.is_empty()), "ids: {ids:?}");
+        assert_ne!(ids[0], ids[1], "ids must be unique: {ids:?}");
+        // Results stay attached to the call they answered, in order.
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some(ids[0].as_str()));
+        assert_eq!(messages[2].content, "a");
+        assert_eq!(messages[3].tool_call_id.as_deref(), Some(ids[1].as_str()));
+        assert_eq!(messages[3].content, "b");
+    }
+
+    #[test]
+    fn repair_leaves_real_tool_call_ids_alone() {
+        let mut messages = vec![
+            ModelMessage::user("go"),
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("call_00_real", "read_file")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("call_00_real", "read_file", "ok"),
+        ];
+
+        let repair = repair_tool_call_pairing(&mut messages);
+
+        assert_eq!(repair.renamed_tool_call_ids, 0);
+        assert!(!repair.changed());
+        assert_eq!(messages[1].tool_calls[0].id, "call_00_real");
+        assert_eq!(messages[2].tool_call_id.as_deref(), Some("call_00_real"));
+    }
+
+    #[test]
+    fn repair_renaming_is_idempotent() {
+        let mut messages = vec![
+            ModelMessage::assistant_tool_calls_with_context(
+                vec![call("", "run"), call("", "grep")],
+                "",
+                None,
+            ),
+            ModelMessage::tool_result("", "run", "ok"),
+            ModelMessage::tool_result("", "grep", "ok"),
+        ];
+
+        let first = repair_tool_call_pairing(&mut messages);
+        assert_eq!(first.renamed_tool_call_ids, 2);
+        let after_first = serde_json::to_string(&messages).unwrap();
+
+        let second = repair_tool_call_pairing(&mut messages);
+        assert!(!second.changed(), "second pass must be a no-op");
+        assert_eq!(serde_json::to_string(&messages).unwrap(), after_first);
     }
 }
