@@ -19,6 +19,15 @@ const REGISTRY_BASE_URL: &str = "https://raw.githubusercontent.com/navi-ai-org/n
 /// Timeout for individual HTTP requests.
 const FETCH_TIMEOUT_SECS: u64 = 15;
 
+/// Attempts per registry request before giving up.
+///
+/// `navi registry sync` used to abort on the first DNS/TLS hiccup
+/// (`error sending request`) even though an immediate retry succeeds.
+const FETCH_ATTEMPTS: u32 = 3;
+
+/// Base backoff between attempts; multiplied by the attempt number.
+const FETCH_RETRY_BACKOFF_MS: u64 = 300;
+
 /// Fetches registry data from the remote NAVI repo.
 pub struct RegistryFetcher {
     client: reqwest::Client,
@@ -42,21 +51,21 @@ impl RegistryFetcher {
         Self { client }
     }
 
+    /// GETs `url` as text, retrying transient failures (connect/TLS/timeout,
+    /// 5xx/408/425/429) with a bounded backoff. Permanent 4xx failures fail fast.
+    async fn fetch_text_with_retry(&self, url: &str, label: &str) -> Result<String> {
+        fetch_with_retry(url, label, || async {
+            let response = self.client.get(url).send().await?;
+            response.error_for_status()?.text().await
+        })
+        .await
+    }
+
     /// Fetches the manifest from the remote registry.
     pub async fn fetch_manifest(&self) -> Result<RegistryManifest> {
         let url = format!("{REGISTRY_BASE_URL}/manifest.json");
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch manifest from {url}"))?;
-
-        resp.error_for_status()
-            .with_context(|| format!("manifest request failed: {url}"))?
-            .json::<RegistryManifest>()
-            .await
-            .context("failed to parse manifest JSON")
+        let text = self.fetch_text_with_retry(&url, "manifest").await?;
+        serde_json::from_str::<RegistryManifest>(&text).context("failed to parse manifest JSON")
     }
 
     /// Fetches a single provider JSON by id.
@@ -71,19 +80,9 @@ impl RegistryFetcher {
             .with_context(|| format!("provider '{provider_id}' not in manifest"))?;
 
         let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch provider '{provider_id}' from {url}"))?;
-
-        let text = resp
-            .error_for_status()
-            .with_context(|| format!("provider '{provider_id}' request failed: {url}"))?
-            .text()
-            .await
-            .context("failed to read provider response body")?;
+        let text = self
+            .fetch_text_with_retry(&url, &format!("provider '{provider_id}'"))
+            .await?;
 
         // SHA-256 integrity check against the manifest hash.
         let hash = hex::encode(Sha256::digest(text.as_bytes()));
@@ -117,17 +116,9 @@ impl RegistryFetcher {
             .with_context(|| format!("canonical model '{model_id}' not in manifest"))?;
 
         let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let resp =
-            self.client.get(&url).send().await.with_context(|| {
-                format!("failed to fetch canonical model '{model_id}' from {url}")
-            })?;
-
-        let text = resp
-            .error_for_status()
-            .with_context(|| format!("canonical model '{model_id}' request failed: {url}"))?
-            .text()
-            .await
-            .context("failed to read canonical model response body")?;
+        let text = self
+            .fetch_text_with_retry(&url, &format!("canonical model '{model_id}'"))
+            .await?;
 
         let hash = hex::encode(Sha256::digest(text.as_bytes()));
         if hash != entry.sha256 {
@@ -154,18 +145,9 @@ impl RegistryFetcher {
             .with_context(|| format!("transcription provider '{provider_id}' not in manifest"))?;
 
         let url = format!("{REGISTRY_BASE_URL}/{}", entry.file);
-        let resp = self.client.get(&url).send().await.with_context(|| {
-            format!("failed to fetch transcription provider '{provider_id}' from {url}")
-        })?;
-
-        let text = resp
-            .error_for_status()
-            .with_context(|| {
-                format!("transcription provider '{provider_id}' request failed: {url}")
-            })?
-            .text()
-            .await
-            .context("failed to read transcription provider response body")?;
+        let text = self
+            .fetch_text_with_retry(&url, &format!("transcription provider '{provider_id}'"))
+            .await?;
 
         let hash = hex::encode(Sha256::digest(text.as_bytes()));
         if hash != entry.sha256 {
@@ -203,6 +185,81 @@ impl Default for RegistryFetcher {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// True when an HTTP status is worth another attempt: request timeout, rate
+/// limiting, or any server-side error. 4xx client errors are permanent.
+pub(crate) fn is_transient_status(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429) || (500..=599).contains(&status)
+}
+
+/// True when a request failure is worth another attempt.
+///
+/// Failures with a status come from `error_for_status()`; everything else is a
+/// transport-level failure (DNS, connect, TLS, timeout, truncated body) and is
+/// retried.
+fn is_transient_fetch_error(err: &reqwest::Error) -> bool {
+    match err.status() {
+        Some(status) => is_transient_status(status.as_u16()),
+        None => true,
+    }
+}
+
+/// Runs `op` up to [`FETCH_ATTEMPTS`] times, retrying only transient failures
+/// with a bounded backoff.
+///
+/// Extracted so the retry policy is testable without the network: `op` is any
+/// closure returning a `reqwest::Error` on failure.
+pub(crate) async fn fetch_with_retry<T, F, Fut>(url: &str, label: &str, mut op: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, reqwest::Error>>,
+{
+    let mut attempts = 0u32;
+    let mut last_error: Option<reqwest::Error> = None;
+
+    for attempt in 1..=FETCH_ATTEMPTS {
+        attempts = attempt;
+        match op().await {
+            Ok(value) => {
+                if attempt > 1 {
+                    tracing::info!(url, label, attempt, "registry fetch succeeded after retry");
+                }
+                return Ok(value);
+            }
+            Err(err) => {
+                let transient = is_transient_fetch_error(&err);
+                tracing::debug!(
+                    url,
+                    label,
+                    attempt,
+                    transient,
+                    error = %err,
+                    "registry fetch attempt failed"
+                );
+                last_error = Some(err);
+                if !transient || attempt == FETCH_ATTEMPTS {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    FETCH_RETRY_BACKOFF_MS * u64::from(attempt),
+                ))
+                .await;
+            }
+        }
+    }
+
+    let err = last_error.expect("the loop always records an error before exiting");
+    let note = match (attempts, err.status()) {
+        (n, _) if n > 1 => format!(" after {n} attempts"),
+        (_, Some(status)) => format!(" (HTTP {status}; not retried)"),
+        _ => String::new(),
+    };
+    Err(err).with_context(|| {
+        format!(
+            "failed to fetch {label} from {url}{note} — check network access to raw.githubusercontent.com"
+        )
+    })
 }
 
 /// Loads all providers from a local registry directory.
@@ -567,6 +624,9 @@ struct TimestampDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn parse_iso_timestamp_recent() {
@@ -640,5 +700,152 @@ mod tests {
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "local");
         assert_eq!(providers[0].models[0].context_window_tokens, Some(123_456));
+    }
+
+    // ── retry policy ─────────────────────────────────────────────────────
+
+    const OK_BODY: &str = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok";
+    const ERR_500: &str =
+        "HTTP/1.1 500 Internal Server Error\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    const ERR_429: &str =
+        "HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+    const ERR_404: &str =
+        "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+
+    /// Loopback HTTP server that answers each accepted connection with the next
+    /// canned response. Bounded by the response count and a deadline so a test
+    /// that stops early cannot leave a blocked thread behind.
+    fn spawn_canned_server(responses: Vec<&'static str>) -> (String, Arc<AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let addr = listener.local_addr().expect("local addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&hits);
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let mut served = 0usize;
+            while served < responses.len() && std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut buf = [0u8; 2048];
+                        let _ = stream.read(&mut buf);
+                        let body = responses[served];
+                        served += 1;
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        let _ = stream.write_all(body.as_bytes());
+                        let _ = stream.flush();
+                    }
+                    Err(ref err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (format!("http://{addr}/manifest.json"), hits)
+    }
+
+    #[test]
+    fn transient_status_classifier_matches_retryable_codes() {
+        for status in [408, 425, 429, 500, 502, 503, 504, 599] {
+            assert!(is_transient_status(status), "{status} should be retried");
+        }
+        for status in [200, 301, 400, 401, 403, 404, 410, 422] {
+            assert!(!is_transient_status(status), "{status} must not be retried");
+        }
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_server_errors_then_succeeds() {
+        let (url, hits) = spawn_canned_server(vec![ERR_500, ERR_500, OK_BODY]);
+        let fetcher = RegistryFetcher::new();
+        let text = fetcher
+            .fetch_text_with_retry(&url, "manifest")
+            .await
+            .expect("third attempt should succeed");
+        assert_eq!(text, "ok");
+        assert_eq!(hits.load(Ordering::SeqCst), 3, "expected two retries");
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_rate_limit_then_succeeds() {
+        let (url, hits) = spawn_canned_server(vec![ERR_429, OK_BODY]);
+        let fetcher = RegistryFetcher::new();
+        let text = fetcher
+            .fetch_text_with_retry(&url, "manifest")
+            .await
+            .expect("second attempt should succeed");
+        assert_eq!(text, "ok");
+        assert_eq!(hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn fetch_gives_up_after_max_attempts_with_recovery_hint() {
+        let (url, hits) = spawn_canned_server(vec![ERR_500, ERR_500, ERR_500]);
+        let fetcher = RegistryFetcher::new();
+        let err = fetcher
+            .fetch_text_with_retry(&url, "manifest")
+            .await
+            .expect_err("all attempts fail");
+        let msg = format!("{err:#}");
+        assert!(hits.load(Ordering::SeqCst) >= 3, "expected 3 attempts");
+        assert!(
+            msg.contains("failed to fetch manifest from") && msg.contains("after 3 attempts"),
+            "error should name the resource and the attempt count: {msg}"
+        );
+        assert!(
+            msg.contains("check network access"),
+            "error should carry a recovery hint: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_does_not_retry_client_errors() {
+        let (url, hits) = spawn_canned_server(vec![ERR_404, OK_BODY]);
+        let fetcher = RegistryFetcher::new();
+        let err = fetcher
+            .fetch_text_with_retry(&url, "provider 'demo'")
+            .await
+            .expect_err("404 is permanent");
+        let msg = format!("{err:#}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "404 must not be retried");
+        assert!(
+            msg.contains("404") && msg.contains("not retried"),
+            "error should explain why it was not retried: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_retries_transport_failures() {
+        // Port 1 is never bound by an unprivileged test process, so the client
+        // sees a deterministic connect error (a retryable transport failure).
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&attempts);
+        let client = reqwest::Client::new();
+        let err = fetch_with_retry("http://127.0.0.1:1/manifest.json", "manifest", || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let client = client.clone();
+            async move { client.get("http://127.0.0.1:1/manifest.json").send().await }
+        })
+        .await
+        .expect_err("connect errors never succeed");
+        assert_eq!(attempts.load(Ordering::SeqCst), 3, "transport errors retry");
+        assert!(format!("{err:#}").contains("after 3 attempts"));
+    }
+
+    #[tokio::test]
+    async fn fetch_with_retry_returns_first_success_without_extra_calls() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let value = fetch_with_retry("https://example.invalid/manifest.json", "manifest", || {
+            counter.fetch_add(1, Ordering::SeqCst);
+            async { Ok::<_, reqwest::Error>(42u32) }
+        })
+        .await
+        .expect("first attempt succeeds");
+        assert_eq!(value, 42);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
