@@ -22,12 +22,23 @@ pub fn embedded_manifest() -> Result<RegistryManifest> {
 }
 
 /// Returns all embedded canonical models, parsed from the snapshot.
+///
+/// Keyed by the JSON `id`, not by the embedded file label: the registry names
+/// files Windows-safely (`:` → `_`, `/` → `__`, see `model_filename_for_id` in
+/// the registry's `validate.py`), so `models/gemma3_12b.json` carries
+/// `"id": "gemma3:12b"` and provider refs must resolve against the real id.
+/// The label is only a fallback for a file without an `id`.
 pub fn embedded_model_catalog() -> Result<super::resolve::ModelCatalog> {
     let mut catalog = std::collections::HashMap::new();
-    for (id, json) in MODEL_CATALOG_FILES {
+    for (label, json) in MODEL_CATALOG_FILES {
         let model: super::types::CanonicalModel = serde_json::from_str(json)
-            .with_context(|| format!("failed to parse embedded canonical model '{id}'"))?;
-        catalog.insert(id.to_string(), model);
+            .with_context(|| format!("failed to parse embedded canonical model '{label}'"))?;
+        let id = if model.id.is_empty() {
+            label.to_string()
+        } else {
+            model.id.clone()
+        };
+        catalog.insert(id, model);
     }
     Ok(catalog)
 }
@@ -116,6 +127,80 @@ mod tests {
             manifest.providers.len(),
             providers.len(),
             "manifest provider count != embedded provider file count"
+        );
+    }
+
+    // ── canonical catalog keys (regression: `:` ids) ──────────────────────
+
+    #[test]
+    fn embedded_model_catalog_is_keyed_by_json_id() {
+        // The on-disk name is a lossy, Windows-safe encoding of the model id
+        // (`:` → `_`, `/` → `__`), so keying the catalog by the file label made
+        // ids like `gemma3:12b` unreachable for every provider ref.
+        let catalog = embedded_model_catalog().expect("catalog");
+        assert!(!catalog.is_empty());
+        for (key, model) in &catalog {
+            assert_eq!(
+                &model.id, key,
+                "catalog key must be the canonical model id, not the file label"
+            );
+        }
+        // Ids whose filename differs from the id (validate.py maps `:` → `_`).
+        for id in [
+            "nemotron-3-ultra-550b-a55b:free",
+            "qwen2.5-coder:32b",
+            "gemma3:12b",
+        ] {
+            assert!(
+                catalog.contains_key(id),
+                "catalog must expose '{id}' (JSON id), got file-labelled keys only"
+            );
+        }
+    }
+
+    #[test]
+    fn embedded_provider_refs_all_resolve() {
+        // Every `ref` in the snapshot must hit the catalog by id or alias — this
+        // is what used to warn `unresolved model ref` at startup for
+        // `nemotron-3-ultra-550b-a55b:free` and the Ollama tag ids.
+        let catalog = embedded_model_catalog().expect("catalog");
+        let providers = embedded_providers().expect("providers");
+        let mut unresolved = Vec::new();
+        for provider in &providers {
+            for model in &provider.models {
+                let Some(reference) = model.model_ref.as_deref() else {
+                    continue;
+                };
+                let by_id = catalog.contains_key(reference);
+                let by_alias = catalog
+                    .values()
+                    .any(|c| c.aliases.iter().any(|a| a == reference));
+                if !by_id && !by_alias {
+                    unresolved.push(format!("{}:{}", provider.id, reference));
+                }
+            }
+        }
+        assert!(
+            unresolved.is_empty(),
+            "unresolved refs in the embedded snapshot: {unresolved:?}"
+        );
+    }
+
+    #[test]
+    fn colon_id_refs_keep_canonical_metadata() {
+        let providers = embedded_providers().expect("providers");
+        let gitlawb = providers
+            .iter()
+            .find(|p| p.id == "gitlawb")
+            .expect("gitlawb provider");
+        let model = gitlawb
+            .models
+            .iter()
+            .find(|m| m.model_ref.as_deref() == Some("nemotron-3-ultra-550b-a55b:free"))
+            .expect("free nemotron ref in gitlawb");
+        assert!(
+            model.max_output_tokens.is_some() || model.attachments.images.is_some(),
+            "canonical metadata must be merged into a `:`-id ref (model={model:?})"
         );
     }
 

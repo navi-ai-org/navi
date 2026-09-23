@@ -99,21 +99,22 @@ fn main() -> Result<()> {
     };
     let mut model_catalog_entries = Vec::with_capacity(model_files.len());
     for path in &model_files {
-        // Filenames must stay Windows-safe (no `:`). Model ids may contain
-        // `:` (Ollama tags like `gemma3:12b`); encode as `__` on disk and
-        // restore when embedding the catalog id.
+        // The embedded label is only a fallback: `embedded_model_catalog()`
+        // prefers the JSON `id` field, because the on-disk name is a
+        // Windows-safe *lossy* encoding of the id (`:` → `_`, `/` → `__`, see
+        // `model_filename_for_id` in the registry's validate.py). Deriving the
+        // id from the filename turned `gemma3:12b` into `gemma3_12b`, which no
+        // provider ref ever matched.
         let stem = path
             .file_stem()
             .expect("model file has no stem")
             .to_str()
             .context("model file name is not valid UTF-8")?;
-        let safe_stem = stem.replace(':', "__");
-        let id = safe_stem.replace("__", ":");
-        let safe_name = format!("{safe_stem}.json");
+        let safe_name = format!("{stem}.json");
         let dst = embedded_models_dir.join(&safe_name);
         fs::copy(path, &dst)
-            .with_context(|| format!("failed to copy embedded canonical model {id}"))?;
-        model_catalog_entries.push((id, embedded_path(&dst, &embedded_dir)?));
+            .with_context(|| format!("failed to copy embedded canonical model {stem}"))?;
+        model_catalog_entries.push((stem.to_string(), embedded_path(&dst, &embedded_dir)?));
     }
 
     // Copy and embed provider base definitions (for `extends`).

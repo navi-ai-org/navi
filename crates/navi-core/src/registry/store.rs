@@ -1520,6 +1520,26 @@ mod tests {
     }
 
     #[test]
+    fn embedded_seed_keys_canonical_models_by_json_id() {
+        // Regression: the embedded catalog was keyed by the on-disk file label,
+        // so seeding wrote `nemotron-3-ultra-550b-a55b_free` and every provider
+        // ref to `nemotron-3-ultra-550b-a55b:free` stayed unresolved.
+        let store = RegistryStore::open_memory().expect("open");
+        store
+            .seed_canonical_models_from_embedded_if_empty()
+            .expect("seed");
+        let catalog = store.load_canonical_model_catalog().expect("load");
+        let model = catalog
+            .get("nemotron-3-ultra-550b-a55b:free")
+            .expect("colon id must be seeded under its JSON id");
+        assert!(model.context_window_tokens.is_some());
+        assert!(
+            !catalog.contains_key("nemotron-3-ultra-550b-a55b_free"),
+            "file-labelled keys must not leak into the cache"
+        );
+    }
+
+    #[test]
     fn tool_calling_mode_roundtrips_through_store() {
         let store = RegistryStore::open_memory().expect("open");
         let mut provider = sample_provider();
