@@ -86,7 +86,14 @@ mod tests {
     #[test]
     fn find_and_default_model() {
         let p = find_transcription_provider("openai").expect("openai");
-        assert_eq!(resolve_transcription_model(&p, ""), "whisper-1");
+        // Registry snapshot (2026-09-22): OpenAI STT serves gpt-transcribe;
+        // whisper-1 and the gpt-4o(-mini)-transcribe pair were deprecated.
+        assert_eq!(resolve_transcription_model(&p, ""), "gpt-transcribe");
+        assert_eq!(
+            resolve_transcription_model(&p, "gpt-transcribe"),
+            "gpt-transcribe"
+        );
+        // Unknown names are still accepted (providers may add models first).
         assert_eq!(
             resolve_transcription_model(&p, "gpt-4o-mini-transcribe"),
             "gpt-4o-mini-transcribe"

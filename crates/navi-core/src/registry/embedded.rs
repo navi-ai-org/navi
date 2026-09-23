@@ -230,7 +230,10 @@ mod tests {
 
         let openai = provider(&providers, "openai");
         assert_eq!(openai.defaults.attachments.images, Some(true));
-        assert_eq!(model(openai, "o3-mini").attachments.images, Some(false));
+        // Canonical attachments override the provider default: the OpenAI
+        // provider defaults documents=false, while the GPT-5.x canonical
+        // entries flag native document input.
+        assert_eq!(model(openai, "gpt-5.4").attachments.documents, Some(true));
 
         let configs = providers
             .into_iter()
@@ -246,7 +249,7 @@ mod tests {
         assert_eq!(gemini_flash.supports_video, Some(true));
         assert_eq!(gemini_flash.supports_documents, Some(true));
 
-        let claude = config_model(provider_config(&configs, "anthropic"), "claude-sonnet-4");
+        let claude = config_model(provider_config(&configs, "anthropic"), "claude-sonnet-4-5");
         assert_eq!(claude.supports_images, Some(true));
         assert_eq!(claude.supports_audio, Some(false));
         assert_eq!(claude.supports_video, Some(false));
@@ -254,7 +257,9 @@ mod tests {
 
         let gpt_4o = config_model(provider_config(&configs, "openai"), "gpt-4o");
         assert_eq!(gpt_4o.supports_images, Some(true));
-        let o3_mini = config_model(provider_config(&configs, "openai"), "o3-mini");
-        assert_eq!(o3_mini.supports_images, Some(false));
+        assert_eq!(gpt_4o.supports_documents, Some(false));
+        let gpt_5_4 = config_model(provider_config(&configs, "openai"), "gpt-5.4");
+        assert_eq!(gpt_5_4.supports_images, Some(true));
+        assert_eq!(gpt_5_4.supports_documents, Some(true));
     }
 }

@@ -40,11 +40,13 @@ pub(super) fn opencode_zen_model_id(model: &str) -> Option<String> {
         // serves hy3-free, nemotron-3.5-lightning-free, ox-alpha-free /
         // x-preview-f-free and muse-spark-1.2-contributor-free, so cover
         // them too instead of breaking on the next registry sync.
+        // Registry main (2026-09-22) adds mimo-v2.6-flash-free to the free tier.
         "deepseek-v4-flash-free" => Some("deepseek-v4-flash-free".to_string()),
         "nemotron-3-ultra-free" => Some("nemotron-3-ultra-free".to_string()),
         "nemotron-3.5-lightning-free" => Some("nemotron-3.5-lightning-free".to_string()),
         "big-pickle" => Some("big-pickle".to_string()),
         "mimo-v2.5-free" => Some("mimo-v2.5-free".to_string()),
+        "mimo-v2.6-flash-free" => Some("mimo-v2.6-flash-free".to_string()),
         "hy3-free" => Some("hy3-free".to_string()),
         "laguna-s-2.1-free" => Some("laguna-s-2.1-free".to_string()),
         "north-mini-code-free" => Some("north-mini-code-free".to_string()),
