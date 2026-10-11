@@ -1,6 +1,8 @@
 mod opencode;
 mod registry;
 
+pub mod dropin;
+
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -55,6 +57,9 @@ pub fn invalidate_registry_catalog_cache() {
         Ok(mut guard) => *guard = None,
         Err(poisoned) => *poisoned.into_inner() = None,
     }
+    // Drop-in provider files resolve unset fields against the registry catalog,
+    // so they must be re-resolved when the base catalog changes.
+    dropin::bump_base_generation();
 }
 
 /// Returns the process-global registry store when the engine has initialized it.

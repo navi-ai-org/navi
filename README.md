@@ -208,6 +208,55 @@ More: [SDK Agents Guide](docs/sdk-agents.md).
 
 Swap in config — no recompile.
 
+### Custom providers and models (`providers.d/`)
+
+Custom providers are **not** configured in `config.toml`. Each one gets its own file
+under `~/.config/navi/providers.d/` (or `<project>/.navi/providers.d/`), so a
+hundred providers stay editable, and the files are re-read at runtime — edit one
+while NAVI is running and it is picked up within a couple of seconds:
+
+```toml
+# ~/.config/navi/providers.d/devin.toml
+base_url = "http://127.0.0.1:8787/v1"
+api_key_env = "DEVIN_PROXY_KEY"
+kind = "openai-chat-completions"   # default; also openai-responses, anthropic-messages, gemini-generate-content
+
+[[models]]
+name = "devin/swe-2"
+context_window_tokens = 262000
+supports_thinking = true
+```
+
+* `id` defaults to the file name; unset fields inherit the registry entry with
+  the same id (so overriding `openai`'s `base_url` keeps its models and label).
+* `provider = "<id>"` in a file turns it into a **model fragment** for an
+  existing provider; `exclude_models = ["…"]` hides registry models.
+* Subdirectories are scanned recursively, and every file is independent.
+* `navi provider add | add-model | edit | remove | list | check | migrate`
+  manages them without hand-editing; `navi provider edit <id>` opens `$EDITOR`.
+* Unknown keys and TOML errors are reported by `navi provider check` instead of
+  breaking the load.
+
+---
+
+## Configuration layout
+
+NAVI splits configuration by **ownership**, so the files you edit are never
+rewritten by the agent:
+
+| File | Owner | Written by NAVI |
+| --- | --- | --- |
+| `~/.config/navi/config.toml`, `<project>/.navi/config.toml` | you | **never** |
+| `~/.config/navi/state.toml`, `<project>/.navi/state.toml` | NAVI (last model, TUI prefs, flags) | always, atomically |
+| `~/.config/navi/providers.d/**/*.toml` | you (or `navi provider …`) | only on explicit provider commands |
+| `~/.config/navi/mcp.d/*.toml` | you (or `navi mcp add`) | only on explicit MCP commands |
+
+Precedence, later wins: `defaults < config.toml < state.toml`, applied globally
+and then per project. `state.toml` only holds keys NAVI itself wrote, so a UI
+choice beats the declared default; delete it with `navi config reset-state` to
+fall back to `config.toml`. `navi config path` prints every path and
+`navi config show` prints the effective result.
+
 ---
 
 ## Security (defaults on)

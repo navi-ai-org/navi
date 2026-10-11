@@ -1402,11 +1402,11 @@ fn handle_setup_interview_done(app: &mut TuiApp) {
 
 /// Finish the setup wizard (interview complete or user skipped interview).
 pub(crate) fn complete_setup_wizard(app: &mut TuiApp) {
-    use crate::persistence::save_global_config_for_app;
+    use crate::persistence::save_state_for_app;
 
     app.setup_phase = None;
     app.mode = Mode::Normal;
-    let _ = save_global_config_for_app(app);
+    let _ = save_state_for_app(app);
     app.conversation_history = vec![navi_sdk::ModelMessage::system(
         navi_core::build_system_prompt(&app.loaded_config.config, &app.project_dir),
     )];

@@ -21,6 +21,63 @@ use crate::{
 /// Maximum number of entries kept in the recent-provider and recent-model lists.
 pub(crate) const RECENTS_LIMIT: usize = 8;
 
+/// How often the TUI checks `providers.d/` for edits (hot reload).
+pub(crate) const PROVIDERS_POLL_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(2);
+
+/// Re-reads `providers.d/` and rebuilds the runtime when a file changed.
+///
+/// Called from the event-loop tick, so adding, editing or deleting a provider
+/// file under `~/.config/navi/providers.d/` (or the project one) takes effect
+/// without restarting NAVI. Returns `true` when something was reloaded.
+pub(crate) fn poll_providers_dropin(app: &mut TuiApp) -> bool {
+    let now = Instant::now();
+    if now < app.providers_poll_due {
+        return false;
+    }
+    app.providers_poll_due = now + PROVIDERS_POLL_INTERVAL;
+
+    let engine = app.engine();
+    let Some(snapshot) = engine.reload_providers() else {
+        return false;
+    };
+    app.loaded_config = engine.loaded_config();
+    refresh_model_list(app);
+    rebuild_provider(app);
+
+    let mut message = format!(
+        "providers.d reloaded — {} provider(s), {} model(s)",
+        snapshot.provider_count(),
+        snapshot.model_count()
+    );
+    if let Some(diagnostic) = snapshot.diagnostics.first() {
+        message.push_str(&format!("\n{diagnostic}"));
+        if snapshot.diagnostics.len() > 1 {
+            message.push_str(&format!(
+                "\n(+{} more; run `navi provider check`)",
+                snapshot.diagnostics.len() - 1
+            ));
+        }
+    }
+    show_notification(app, "Providers", message);
+    true
+}
+
+/// Rebuilds the model picker list and keeps the current selection selected.
+pub(crate) fn refresh_model_list(app: &mut TuiApp) {
+    app.models = navi_sdk::available_model_options(&app.loaded_config.config);
+    let selected_name = app.loaded_config.config.model.name.clone();
+    let selected_provider = navi_sdk::canonical_provider_id(&app.loaded_config.config.model.provider);
+    app.selected_model = app
+        .models
+        .iter()
+        .position(|model| {
+            model.name == selected_name
+                && navi_sdk::canonical_provider_id(&model.provider_id) == selected_provider
+        })
+        .unwrap_or(0);
+}
+
 /// Push a provider id to the front of the recents list, deduping and capping
 /// the list to `RECENTS_LIMIT` entries. Persists the change via `save_preferences`.
 pub(crate) fn push_recent_provider(app: &mut TuiApp, provider_id: &str) {
@@ -267,7 +324,7 @@ pub(crate) fn handle_setup_list_key(app: &mut TuiApp, code: crossterm::event::Ke
                     if mode == PermissionMode::Yolo {
                         app.loaded_config.config.tui.yolo_mode = true;
                     }
-                    let _ = crate::persistence::save_global_config_for_app(app);
+                    let _ = crate::persistence::save_state_for_app(app);
                     app.messages.push(crate::state::ChatMessage::new(
                         crate::state::ChatRole::Assistant,
                         format!(

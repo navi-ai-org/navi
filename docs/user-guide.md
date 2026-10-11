@@ -65,13 +65,32 @@ cargo run -p navi-cli -- --print-providers
 
 ## Configuration
 
-Config is TOML, loaded in this order. Later sources override earlier ones.
+Config is split by **ownership**. The files you edit are never rewritten by NAVI.
+
+| File | Owner | Written by NAVI |
+|---|---|---|
+| `~/.config/navi/config.toml` (Linux) | you | **never** |
+| `~/.config/navi/state.toml` | NAVI (last model, TUI prefs, flags) | always, atomically |
+| `~/.config/navi/providers.d/**/*.toml` | you (or `navi provider …`) | only on explicit provider commands |
+| `~/.config/navi/mcp.d/*.toml` | you (or `navi mcp add`) | only on explicit MCP commands |
+| `.navi/config.toml` + `.navi/state.toml` + `.navi/providers.d/` | per project | same rule, project scope |
+
+Load order, later sources override earlier ones:
 
 1. **Defaults**: provider `openai`, model `gpt-5.5`
-2. **Global config**: `~/.config/navi/config.toml` (Linux)
-3. **Project config**: `.navi/config.toml` in the current working directory
+2. **Global config**: `~/.config/navi/config.toml`
+3. **Global state**: `~/.config/navi/state.toml`
+4. **Project config**: `.navi/config.toml` in the current working directory
+5. **Project state**: `.navi/state.toml`
+6. **Drop-ins**: `providers.d/**/*.toml` and `mcp.d/*.toml`
 
-> **Security note**: Project config (`.navi/config.toml`) cannot enable `mcp.servers`. These are only effective in the global config.
+`state.toml` only carries keys NAVI itself wrote, so a choice made in the TUI
+(theme, toggles, selected model) beats the default you declared in
+`config.toml`. Delete it — `navi config reset-state` — to fall back to
+`config.toml`. `navi config path` prints every path involved and
+`navi config show` prints the effective result plus where each value came from.
+
+> **Security note**: Project config (`.navi/config.toml`) cannot enable `mcp.servers`. These are only effective in the global config (`mcp.d/` is global-only too).
 
 ### Example Configuration
 
@@ -108,26 +127,69 @@ active = []
 [mcp]
 enabled = false
 
-# MCP server example (global config only)
+# MCP server example (global config only; `navi mcp add` writes mcp.d/ instead)
 # [[mcp.servers]]
 # id = "memory"
 # command = "memory-mcp-server"
 # args = []
 # enabled = false
-
-# Provider overrides
-# [providers.openai]
-# api_key_env = "OPENAI_API_KEY"
-# base_url = "https://api.openai.com/v1"
-
-# [providers.anthropic]
-# api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com/v1"
-
-# [providers.gitlawb]
-# api_key_env = "LAWB_API_KEY"
-# base_url = "https://opengateway.gitlawb.com/v1"
 ```
+
+### Custom providers and models
+
+Custom providers do **not** live in `config.toml`: one file per provider under
+`~/.config/navi/providers.d/` (or `<project>/.navi/providers.d/`). Files are
+re-read while NAVI runs, so a new model appears in the picker within seconds of
+saving the file.
+
+```toml
+# ~/.config/navi/providers.d/devin.toml
+# `id` defaults to the file name; every unset field is inherited from the
+# registry entry with the same id (label, kind, api_key_env, models, pricing).
+base_url = "http://127.0.0.1:8787/v1"
+api_key_env = "DEVIN_PROXY_KEY"
+kind = "openai-chat-completions"
+
+[[models]]
+name = "devin/swe-2"
+context_window_tokens = 262000
+max_output_tokens = 128000
+supports_thinking = true
+```
+
+```toml
+# ~/.config/navi/providers.d/devin-extra.toml — model fragment
+provider = "devin"
+exclude_models = ["devin/swe-1-6"]
+
+[[models]]
+name = "devin/swe-2-max"
+```
+
+Supported keys mirror a `[[providers]]` entry: `id`, `label`, `description`,
+`kind` (`openai-chat-completions` default, `openai-responses`,
+`anthropic-messages`, `gemini-generate-content`), `api_key_env`, `base_url`,
+`request_timeout_ms`, `stream_idle_timeout_ms`, `request_max_retries`,
+`stream_max_retries`, `websocket_connect_timeout_ms`, `retry_429`,
+`tool_prompt_manifest`, `tool_calling_mode`, `request_options`, `aggregator`,
+plus `models` and `exclude_models`. Unknown keys are reported instead of being
+silently ignored.
+
+```bash
+navi provider list                     # id, kind, models, source file
+navi provider add my-gw --base-url http://127.0.0.1:8080/v1 --model my-model
+navi provider add-model my-gw my-model-2 --context-window 200000
+navi provider edit my-gw               # $EDITOR on providers.d/my-gw.toml
+navi provider remove my-gw --yes
+navi provider check                    # validate every file
+navi provider migrate                  # move [[providers]] blocks out of config.toml
+```
+
+`navi provider migrate` is the one-time upgrade path: it writes each
+`[[providers]]` block to its own file, backs up `config.toml`
+(`config.toml.bak-providers-migrate`) and removes the blocks from it. Legacy
+`[[providers]]` blocks keep working either way; a drop-in file wins over a
+`config.toml` entry with the same id.
 
 ### Configuration Reference
 
@@ -151,7 +213,8 @@ enabled = false
 | `[skills]` | `enabled` | Enable skill discovery (store + built-ins). |
 | `[skills]` | `active` | Skill ids to **session-activate** (harness soft-apply when those skills are harness packs). Empty = catalog open, no harness lock. |
 | `[mcp]` | `enabled` | Enable MCP client. |
-| `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only. |
+| `[[mcp.servers]]` | `id`, `command`, `args`, `enabled` | MCP server definition. Global config only; prefer `mcp.d/<id>.toml` or `navi mcp add`. |
+| `providers.d/<id>.toml` | provider keys + `[[models]]` | Custom providers and models, hot-reloaded. See below. |
 
 Skills live under `<data_dir>/skills/` (root + pool folders with `SKILL.md`) and optionally project `.navi/skills/`. Install with `navi skill install path/to/skill.md` (YAML frontmatter + body) or `navi skill install path/to/skill.toml`; list with `navi skill list`. Use `--id` / `--scope user|project` on install as needed. Harness packs materialize to `<data_dir>/harnesses/<id>/` (see [harness-system.md](harness-system.md) dual activation). Engine authoring skills (`navi-create-skill`, …) are **builtin** under pool `navi` — prefer them over marketplace packs for engine APIs. Agents must use skill tools (`skill_list` / `load_skill` / `skill_save`), not raw FS into private `data_dir`.
 
@@ -185,7 +248,7 @@ Some providers need request/stream adapters even when they expose an OpenAI-comp
 | `gitlawb` | chat completions | OpenAI-compatible gateway at `https://opengateway.gitlawb.com/v1`. |
 | `groq` | chat completions | OpenAI-compatible with Groq adapter. |
 | `xai` | responses | Reasoning effort mapping. |
-| Custom | varies | Any OpenAI-compatible endpoint via `[providers.<id>]`. |
+| Custom | varies | `providers.d/<id>.toml` (hot-reloaded). |
 
 ## TUI Controls
 

@@ -84,12 +84,12 @@ impl NaviEngine {
         self.loaded_config().config.updates.auto_update
     }
 
-    /// Set auto-update preference and persist to the global config when possible.
+    /// Set auto-update preference and persist it to `state.toml` when possible.
     pub fn set_auto_update(&self, enabled: bool) -> Result<()> {
         let mut loaded = self.loaded_config();
         loaded.config.updates.auto_update = enabled;
         if let Some(path) = loaded.global_config_path.as_ref() {
-            navi_core::save_global_config(path, &loaded.config).map_err(NaviError::from)?;
+            navi_core::save_state_config(path, &loaded.config).map_err(NaviError::from)?;
         }
         self.replace_loaded_config(loaded);
         Ok(())

@@ -470,6 +470,11 @@ impl EngineDriver for MockEngine {
         self.state.lock().unwrap().loaded_config.clone()
     }
 
+    fn reload_providers(&self) -> Option<std::sync::Arc<navi_core::DropInSnapshot>> {
+        // The mock never owns a providers.d directory.
+        None
+    }
+
     fn memory_quick_status(&self) -> Result<String> {
         Ok("on · 0 active".into())
     }

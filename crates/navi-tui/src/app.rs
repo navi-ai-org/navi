@@ -247,6 +247,8 @@ pub struct TuiApp {
     pub(crate) session_goal: Option<SessionGoal>,
     /// When set, a debounced mid-turn session checkpoint is due at this instant.
     pub(crate) session_checkpoint_due: Option<Instant>,
+    /// Next `providers.d/` hot-reload check (see `providers::poll_providers_dropin`).
+    pub(crate) providers_poll_due: Instant,
     // attachment models config
     pub(crate) selected_attachment_model: usize,
     pub(crate) attachment_model_picker_active: bool,
@@ -501,6 +503,7 @@ impl TuiApp {
             session_title: None,
             session_goal: None,
             session_checkpoint_due: None,
+            providers_poll_due: Instant::now() + crate::providers::PROVIDERS_POLL_INTERVAL,
             selected_attachment_model: 0,
             attachment_model_picker_active: false,
             attachment_model_picker_modality: None,

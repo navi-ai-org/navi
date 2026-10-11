@@ -9,10 +9,12 @@ use std::path::{Path, PathBuf};
 
 mod bench_cmd;
 mod browser_cmd;
+mod config_cmd;
 mod eval_cmd;
 mod harness_cmd;
 mod mcp_cmd;
 mod memory_cmd;
+mod provider_cmd;
 mod registry_cmd;
 mod server_cmd;
 mod session_cmd;
@@ -144,6 +146,139 @@ enum Commands {
     ComputerUse {
         #[command(subcommand)]
         action: ComputerUseAction,
+    },
+    /// Manage custom providers and models (`providers.d/`)
+    Provider {
+        #[command(subcommand)]
+        action: ProviderAction,
+    },
+    /// Inspect config layers and reset the machine-owned state file
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProviderAction {
+    /// List providers with their kind, model count and source file
+    List {
+        /// Emit JSON instead of a table
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the providers.d directory (`--project` for the project one)
+    Path {
+        /// Use `<project>/.navi/providers.d`
+        #[arg(long)]
+        project: bool,
+    },
+    /// Validate every providers.d file and print diagnostics
+    Check {
+        /// Emit JSON instead of a report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Create (or replace) a provider file
+    Add {
+        /// Provider id (also the default file name)
+        id: String,
+        /// Human-readable label (defaults to the id)
+        #[arg(long)]
+        label: Option<String>,
+        /// API kind: openai-chat-completions (default), openai-responses,
+        /// anthropic-messages, gemini-generate-content
+        #[arg(long)]
+        kind: Option<String>,
+        /// Base URL, e.g. http://127.0.0.1:8787/v1
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Environment variable holding the API key (defaults to
+        /// <ID>_API_KEY)
+        #[arg(long)]
+        api_key_env: Option<String>,
+        /// Model id to declare (repeatable)
+        #[arg(long = "model", value_name = "NAME", action = clap::ArgAction::Append)]
+        model: Vec<String>,
+        /// Write to `<project>/.navi/providers.d` instead of the global directory
+        #[arg(long)]
+        project: bool,
+    },
+    /// Add a model to an existing provider
+    AddModel {
+        /// Provider id the model belongs to
+        provider: String,
+        /// Model id as the endpoint expects it
+        name: String,
+        /// Context window in tokens
+        #[arg(long)]
+        context_window: Option<u64>,
+        /// Maximum output tokens
+        #[arg(long)]
+        max_output: Option<u64>,
+        /// Mark the model as supporting extended thinking
+        #[arg(long)]
+        thinking: bool,
+        /// Mark the model as accepting images
+        #[arg(long)]
+        images: bool,
+        /// Recommended temperature
+        #[arg(long)]
+        temperature: Option<f64>,
+        /// Write to the project providers.d directory
+        #[arg(long)]
+        project: bool,
+    },
+    /// Open a provider file in $EDITOR (creating it from the effective
+    /// definition when needed)
+    Edit {
+        /// Provider id
+        id: String,
+        /// Use the project providers.d directory
+        #[arg(long)]
+        project: bool,
+    },
+    /// Delete every providers.d file for a provider
+    Remove {
+        /// Provider id
+        id: String,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
+        /// Only consider the project providers.d directory
+        #[arg(long)]
+        project: bool,
+    },
+    /// Move `[[providers]]` blocks out of config.toml into providers.d files
+    Migrate {
+        /// Show what would happen without writing anything
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConfigAction {
+    /// Print the config/state/providers.d paths
+    Path {
+        /// Emit JSON instead of a list
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the effective configuration and the layer order
+    Show {
+        /// Emit JSON instead of a report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Delete the machine-owned state.toml (falls back to config.toml)
+    ResetState {
+        /// Reset `<project>/.navi/state.toml` instead of the global one
+        #[arg(long)]
+        project: bool,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -600,6 +735,18 @@ async fn main() -> Result<()> {
     // Handle computer-use subcommand early (offline diagnostics, no provider needed)
     if let Some(Commands::ComputerUse { action }) = cli.command {
         return handle_computer_use_command(action, &cwd);
+    }
+
+    // Handle provider management early (offline, edits providers.d files)
+    if let Some(Commands::Provider { action }) = cli.command {
+        init_registry_store(&loaded_config);
+        return provider_cmd::handle_provider_command(action, &loaded_config, &cwd);
+    }
+
+    // Handle config inspection/reset early (offline)
+    if let Some(Commands::Config { action }) = cli.command {
+        init_registry_store(&loaded_config);
+        return config_cmd::handle_config_command(action, &loaded_config, &cwd);
     }
 
     if cli.print_log_path {

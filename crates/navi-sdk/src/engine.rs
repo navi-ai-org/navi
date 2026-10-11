@@ -7,10 +7,10 @@ use navi_core::{
     LoadedConfig, ModelOption, ProviderConfig, QuestionResponse, RuntimeComponents, RuntimeEvent,
     SessionGoal, SessionId, SessionSnapshot, SessionStore, SessionTitleHandle, SessionTitleTool,
     SkillManifest, atif_to_json, available_model_options, build_trajectory, canonical_provider_id,
-    config::effective_context_window, discover_configured_skills, model_can_run_publicly,
-    provider_catalog, registry, registry::RegistryStore, resolve_provider_api_key,
-    resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    save_project_config,
+    config::effective_context_window, config::providers::dropin, discover_configured_skills,
+    model_can_run_publicly, provider_catalog, registry, registry::RegistryStore,
+    resolve_provider_api_key, resolve_provider_config, resolve_provider_credential_status,
+    save_project_state, save_state_config,
 };
 use navi_mcp::{LoadedMcpServers, McpServerInfo, load_configured_mcp_servers};
 
@@ -822,8 +822,10 @@ impl NaviEngine {
         self.start_session(request).await
     }
 
-    /// Insert or update a custom OpenAI-compatible (or other) provider in config.
+    /// Insert or update a custom provider in `providers.d/`.
     ///
+    /// Writes `<config dir>/providers.d/<id>.toml` (or the project directory for
+    /// [`NaviConfigSaveTarget::Project`]) and returns that path in `saved_to`.
     /// Unreachable base URLs do not crash build or list; credential resolution
     /// and model selection still work offline.
     pub fn upsert_provider(
@@ -842,17 +844,63 @@ impl NaviEngine {
             .iter_mut()
             .find(|p| p.id == id)
         {
-            *existing = provider;
+            *existing = provider.clone();
         } else {
-            loaded_config.config.providers.push(provider);
+            loaded_config.config.providers.push(provider.clone());
         }
-        let saved_to = self.save_loaded_config(&loaded_config, save_target)?;
+        let saved_to = match save_target {
+            NaviConfigSaveTarget::None => None,
+            target => {
+                let dir = self.providers_dropin_dir(&loaded_config, target)?;
+                Some(
+                    dropin::write_provider_file(&dir, &provider)
+                        .map_err(NaviError::from)?,
+                )
+            }
+        };
         self.replace_loaded_config(loaded_config.clone());
         Ok(NaviProviderUpsertResult {
             provider_id: id,
             loaded_config,
             saved_to,
         })
+    }
+
+    /// Re-reads `providers.d/` and returns the fresh snapshot when a file
+    /// appeared, changed or was deleted.
+    ///
+    /// Safe to call from a UI tick: the directory is fingerprinted and the scan
+    /// is throttled, so an unchanged tree costs one `read_dir` per root.
+    pub fn reload_providers(&self) -> Option<Arc<dropin::DropInSnapshot>> {
+        let mut loaded_config = self.loaded_config();
+        let snapshot = dropin::apply_if_changed(&mut loaded_config.config)?;
+        self.replace_loaded_config(loaded_config);
+        Some(snapshot)
+    }
+
+    /// Directory a provider write should land in for `target`.
+    fn providers_dropin_dir(
+        &self,
+        loaded_config: &LoadedConfig,
+        target: NaviConfigSaveTarget,
+    ) -> Result<PathBuf> {
+        let project = match target {
+            NaviConfigSaveTarget::Project => true,
+            NaviConfigSaveTarget::Global => false,
+            NaviConfigSaveTarget::Auto => loaded_config.project_config_path.is_some(),
+            NaviConfigSaveTarget::None => false,
+        };
+        let global_dir = loaded_config
+            .global_config_path
+            .as_ref()
+            .and_then(|path| path.parent());
+        let roots = dropin::roots_for(global_dir, &self.inner.project_dir);
+        let dir = if project {
+            roots.project
+        } else {
+            roots.global
+        };
+        dir.ok_or_else(|| NaviError::Config("providers.d directory is unavailable".into()))
     }
 
     /// Returns the current agent mode (Default or Plan).
@@ -1933,7 +1981,7 @@ impl NaviEngine {
         match target {
             NaviConfigSaveTarget::None => Ok(None),
             NaviConfigSaveTarget::Project => {
-                let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                let path = save_project_state(&self.inner.project_dir, &loaded_config.config)
                     .map_err(NaviError::from)?;
                 Ok(Some(path))
             }
@@ -1943,13 +1991,13 @@ impl NaviEngine {
                     .as_ref()
                     .context("global config path is unavailable")
                     .map_err(NaviError::from)?;
-                let path = save_global_config(global_path, &loaded_config.config)
+                let path = save_state_config(global_path, &loaded_config.config)
                     .map_err(NaviError::from)?;
                 Ok(Some(path))
             }
             NaviConfigSaveTarget::Auto => {
                 if loaded_config.project_config_path.is_some() {
-                    let path = save_project_config(&self.inner.project_dir, &loaded_config.config)
+                    let path = save_project_state(&self.inner.project_dir, &loaded_config.config)
                         .map_err(NaviError::from)?;
                     Ok(Some(path))
                 } else {
@@ -1958,7 +2006,7 @@ impl NaviEngine {
                         .as_ref()
                         .context("global config path is unavailable")
                         .map_err(NaviError::from)?;
-                    let path = save_global_config(global_path, &loaded_config.config)
+                    let path = save_state_config(global_path, &loaded_config.config)
                         .map_err(NaviError::from)?;
                     Ok(Some(path))
                 }

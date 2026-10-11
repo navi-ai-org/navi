@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use navi_sdk::{
     AgentEvent, CompactState, SessionSnapshot, SessionStore, SessionUsageSnapshot,
-    effective_context_window, model_messages_from_agent_events, save_global_config,
+    effective_context_window, model_messages_from_agent_events, save_state_config,
     session_title_from_events,
 };
 
@@ -148,6 +148,10 @@ pub(crate) fn sync_preferences_to_config(app: &mut TuiApp) {
     // desktop_notifications + last_message_action are toggled/updated in place.
 }
 
+/// Persists TUI preferences to the machine-owned `state.toml`.
+///
+/// The hand-authored `config.toml` is never rewritten: NAVI writes only the
+/// keys it owns (selected model, TUI toggles, recents).
 pub(crate) fn save_preferences(app: &mut TuiApp) {
     sync_preferences_to_config(app);
 
@@ -155,17 +159,17 @@ pub(crate) fn save_preferences(app: &mut TuiApp) {
         tracing::warn!("skipping preferences save: global config path is not resolved");
         return;
     };
-    if let Err(err) = save_global_config(&global_path, &app.loaded_config.config) {
+    if let Err(err) = save_state_config(&global_path, &app.loaded_config.config) {
         tracing::warn!(error = %err, "failed to save preferences");
     }
 }
 
-/// Save the global config to disk using the app's resolved path.
-pub(crate) fn save_global_config_for_app(app: &TuiApp) -> anyhow::Result<()> {
+/// Persist the machine-owned state slice next to the app's global config.
+pub(crate) fn save_state_for_app(app: &TuiApp) -> anyhow::Result<()> {
     let Some(global_path) = app.loaded_config.global_config_path.clone() else {
         anyhow::bail!("global config path not resolved");
     };
-    save_global_config(&global_path, &app.loaded_config.config)?;
+    save_state_config(&global_path, &app.loaded_config.config)?;
     Ok(())
 }
 

@@ -148,6 +148,13 @@ pub trait EngineDriver: Send + Sync {
     /// Current in-memory configuration snapshot.
     fn loaded_config(&self) -> LoadedConfig;
 
+    /// Re-read `providers.d/` and return the fresh snapshot when a file
+    /// appeared, changed or was deleted (hot reload).
+    ///
+    /// Returns `None` when nothing changed; the engine's loaded config is
+    /// updated in place when it returns `Some`.
+    fn reload_providers(&self) -> Option<std::sync::Arc<navi_core::DropInSnapshot>>;
+
     /// One-line memory system status for settings/TUI (best-effort).
     fn memory_quick_status(&self) -> Result<String>;
 
@@ -344,6 +351,10 @@ impl EngineDriver for crate::NaviEngine {
 
     fn loaded_config(&self) -> LoadedConfig {
         crate::NaviEngine::loaded_config(self)
+    }
+
+    fn reload_providers(&self) -> Option<std::sync::Arc<navi_core::DropInSnapshot>> {
+        crate::NaviEngine::reload_providers(self)
     }
 
     fn memory_quick_status(&self) -> Result<String> {

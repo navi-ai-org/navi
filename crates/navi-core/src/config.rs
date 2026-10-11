@@ -1,10 +1,17 @@
 pub mod defaults;
+pub mod mcp_dropin;
 pub mod persistence;
 pub mod providers;
+pub mod state;
 pub mod types;
 
+pub use mcp_dropin::{McpDropInDiagnostic, McpDropInSnapshot};
 pub use persistence::*;
+pub use providers::dropin::{
+    DiagnosticLevel, DropInDiagnostic, DropInFileInfo, DropInRoots, DropInSnapshot,
+};
 pub use providers::*;
+pub use state::*;
 pub use types::*;
 
 #[cfg(test)]

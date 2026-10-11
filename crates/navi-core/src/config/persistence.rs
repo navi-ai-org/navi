@@ -1,3 +1,5 @@
+use crate::config::providers::dropin;
+use crate::config::state::{self, NaviState};
 use crate::config::types::{LoadedConfig, NaviConfig};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
@@ -7,6 +9,15 @@ use std::path::{Path, PathBuf};
 impl NaviConfig {
     /// Loads and merges configuration from the global config file and the
     /// project's `.navi/config.toml`, returning the merged config with paths.
+    ///
+    /// Layers, in order (later wins):
+    ///
+    /// 1. built-in defaults
+    /// 2. `~/.config/navi/config.toml` — hand-authored, NAVI never writes it
+    /// 3. `~/.config/navi/state.toml` — machine-owned (model, TUI prefs, flags)
+    /// 4. `<project>/.navi/config.toml` — hand-authored
+    /// 5. `<project>/.navi/state.toml` — machine-owned
+    /// 6. `providers.d/**/*.toml` drop-in providers (win over `[[providers]]`)
     pub fn load(cwd: &Path) -> Result<LoadedConfig> {
         let dirs = navi_dirs()?;
         // Prefer the XDG-style `~/.config/navi/` when it exists — this is the
@@ -19,8 +30,32 @@ impl NaviConfig {
 
         let mut config = NaviConfig::default();
         let _ = merge_from_file(&mut config, &global_path, ConfigSource::Trusted)?;
+
+        // Machine-owned state (`state.toml`) sits next to each config file and
+        // wins for the keys it owns: the last model/TUI choice made in the UI
+        // beats the declared default in `config.toml`.
+        let global_state = state::load_state(&state::state_path_for_config(&global_path));
+        if let Some(state) = &global_state {
+            state::apply_state(state, &mut config);
+        }
+
         let project_config_path =
             merge_from_file(&mut config, &project_path, ConfigSource::Project)?;
+        let project_state = state::load_state(&state::state_path_for_config(&project_path));
+        if let Some(state) = &project_state {
+            state::apply_state(state, &mut config);
+        }
+
+        // Additive skill allowlist entries from both state layers. No-op unless
+        // the effective `[skills] active` list is non-empty.
+        let mut state_layers: Vec<&NaviState> = Vec::new();
+        if let Some(state) = &global_state {
+            state_layers.push(state);
+        }
+        if let Some(state) = &project_state {
+            state_layers.push(state);
+        }
+        state::apply_extra_active(&state_layers, &mut config);
 
         // Apply environment overrides for memory configuration
         if let Ok(val) = std::env::var("NAVI_MEMORY_ENABLED")
@@ -42,6 +77,14 @@ impl NaviConfig {
                 config.memory.checkpoint_thresholds = parsed;
             }
         }
+
+        // Drop-in provider definitions. These are re-read at runtime by
+        // `dropin::apply_if_changed`, so editing a file needs no restart.
+        let roots = dropin::roots_for(Some(global_dir.as_path()), cwd);
+        dropin::apply_to_config(&mut config, roots);
+
+        // Drop-in MCP servers (`mcp.d/`), merged by id over `[[mcp.servers]]`.
+        crate::config::mcp_dropin::apply_to_config(&mut config, &global_dir);
 
         Ok(LoadedConfig {
             config,
@@ -101,55 +144,20 @@ impl NaviConfig {
     }
 }
 
-/// Saves the config to the global config path, creating parent directories if needed.
-/// Strips model lists from providers that exist in the registry catalog so the
-/// config.toml stays clean — the registry SQLite is the authoritative source
-/// for model metadata, not the config file.
-pub fn save_global_config(global_path: &Path, config: &NaviConfig) -> Result<PathBuf> {
-    if let Some(parent) = global_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let mut config_to_save = config.clone();
-    strip_registry_provider_models(&mut config_to_save);
-    let content = toml::to_string_pretty(&config_to_save).context("failed to serialize config")?;
-    fs::write(global_path, &content)
-        .with_context(|| format!("failed to write {}", global_path.display()))?;
-    Ok(global_path.to_path_buf())
+/// Persists the machine-owned slice of `config` to the `state.toml` that sits
+/// next to `global_config_path`.
+///
+/// NAVI never writes `config.toml`: the hand-authored file keeps its comments,
+/// key order and unknown keys, and can be edited while NAVI is running.
+pub fn save_state_config(global_config_path: &Path, config: &NaviConfig) -> Result<PathBuf> {
+    state::save_state(&state::state_path_for_config(global_config_path), config)
 }
 
-/// Saves the config to the project's `.navi/config.toml`, creating the directory if needed.
-pub fn save_project_config(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
-    let project_path = cwd.join(".navi").join("config.toml");
-    if let Some(parent) = project_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    let mut config_to_save = config.clone();
-    strip_registry_provider_models(&mut config_to_save);
-    let content = toml::to_string_pretty(&config_to_save).context("failed to serialize config")?;
-    fs::write(&project_path, &content)
-        .with_context(|| format!("failed to write {}", project_path.display()))?;
-    Ok(project_path)
-}
-
-/// Removes model lists from provider overrides that match a provider in the
-/// registry catalog. The registry is the authoritative source for model
-/// metadata (context_window_tokens, pricing, etc). Provider overrides in
-/// config.toml should only carry provider-level settings (base_url,
-/// request_options, etc), not model lists.
-fn strip_registry_provider_models(config: &mut NaviConfig) {
-    let registry_ids: std::collections::HashSet<String> =
-        crate::config::providers::base_provider_catalog()
-            .into_iter()
-            .map(|p| p.id)
-            .collect();
-
-    for provider in &mut config.providers {
-        if registry_ids.contains(&provider.id) {
-            provider.models.clear();
-        }
-    }
+/// Persists the machine-owned slice of `config` to `<cwd>/.navi/state.toml`.
+pub fn save_project_state(cwd: &Path, config: &NaviConfig) -> Result<PathBuf> {
+    let dir = cwd.join(".navi");
+    fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    state::save_state(&state::state_path_in_dir(&dir), config)
 }
 
 enum ConfigSource {
@@ -408,30 +416,83 @@ name = "gpt-test"
     }
 
     #[test]
-    fn save_and_reload_preserves_attachment_models() {
+    fn state_file_is_loaded_next_to_the_config_and_wins_for_its_keys() {
         let tempdir = tempfile::tempdir().expect("tempdir");
-        let path = tempdir.path().join("config.toml");
+        let config_path = tempdir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[model]\nprovider = \"openai\"\nname = \"gpt-5.5\"\n\n[tui]\ntheme = \"default\"\n",
+        )
+        .expect("write config");
+
+        let mut state = NaviState::default();
+        state.model = Some(crate::config::types::ModelConfig {
+            provider: "devin".to_string(),
+            name: "devin/swe-2".to_string(),
+        });
+        let mut tui = crate::config::types::TuiConfig::default();
+        tui.theme = "lain".to_string();
+        state.tui = Some(tui);
+        state::write_state(&state::state_path_for_config(&config_path), &state).expect("state");
 
         let mut config = NaviConfig::default();
-        config.attachment_models.image = Some(crate::config::types::ModelConfig {
-            provider: "google-gemini".to_string(),
-            name: "gemini-2.5-flash".to_string(),
-        });
-        config.attachment_models.audio = Some(crate::config::types::ModelConfig {
-            provider: "openai".to_string(),
-            name: "gpt-4o-audio-preview".to_string(),
-        });
-        save_global_config(&path, &config).expect("save");
+        merge_from_file(&mut config, &config_path, ConfigSource::Trusted).expect("merge");
+        assert_eq!(config.model.name, "gpt-5.5", "config.toml applies first");
 
-        let mut reloaded = NaviConfig::default();
-        merge_from_file(&mut reloaded, &path, ConfigSource::Trusted).expect("merge");
+        let state = state::load_state(&state::state_path_for_config(&config_path)).expect("state");
+        state::apply_state(&state, &mut config);
+        assert_eq!(config.model.name, "devin/swe-2", "state wins for model");
+        assert_eq!(config.tui.theme, "lain", "state wins for TUI prefs");
+    }
 
-        let image = reloaded.attachment_models.image.expect("image");
-        assert_eq!(image.provider, "google-gemini");
-        assert_eq!(image.name, "gemini-2.5-flash");
-        let audio = reloaded.attachment_models.audio.expect("audio");
-        assert_eq!(audio.provider, "openai");
-        assert_eq!(audio.name, "gpt-4o-audio-preview");
+    #[test]
+    fn save_state_config_never_rewrites_config_toml() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let config_path = tempdir.path().join("config.toml");
+        let original = "# hand written\n[tui]\ntheme = \"lain\"\n";
+        fs::write(&config_path, original).expect("write config");
+
+        let mut config = NaviConfig::default();
+        config.model.name = "devin/swe-2".to_string();
+        let saved = save_state_config(&config_path, &config).expect("save state");
+
+        assert_eq!(saved.file_name().unwrap(), "state.toml");
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("read config"),
+            original,
+            "config.toml must stay byte-identical"
+        );
+    }
+
+    #[test]
+    fn drop_in_providers_are_loaded_from_providers_d() {
+        use crate::config::providers::dropin::{self, DropInRoots};
+
+        // A local cache slot keeps this test off the process-global scan cache.
+        let cache = std::sync::RwLock::new(None);
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let providers_dir = tempdir.path().join("providers.d");
+        fs::create_dir_all(&providers_dir).expect("mkdir");
+        fs::write(
+            providers_dir.join("devin.toml"),
+            "base_url = \"http://127.0.0.1:8787/v1\"\napi_key_env = \"DEVIN_PROXY_KEY\"\n\n\
+             [[models]]\nname = \"devin/swe-2\"\n",
+        )
+        .expect("write provider");
+
+        let mut config = NaviConfig::default();
+        let snapshot = dropin::apply_to_config_in(
+            &cache,
+            &mut config,
+            DropInRoots {
+                global: Some(providers_dir),
+                project: None,
+            },
+        );
+        assert_eq!(snapshot.provider_count(), 1);
+        assert_eq!(config.providers.len(), 1);
+        assert_eq!(config.providers[0].id, "devin");
+        assert_eq!(config.providers[0].models[0].name, "devin/swe-2");
     }
 
     #[test]

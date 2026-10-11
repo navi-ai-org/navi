@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use navi_core::{
-    LoadedConfig, NaviConfig, SkillSource, SkillWriteRequest, SkillWriteScope,
-    list_installed_skills, parse_skill_file, save_global_config, save_project_config, write_skill,
+    LoadedConfig, SkillSource, SkillWriteRequest, SkillWriteScope, list_installed_skills,
+    parse_skill_file, write_skill,
 };
 use std::fs;
 use std::path::Path;
@@ -110,44 +110,31 @@ fn ensure_skill_active_in_config(
     scope: SkillWriteScope,
     cwd: &Path,
 ) -> Result<()> {
-    let (path, is_project) = match scope {
-        SkillWriteScope::Project => (
-            loaded_config
-                .project_config_path
-                .clone()
-                .unwrap_or_else(|| cwd.join(".navi").join("config.toml")),
-            true,
-        ),
+    // An empty `skills.active` means "all discovered skills are catalog-active";
+    // keep it that way.
+    if loaded_config.config.skills.active.is_empty() {
+        return Ok(());
+    }
+    if loaded_config.config.skills.active.iter().any(|s| s == id) {
+        return Ok(());
+    }
+
+    // The allowlist itself is hand-authored (`config.toml`), so NAVI records its
+    // additions in the machine-owned `state.toml` instead of rewriting the file.
+    let state_path = match scope {
+        SkillWriteScope::Project => cwd.join(".navi").join(navi_core::STATE_FILE_NAME),
         SkillWriteScope::User => match &loaded_config.global_config_path {
-            Some(p) => (p.clone(), false),
+            Some(path) => navi_core::state_path_for_config(path),
             None => return Ok(()),
         },
     };
 
-    let mut config = if path.exists() {
-        let raw = fs::read_to_string(&path)
-            .with_context(|| format!("failed to read config {}", path.display()))?;
-        toml::from_str(&raw)
-            .with_context(|| format!("failed to parse config {}", path.display()))?
-    } else {
-        NaviConfig::default()
-    };
-
-    // Empty active list means "all discovered skills are catalog-active"; keep it.
-    if config.skills.active.is_empty() {
-        return Ok(());
-    }
-    if config.skills.active.iter().any(|s| s == id) {
-        return Ok(());
-    }
-
-    config.skills.active.push(id.to_string());
-    if is_project {
-        save_project_config(cwd, &config)?;
-    } else {
-        save_global_config(&path, &config)?;
-    }
-    println!("  active: added {id} to skills.active");
+    navi_core::update_state(&state_path, |state| {
+        if !state.skills.extra_active.iter().any(|existing| existing == id) {
+            state.skills.extra_active.push(id.to_string());
+        }
+    })?;
+    println!("  active: added {id} to skills.active (state.toml)");
     Ok(())
 }
 

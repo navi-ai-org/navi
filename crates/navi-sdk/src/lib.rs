@@ -107,8 +107,9 @@ pub use navi_core::{
     estimate_token_cost_usd_with_cache, is_free_model_name, log_path, model_cache_list_pricing,
     model_can_run_publicly, model_list_pricing, provider_catalog, provider_credit_unit,
     provider_request_model_name, provider_uses_credits, resolve_provider_api_key_for_project,
-    resolve_provider_config, resolve_provider_credential_status, save_global_config,
-    set_registry_store, usd_to_provider_credits,
+    resolve_provider_config, resolve_provider_credential_status, save_project_state,
+    save_state_config, set_registry_store, state_path_for_config, state_path_in_dir,
+    usd_to_provider_credits,
 };
 // Skill / harness essentials (builtin ids + soft-apply helpers)
 pub use navi_core::{

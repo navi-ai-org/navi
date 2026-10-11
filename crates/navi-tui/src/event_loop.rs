@@ -980,6 +980,10 @@ where
 
         // Debounced mid-turn session checkpoints (tool batches / stream finalize).
         flush_session_checkpoint_if_due(app);
+        // Hot reload of `providers.d/` (editing a provider file needs no restart).
+        if crate::providers::poll_providers_dropin(app) {
+            needs_draw = true;
+        }
         // Wake soon enough for a pending debounced checkpoint.
         let checkpoint_due_soon = app.session_checkpoint_due.is_some();
 
